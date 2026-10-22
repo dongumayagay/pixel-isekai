@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0e1925">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>Pixel Isekai — Starfall Grove: A Second Life</title>
+<title>Pixel Isekai — A Second Life</title>
 <style>
 :root{color-scheme:dark;--cream:#f1eddb}
 *{box-sizing:border-box}
@@ -48,7 +48,7 @@ body.cinematic .topbar,body.cinematic .touch,body.cinematic .joystick,body.cinem
 </style>
 </head>
 <body>
-<main class="game-shell" aria-label="Starfall Grove RPG">
+<main class="game-shell" aria-label="Pixel Isekai RPG">
   <div class="viewport">
     <canvas id="game" width="224" height="485" tabindex="0" role="img" aria-label="A top-down pixel-art isekai adventure. Tap to advance the prologue, or tap Skip in the top right."></canvas>
   </div>
@@ -395,7 +395,7 @@ function introRoad(sh,truck=false){
  const x=roadL+(truck?14+step*Math.min(42,(roadR-roadL)*.5):9);
  introPerson('hero',x,crossY+13,2);
  if(truck){
-  const cx=(roadL+roadR)*.53, truckY=-65+Math.min(1,step)* (crossY+44);
+  const cx=(roadL+roadR)*.53, truckY=-7+Math.min(1,step)*(crossY+6);
   // The truck travels down the road toward the zebra crossing.
   px(cx-22,truckY-5,44,66,'#0f1c2d');px(cx-20,truckY-3,40,64,'#557084');
   px(cx-17,truckY+4,34,14,'#a2bbc0');px(cx-13,truckY+9,26,6,'#2b4759');
@@ -476,7 +476,7 @@ function drawIntro(){
  }
  if(page.stage==='title'&&page.lines.length===1){/* Title art above carries the opening. */}
  btxt(state.introPage===introChapters.length-1?'TAP TO EXPLORE':state.introPage===0?'TAP TO BEGIN':'TAP TO CONTINUE',W/2,H-7,8,'#d9b878','center');
- btxt('SKIP >>',W-11,19,9,'#f4e5bb','right');
+ btxt('SKIP >>',W-11,29,9,'#f4e5bb','right');
  if(state.introAge<.22&&page.stage!=='dark')px(0,0,W,sh,`rgba(10,23,36,${(.22-state.introAge)/.22*.3})`);
 }
 
