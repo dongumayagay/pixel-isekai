@@ -50,7 +50,7 @@ body.cinematic .topbar,body.cinematic .touch,body.cinematic .joystick,body.cinem
 <body>
 <main class="game-shell" aria-label="Starfall Grove RPG">
   <div class="viewport">
-    <canvas id="game" width="224" height="485" tabindex="0" role="img" aria-label="A pixel-art isekai adventure. Tap to advance the opening story, or tap Skip in the top right."></canvas>
+    <canvas id="game" width="224" height="485" tabindex="0" role="img" aria-label="A top-down pixel-art isekai adventure. Tap to advance the prologue, or tap Skip in the top right."></canvas>
   </div>
   <header class="topbar">
     <div class="readouts" aria-label="Hero status"><span id="hp" aria-label="Health">♥ 6/6</span><span id="sigils" aria-label="Moon sigils">✦ 0/3</span></div>
@@ -90,6 +90,8 @@ function blip(f=520,t=.09,type='square',vol=.024){if(mute)return;try{if(!audio)a
 function chord(){blip(580,.14,'triangle');setTimeout(()=>blip(770,.18,'triangle'),80);setTimeout(()=>blip(1060,.25,'triangle'),165)}
 const shade={k:'#17283a',h:'#ba545e',H:'#ee7c73',s:'#ffd5a5',e:'#294650',b:'#307c89',B:'#5eafab',g:'#45546b',d:'#202c43',w:'#ffe6c4',p:'#675390',P:'#9c85c5',c:'#d5d2c7',t:'#b4a0cf',m:'#3f8e6d',M:'#76c68d',o:'#c77749',O:'#f3af70',v:'#7657a6',V:'#ab8cdb',n:'#f4ede7',q:'#49b0bc',Q:'#a0f5e7',r:'#663d79',a:'#f6cd71'};
 const sprites={
+ goddess:[
+ '......aaaa......','.....aannnaa.....','.....nPPPPn......','.....nPPPPn......','.....nsnnnsn.....','.....nseesn......','.....nssssn......','....nwwwwwwn.....','...nnwnwwnwnn....','...nwwwwwwwwn....','....nnwwwwnn.....','.....nwwwwn......','.....nwwwwn......','.....nnwwnn......','......n..n.......','................'],
  hero:[
  '.....kkkkkk.....','....kkhhhhkk....','....khHHHhhk....','...kkhhhhhhkk...','...khsssssshk...','...khseeesshk...','....kssssk......','...kkbBBbbkk....','..kbbbbbBBbk....','..kbbhbbhbbk....','...kBBbbbbk.....','...kggggggk.....','....kggggk......','....kd..dk......','...kkd..dkk.....','................'],
  merchant:[
@@ -129,31 +131,60 @@ function xpNeed(){return state.hero.level*20}
 function hud(){let h=state.hero;ui.hp.textContent='♥ '+h.hp+'/'+h.maxHp;ui.level.textContent='LV '+h.level;ui.sigils.textContent='✦ '+state.sigils+'/3';ui.sigils.style.display=state.sheltered?'':'none';ui.potions.textContent=h.potions}
 function say(msg,time=3){state.toast=msg;state.toastTimer=time;ui.status.textContent=msg}
 function reset(){state.scene='play';state.hero={x:startPoint.x,y:startPoint.y,dir:'up',hp:6,maxHp:6,level:1,xp:0,gold:8,potions:1,inv:0,cooldown:0};state.quest=0;state.sheltered=false;state.sigils=0;state.found=[false,false,false];state.kills=0;state.enemies=makeEnemies();state.particles=[];state.floaters=[];state.slashTimer=0;state.dialogue=null;state.t=0;state.shake=0;state.autoSave=0;for(const k of Object.keys(key))key[k]=false;hud();say('A faint lantern glows north-west. Find shelter.',4);blip(620,.11,'triangle')}
-// The protagonist dies in the old world and awakens, as an adult, with their memories.
-// Keep the opening short and grounded; no prophecy, summon, mentor, or tutorial monologue.
+// A second life, not reincarnation: the adult protagonist retains their identity.
+// The opening is the same top-down pixel-world language as the adventure.
 const introChapters=[
- {tag:'',text:'One life ended in the rain. The next one is yours to live.'},
- {tag:'THE FINAL NIGHT',text:'At the crosswalk, headlights broke through the rain. You never reached the other side. Your heartbeat stopped.'},
- {tag:'THE FIRST BREATH',text:'Cold grass. Two moons. You were still an adult, with every memory intact. You remembered dying.'},
- {tag:'ALONE IN ANOTHER WORLD',text:'No voice. No guide. Just a lantern through the trees. Find shelter. Stay alive.'}
+ {stage:'title',tag:'',lines:[{text:'An ordinary life. One very late night. And the road home.'}]},
+ {stage:'office',tag:'11:47 P.M.',lines:[{text:'Most of the office lights are off. You finally make it downstairs.'}]},
+ {stage:'office',tag:'ANOTHER MESSAGE',phone:true,lines:[{speaker:'PHONE',text:'Can you come in at eight tomorrow? We need to finish the report.'},{speaker:'YOU',text:'Eight. Of course.'}]},
+ {stage:'office',tag:'',phone:true,lines:[{text:'You type "Okay," put your phone away, and head out into the rain.'}]},
+ {stage:'city',tag:'THE WALK HOME',lines:[{text:'The streets are nearly empty. Across the road, the convenience store is still open.'},{speaker:'YOU',text:"Hope they've got something left."}]},
+ {stage:'city',tag:'THE CROSSING',lines:[{text:'Your stomach growls. The pedestrian light turns green. You step off the curb.'}]},
+ {stage:'truck',tag:'',lines:[{text:'A horn. You look up.'}]},
+ {stage:'dark',tag:'',lines:[{text:'And then nothing.'}]},
+ {stage:'goddess',tag:'SOMEWHERE ELSE',lines:[{text:'You open your eyes on pale stone. Someone is kneeling beside you.'},{speaker:'GODDESS',text:'Careful. Sit up slowly.'}]},
+ {stage:'goddess',tag:'',lines:[{speaker:'YOU',text:'What happened? Where am I? There was a truck--'},{speaker:'GODDESS',text:'I know.'}]},
+ {stage:'goddess',tag:'',lines:[{speaker:'YOU',text:'Did someone call an ambulance?'},{speaker:'GODDESS',text:"You didn't make it. I'm sorry."}]},
+ {stage:'goddess',tag:'',lines:[{speaker:'YOU',text:'What?'},{text:'You check your hands, your arms, your chest. Nothing hurts.'}]},
+ {stage:'goddess',tag:'',lines:[{speaker:'YOU',text:"No, I'm fine. Look."},{speaker:'YOU',text:'This is a dream, right?'}]},
+ {stage:'goddess',tag:'',lines:[{speaker:'GODDESS',text:'No.'},{speaker:'YOU',text:'I was just going to get dinner.'}]},
+ {stage:'goddess',tag:'',lines:[{text:'She says nothing. Neither do you, for a while.'}]},
+ {stage:'goddess',tag:'',lines:[{speaker:'YOU',text:'Who are you?'},{speaker:'GODDESS',text:'A goddess. I brought you here.'}]},
+ {stage:'goddess',tag:'',lines:[{speaker:'YOU',text:'Then you can do something. You can send me back.'},{speaker:'GODDESS',text:"I can't undo what happened."}]},
+ {stage:'goddess',tag:'',lines:[{speaker:'YOU',text:'But you brought me here.'},{speaker:'GODDESS',text:"I could bring you here. I couldn't save your life."}]},
+ {stage:'goddess',tag:'',lines:[{speaker:'YOU',text:'So what happens now?'},{speaker:'GODDESS',text:"I can send you to another world. You'd be alive there."}]},
+ {stage:'goddess',tag:'',lines:[{speaker:'YOU',text:'Another world?'},{speaker:'GODDESS',text:"Yes. You'd still be yourself. You'd remember your life."}]},
+ {stage:'goddess',tag:'',lines:[{speaker:'YOU',text:"But I wouldn't be able to come home."},{speaker:'GODDESS',text:'No.'}]},
+ {stage:'goddess',tag:'',lines:[{speaker:'YOU',text:"I don't know what I'm supposed to say."},{speaker:'GODDESS',text:"You don't have to answer yet."}]},
+ {stage:'goddess',tag:'',lines:[{text:'She sits a little farther away, giving you room.'}]},
+ {stage:'goddess',tag:'',lines:[{text:'After a long while, you stand.'},{speaker:'YOU',text:'Okay. I want to go.'}]},
+ {stage:'goddess',tag:'',lines:[{speaker:'GODDESS',text:'All right.'}]},
+ {stage:'forest',tag:'THE FIRST MORNING',lines:[{text:'Grass beneath your hands. Wind in the leaves. The sky is not the one you remember.'}]},
+ {stage:'forest',tag:'',lines:[{text:'A thin trail leads through the trees. Beyond them, smoke rises from a chimney.'},{speaker:'YOU',text:'Maybe somebody lives there.'}]}
 ];
 function startIntro(){
  reset();state.scene='intro';state.introPage=0;state.introAge=0;state.toast='';state.toastTimer=0;
- document.body.classList.add('cinematic');ui.status.textContent='Prologue. Tap to advance or Skip in the top right.';
+ document.body.classList.add('cinematic');ui.status.textContent='Prologue. Tap to advance, or tap Skip in the top right.';
 }
 function enterWorld(){
  if(state.scene!=='intro')return;
  state.scene='play';document.body.classList.remove('cinematic');state.introAge=0;
  hint.classList.remove('gone');setTimeout(dismissHint,4000);
- say('A lantern flickers to the north-west. Find shelter.',4);chord();
+ say('Follow the path to the lantern. Find shelter before nightfall.',5);chord();
 }
 function advanceIntro(skip=false){
  if(state.scene!=='intro')return;
  if(skip||state.introPage===introChapters.length-1){enterWorld();return}
  state.introPage++;state.introAge=0;
- ui.status.textContent=introChapters[state.introPage].tag+'. '+introChapters[state.introPage].text;
- blip(state.introPage===2?740:430+state.introPage*65,.12,'triangle',.013);
+ const chapter=introChapters[state.introPage];
+ ui.status.textContent=chapter.lines.map(l=>(l.speaker?l.speaker+': ':'')+l.text).join(' ');
+ if(chapter.stage==='truck')blip(190,.43,'sawtooth',.027);
+ else if(chapter.stage==='dark')blip(100,.16,'triangle',.009);
+ else if(chapter.stage==='goddess'&&introChapters[state.introPage-1].stage!=='goddess')chord();
+ else if(chapter.stage==='forest')chord();
+ else blip(450,.055,'triangle',.009);
 }
+
 function addXP(v){let h=state.hero;h.xp+=v;while(h.xp>=xpNeed()){h.xp-=xpNeed();h.level++;h.maxHp+=2;h.hp=h.maxHp;say('LEVEL UP! You feel stronger.',3.5);emit(h.x,h.y,'#fbd582',26);chord()}hud()}
 function heal(){if(state.scene!=='play'&&state.scene!=='inventory')return;let h=state.hero;if(h.potions<1){say('No potions! Moss sells them for 6 gold.');return}if(h.hp===h.maxHp){say('Your health is already full.');return}h.potions--;h.hp=Math.min(h.maxHp,h.hp+4);emit(h.x,h.y,'#aaf1b2',18);blip(870,.17,'triangle');hud();say('Used a potion: +4 HP');saveGame(true)}
 function emit(x,y,color,n=12){for(let i=0;i<n;i++){let a=Math.random()*6.283,d=9+Math.random()*30;state.particles.push({x,y,vx:Math.cos(a)*d,vy:Math.sin(a)*d,ttl:.3+Math.random()*.4,color})}}
@@ -221,7 +252,7 @@ $('quest').addEventListener('click',()=>{closeMenu(false);menu('journal')});
 $('bag').addEventListener('click',()=>{closeMenu(false);menu('inventory')});
 $('sound').addEventListener('click',()=>{mute=!mute;ui.sound.textContent='SOUND: '+(mute?'OFF':'ON');if(!mute)blip(780,.1)});
 
-function update(dt){state.t+=dt;if(state.scene==='intro'){state.introAge+=dt;if(state.introPage>0&&state.introAge>=10)advanceIntro()}const h=state.hero;if(state.toastTimer>0)state.toastTimer-=dt;else if(state.toast){state.toast='';ui.status.textContent=state.scene==='play'?(state.sheltered?'Explore the paths beyond the woods.':'Find shelter before nightfall.'):''}
+function update(dt){state.t+=dt;if(state.scene==='intro'){state.introAge+=dt}const h=state.hero;if(state.toastTimer>0)state.toastTimer-=dt;else if(state.toast){state.toast='';ui.status.textContent=state.scene==='play'?(state.sheltered?'Explore the paths beyond the woods.':'Find shelter before nightfall.'):''}
  for(let i=state.particles.length-1;i>=0;i--){let p=state.particles[i];p.ttl-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=27*dt;if(p.ttl<=0)state.particles.splice(i,1)}
  for(let i=state.floaters.length-1;i>=0;i--){let f=state.floaters[i];f.ttl-=dt;f.y-=18*dt;if(f.ttl<=0)state.floaters.splice(i,1)}
  if(state.scene!=='play')return;
@@ -314,69 +345,139 @@ function drawOverlay(){
  }
 }
 
-// Entire prologue is hand-drawn on the same nearest-neighbour pixel canvas as the game.
-function cineBands(colors,until){for(let i=0;i<colors.length;i++){let y=Math.floor(i*until/colors.length),end=Math.ceil((i+1)*until/colors.length);px(0,y,W,end-y+1,colors[i])}}
-function cineStars(n=68){for(let i=0;i<n;i++){let x=rnd(i*7+5,21)*W,y=rnd(i*13+1,43)*H*.73,a=Math.sin(state.t*(.55+rnd(i,2))+(i*19));if(a>-.42)px(x,y,a>.84?2:1,a>.84?2:1,i%7===0?'#fff2c5':i%3===0?'#bfeee7':'#9eaecf')}}
-function cineMoon(x,y,r){for(let yy=-r;yy<=r;yy+=2){let half=Math.sqrt(Math.max(0,r*r-yy*yy));px(x-half,y+yy,half*2,2,yy<0?'#f3ebda':'#c7ccd2')}px(x-r*.27,y-r*.22,3,2,'#ffffff')}
-function cineHill(y0,color,offset,amplitude){for(let x=0;x<W;x+=3){let y=y0+Math.sin(x*.022+offset)*amplitude+Math.sin(x*.055-offset)*amplitude*.32;px(x,y,3,H-y+2,color)}}
-function cinePine(x,y,s,dark='#142e38',light='#1d4b4a'){let h=s*1.5;px(x-2,y-h*.54,5,h*.58,'#564b48');for(let k=0;k<4;k++){let yy=y-h+k*s*.2,w=s*(.35+k*.21);px(x-w/2,yy,w,s*.37,dark);px(x-w/2+2,yy+1,w*.38,2,light)}}
-function cineWoodland(){cineHill(H*.61,'#395d65',1.8,12);cineHill(H*.68,'#285054',3.4,9);for(let i=0;i<14;i++){let x=(i+.25)*W/13,y=H*.79+(i%3)*5;cinePine(x,y,15+(i%4)*8,'#1c4247','#3c7067')}px(0,H*.81,W,H*.19,'#224844')}
-function cineFigure(x,y,scale=2,fallen=false){ctx.save();if(fallen){ctx.translate(x,y);ctx.rotate(-Math.PI/2);x=-16*scale;y=-8*scale}else{x-=8*scale;y-=16*scale}const rows=sprites.hero;for(let a=0;a<rows.length;a++)for(let b=0;b<rows[a].length;b++){let c=shade[rows[a][b]];if(c)px(x+b*scale,y+a*scale,scale,scale,c)}ctx.restore()}
-function cineSceneTitle(){
- cineBands(['#112136','#1d3349','#314e5d','#536970','#70887c'],H);cineStars(72);cineMoon(W*.71,H*.19,23);cineWoodland();
- let pathX=W*.49;for(let i=0;i<19;i++){let t=i/19,y=H*.74+t*H*.24,wide=9+t*W*.38;px(pathX-wide/2,y,wide,4,i%2?'#4b5555':'#657265')}
- cineFigure(W*.5,H*.80,2);cinePine(0,H*.92,66,'#102930','#295d56');cinePine(W,H*.94,68,'#112e32','#28584d');
+// Pixel-only top-down scenes: the cutscenes and the playable world use one camera language.
+function introTiles(floorY,unit=24){
+ for(let ty=0;ty<floorY;ty+=unit)for(let tx=0;tx<W;tx+=unit){let a=rnd((tx/unit)|0,(ty/unit)|0);px(tx,ty,unit,unit,a>.5?'#39485a':'#344354');px(tx,ty,unit,1,'#4d5a67');px(tx,ty,1,unit,'#273646');if(a>.88)px(tx+6,ty+7,3,2,'#61758a')}
 }
-function cineSceneFinalNight(){
- cineBands(['#101625','#1b2334','#29364a','#435165','#566477'],H);
- const ground=H*.77;
- for(let i=0;i<16;i++){let x=(i*47+Math.floor(rnd(i,7)*20))%(W+24)-12,ht=34+Math.floor(rnd(i,9)*70),y=ground-ht;px(x,y,12+i%3*10,ht,'#1c293b');px(x,y,12+i%3*10,2,'#31425a');for(let q=0;q<8;q++){let xx=x+3+(q%2)*7,yy=y+6+Math.floor(q/2)*11;if(rnd(q+i*2,i+6)>.32)px(xx,yy,2,4,q%3===0?'#d0b58b':'#59758c')}}
- px(0,ground,W,H-ground,'#18283b');px(0,ground+3,W,2,'#8992a0');px(0,ground+18,W,2,'#415267');
- for(let i=0;i<5;i++){let x=(i*39+11)%W;px(x,ground+9,20,4,'#b1b6b1')}
- // Headlights grow from the right. The collision is a silent flash, not violence or exposition.
- let approach=clamp((state.introAge-2.2)/5,0,1),carX=W+26-approach*(W*.55),carY=ground-13;
- px(carX,carY,48,19,'#111b29');px(carX+8,carY-11,29,12,'#263e55');px(carX+2,carY+15,42,5,'#101b24');
- px(carX+3,carY+8,7,4,'#fff2c8');px(carX+33,carY+8,8,4,'#fff2c8');
- for(let j=0;j<3;j++){let beam=(11+j*11)*(approach+.18);px(carX-beam,carY+7+j*3,beam+5,2,j===0?'#faf0b254':'#dfebb82d')}
- cineFigure(W*.30,ground+3,2);
- for(let i=0;i<125;i++){let x=(rnd(i*3,4)*W+state.t*(17+i%4)*.4)%W,y=(rnd(i,7)*H+state.t*(47+i%3*11))%H;px(x,y,1,i%6===0?5:3,'#a2bcd281')}
- if(state.introAge>7.6){let fade=clamp((state.introAge-7.6)/2,0,.95);px(0,0,W,H,`rgba(8,13,24,${fade})`)}
+function introPerson(name,cx,feet,scale=2){
+ ctx.save();ctx.translate(Math.round(cx),Math.round(feet));ctx.scale(scale,scale);
+ sprite(name,-8,-16);ctx.restore();
 }
-function cineSceneFirstBreath(){
- cineBands(['#0c293c','#245069','#4b7e86','#8fb19f','#b4c5a8'],H);cineStars(59);cineMoon(W*.26,H*.23,18);cineMoon(W*.73,H*.31,11);
- cineHill(H*.57,'#426e79',.7,12);cineWoodland();
- cinePine(-5,H*.91,75,'#17363e','#396d60');cinePine(W+12,H*.92,77,'#14353a','#417c68');
- for(let i=0;i<29;i++){let x=rnd(i,8)*W,y=H*.76+rnd(i,9)*H*.19;px(x,y,2,3,i%3===0?'#b8d6a0':'#709d82')}
- let x=W*.50, y=H*.71;
- px(x-31,y+13,63,7,'#36584b');px(x-19,y+16,41,2,'#87a880');
- if(state.introAge<2.8)cineFigure(x-9,y+1,2,true);else cineFigure(x,y+4-Math.min(5,(state.introAge-2.8)*1.8),2);
- // Early mist lifts with the protagonist's first breath.
- if(state.introAge<5){px(0,H*.48,W,H*.29,`rgba(187,216,211,${.23*(1-state.introAge/5)})`)}
+function introRain(stageH,amount=55){
+ for(let i=0;i<amount;i++){let xx=(rnd(i*3+7,11)*W+state.t*(5+i%5))%W, yy=(rnd(i,13)*stageH+state.t*(39+i%6*4))%stageH;px(xx,yy,1,i%7===0?5:3,'#c4dbe28c')}
 }
-function cineSceneAlone(){
- drawGame();
- px(0,0,W,H,'#08182a30');
- const x=Math.round(shelter.tx*T-cam.x),y=Math.round(shelter.ty*T-cam.y);
- if(x>-20&&x<W+20&&y>-20&&y<H+20){let v=(Math.sin(state.t*3)+1)/2;px(x-4,y-22,9,3,v>.4?'#ffe39f':'#f7bd67')}
+function introPhone(cx,cy){
+ px(cx-17,cy-23,34,51,'#0d192c');px(cx-14,cy-20,28,44,'#597789');px(cx-12,cy-18,24,39,'#27465d');px(cx-8,cy-14,16,4,'#d9efe7');
+ for(let i=0;i<4;i++)px(cx-8,cy-6+i*7,i===3?10:20,2,'#97d2dc');px(cx-3,cy+23,6,2,'#d4e3d7');
 }
-function cineCopy(text,maxWidth,startY,sz=10,lineHeight=15){ctx.font=`bold ${sz}px monospace`;let lines=[],line='';for(const word of text.split(' ')){let n=line?line+' '+word:word;if(line&&ctx.measureText(n).width>maxWidth){lines.push(line);line=word}else line=n}if(line)lines.push(line);lines=lines.slice(0,5);for(let i=0;i<lines.length;i++)btxt(lines[i],W/2,startY+i*lineHeight,sz,'#f3edda','center')}
-function drawIntro(){
- const id=state.introPage;
- if(id===0)cineSceneTitle();else if(id===1)cineSceneFinalNight();else if(id===2)cineSceneFirstBreath();else cineSceneAlone();
- const land=H<W,fh=land?86:117,fy=H-fh;
- for(let i=0;i<12;i++)px(0,fy-12+i,W,2,`rgba(7,19,30,${(i+1)*.047})`);
- px(0,fy,W,fh,'#091c2ded');px(0,fy,W,1,'#719d9b');
- if(id===0){let ty=land?H*.16:H*.32;
-  btxt('STARFALL',W/2,ty,land?23:19,'#152537','center');btxt('STARFALL',W/2,ty-2,land?23:19,'#f6e8bf','center');
-  btxt('G R O V E',W/2,ty+25,land?14:11,'#b2ead9','center');btxt('A  S E C O N D  L I F E',W/2,ty+43,land?9:8,'#e8d1ae','center');
-  cineCopy(introChapters[0].text,W-34,fy+(land?31:44),10);
- }else{
-  btxt(introChapters[id].tag,W/2,fy+(land?18:29),9,'#bfeedd','center');
-  cineCopy(introChapters[id].text,Math.min(W-30,405),fy+(land?37:46),land?9:10,land?12:12);
+function introOffice(sh,phone){
+ introTiles(sh,24);
+ const left=W*.13,right=W*.87,top=sh*.11,bottom=sh*.72;
+ px(left-7,top-6,right-left+14,bottom-top+16,'#222e3f');
+ for(let ty=top;ty<bottom;ty+=20)for(let tx=left;tx<right;tx+=20)px(tx,ty,19,19,((Math.round(tx+ty)/20)|0)%2?'#526075':'#48576b');
+ for(let i=0;i<3;i++){
+  const x=left+(i+.55)*(right-left)/3, y=top+sh*.18;
+  px(x-19,y-14,38,26,'#272b3c');px(x-17,y-17,34,8,'#a0a3a8');px(x-13,y-12,26,17,'#192b40');px(x-10,y-10,20,12,i===1?'#70bac7':'#537c9c');
+  px(x-9,y+9,18,2,'#e0d5bf');px(x-22,y+17,44,3,'#262d40');
  }
- btxt(id===introChapters.length-1?'TAP TO LIVE AGAIN':id===0?'TAP TO BEGIN':'TAP TO CONTINUE',W/2,H-14,8,'#d8bc88','center');
- btxt('SKIP  >>',W-10,19,8,'#d5ddd0','right');
- if(state.introAge<.33)px(0,0,W,H,`rgba(8,14,24,${(.33-state.introAge)/.33})`);
+ const doorY=bottom-4;
+ px(W/2-15,doorY,30,16,'#8497a4');px(W/2-12,doorY,24,13,'#1c3448');px(W/2-1,doorY+6,2,5,'#b9d9d1');
+ px(left+2,bottom-44,14,14,'#174b44');px(left+4,bottom-47,10,10,'#5c9b72');
+ introPerson('hero',W/2,bottom+39,2);
+ if(phone)introPhone(W*.77,sh*.62);
+ // Night rain beyond the office doors, and the last light in the foyer.
+ px(0,Math.max(0,sh-25),W,25,'#1b2a3b');introRain(sh,42);
+}
+function introRoad(sh,truck=false){
+ const roadL=Math.floor(W*.27),roadR=Math.floor(W*.82),crossY=Math.floor(sh*.62);
+ for(let yy=0;yy<sh;yy+=20){px(0,yy,W,20,yy%40===0?'#596576':'#535f70');px(0,yy+19,W,1,'#778393')}
+ px(roadL,0,roadR-roadL,sh,'#182638');
+ for(let yy=0;yy<sh;yy+=44){px((roadL+roadR)/2-1,yy,3,24,'#958f82a6');px(roadL+2,yy,2,38,'#566878');px(roadR-4,yy,2,38,'#566878')}
+ for(let xx=roadL+6;xx<roadR-4;xx+=17)px(xx,crossY-20,10,44,'#b0b4b5');
+ // Convenience shop from directly above, with a warm illuminated awning.
+ const shopL=Math.min(W-25,roadR+7);
+ px(shopL,sh*.20,W-shopL-3,sh*.27,'#3c515a');px(shopL-1,sh*.20,W-shopL,6,'#efc78a');px(shopL+4,sh*.28,W-shopL-11,sh*.13,'#9cc5bc');
+ for(let i=0;i<3;i++)px(shopL+6+i*12,sh*.38,8,4,'#f3d494');
+ // A traffic light and road markings.
+ px(roadL-13,crossY-36,8,21,'#283343');px(roadL-12,crossY-33,6,5,'#314358');px(roadL-12,crossY-25,6,6,'#89cfa6');
+ px(roadL-4,crossY-26,3,52,'#97a0a3');
+ const step=truck?Math.min(1,state.introAge/2.7):0;
+ const x=roadL+(truck?14+step*Math.min(42,(roadR-roadL)*.5):9);
+ introPerson('hero',x,crossY+13,2);
+ if(truck){
+  const cx=(roadL+roadR)*.53, truckY=-65+Math.min(1,step)* (crossY+44);
+  // The truck travels down the road toward the zebra crossing.
+  px(cx-22,truckY-5,44,66,'#0f1c2d');px(cx-20,truckY-3,40,64,'#557084');
+  px(cx-17,truckY+4,34,14,'#a2bbc0');px(cx-13,truckY+9,26,6,'#2b4759');
+  px(cx-16,truckY+21,32,26,'#dae2d4');px(cx-10,truckY+24,20,17,'#80989b');
+  px(cx-22,truckY+5,4,15,'#111c25');px(cx+18,truckY+5,4,15,'#111c25');
+  px(cx-17,truckY+55,10,5,'#fff1ad');px(cx+7,truckY+55,10,5,'#fff1ad');
+  if(step>.67){px(cx-33,truckY+61,66,5,'#ffe8a13e');px(cx-42,truckY+72,84,4,'#e5f2c52b')}
+  if(step>.94){let alpha=Math.max(0,(step-.94)*10);px(0,0,W,sh,`rgba(246,249,239,${Math.min(.84,alpha)})`)}
+ }
+ // Lit windows and puddle highlights in a top-down street.
+ for(let i=0;i<19;i++){let xx=rnd(i*3,4)*W, yy=rnd(i,21)*sh;if(xx>roadL&&xx<roadR)px(xx,yy,13,2,'#8fa8b73c');else px(xx,yy,7,3,'#738a985a')}
+ introRain(sh,58);
+}
+function introGoddess(sh){
+ // Marble chamber seen from directly overhead: everything shares the world camera.
+ px(0,0,W,sh,'#162639');
+ for(let i=0;i<70;i++){let x=rnd(i*11,2)*W,y=rnd(i*7,30)*sh;px(x,y,i%9===0?3:2,2,i%4?'#46617b':'#8bb3c0')}
+ const cx=W/2,cy=sh*.49,R=Math.min(W*.42,sh*.49,118);
+ for(let yy=-R;yy<=R;yy+=2){let half=Math.sqrt(Math.max(0,R*R-yy*yy));px(cx-half,cy+yy,half*2,3,'#d0d8d1')}
+ for(let yy=-R+6;yy<=R-6;yy+=2){let rr=R-7,half=Math.sqrt(Math.max(0,rr*rr-yy*yy));px(cx-half,cy+yy,half*2,2,'#b5c5c3')}
+ for(let xx=cx-R;xx<cx+R;xx+=23){let ya=Math.sqrt(Math.max(0,R*R-Math.pow(xx-cx,2)));px(xx,cy-ya,1,ya*2,'#899ea877')}
+ for(let yy=cy-R;yy<cy+R;yy+=22){let xa=Math.sqrt(Math.max(0,R*R-Math.pow(yy-cy,2)));px(cx-xa,yy,xa*2,1,'#899ea877')}
+ // A shallow ring of gold, not a floating portrait or side-view room.
+ for(let i=0;i<24;i++){let a=i*Math.PI/12,pxx=cx+Math.cos(a)*(R-10),pyy=cy+Math.sin(a)*(R-10);px(pxx,pyy,i%2?3:4,3,i%3===0?'#f2daa1':'#edebd8')}
+ for(let i=0;i<18;i++){let xx=rnd(i,35)*W,yy=rnd(i*9,8)*sh,alpha=.28+(Math.sin(state.t*1.6+i)*.19);px(xx,yy,2,3,`rgba(221,247,232,${alpha})`)}
+ const scale=sh<180?2:2;
+ introPerson('hero',cx-Math.min(38,W*.18),cy+Math.min(28,sh*.18),scale);
+ introPerson('goddess',cx+Math.min(36,W*.17),cy-Math.min(26,sh*.16),scale);
+}
+function introForest(sh){
+ drawGame();
+ // Slightly muted colors give way to the playable world.
+ px(0,0,W,sh,'#0d29404a');
+ for(let i=0;i<32;i++){let x=rnd(i,41)*W,y=rnd(i*5,33)*sh;px(x,y,2,2,i%3===0?'#c8f4c67a':'#a6d9c27a')}
+}
+function introSceneTitle(sh){
+ drawGame();px(0,0,W,H,'#071626a0');
+ for(let i=0;i<22;i++){let x=rnd(i,51)*W,y=rnd(i*3,22)*sh;px(x,y,2,2,'#e0f3e399')}
+ let center=Math.max(50,sh*.50),ts=W>300?25:18;
+ btxt('PIXEL ISEKAI',W/2,center,ts,'#122838','center');
+ btxt('PIXEL ISEKAI',W/2,center-2,ts,'#f3e8ce','center');
+ btxt('A SECOND LIFE',W/2,center+25,W>300?12:10,'#afdac7','center');
+}
+function introBlack(sh){
+ px(0,0,W,H,'#090e1b');
+ if(state.introAge<.6)px(0,0,W,H,`rgba(255,250,231,${.9*(1-state.introAge/.6)})`);
+}
+function introTextWrap(text,x,y,maxWidth,lineH=13,size=10,color='#f4eddf'){
+ ctx.font=`bold ${size}px monospace`;
+ let line='',lines=[];
+ for(const word of text.split(' ')){let attempt=line?line+' '+word:word;
+  if(line&&ctx.measureText(attempt).width>maxWidth){lines.push(line);line=word}else line=attempt;
+ }
+ if(line)lines.push(line);
+ for(const ln of lines){btxt(ln,x,y,size,color);y+=lineH}
+ return y;
+}
+function drawIntro(){
+ const page=introChapters[state.introPage],land=W>H;
+ const ph=land?106:Math.min(155,Math.round(H*.31));const sh=H-ph;
+ switch(page.stage){
+  case'title':introSceneTitle(sh);break;
+  case'office':introOffice(sh,Boolean(page.phone));break;
+  case'city':introRoad(sh,false);break;
+  case'truck':introRoad(sh,true);break;
+  case'dark':introBlack(sh);break;
+  case'goddess':introGoddess(sh);break;
+  default:introForest(sh);
+ }
+ // Small caption panel, no permanent HUD or separate cutscene interface.
+ px(0,sh-5,W,5,'#1b3449');px(0,sh,W,ph,'#0b1d2bed');px(0,sh,W,2,'#83b7af');
+ if(page.tag)btxt(page.tag,12,sh+15,9,'#b8e8d3');
+ let y=sh+(page.tag?29:25),sz=10,lH=land?14:13;
+ for(const line of page.lines){
+  const named=Boolean(line.speaker),x=named?land?94:69:13;
+  if(named)btxt(line.speaker,12,y,land?10:9,line.speaker==='GODDESS'?'#f6d794':line.speaker==='YOU'?'#a8f2e0':'#9cceeb');
+  y=introTextWrap(line.text,x,y,W-x-13,lH,sz,named?'#f3ead8':'#d7e6dd')+4;
+ }
+ if(page.stage==='title'&&page.lines.length===1){/* Title art above carries the opening. */}
+ btxt(state.introPage===introChapters.length-1?'TAP TO EXPLORE':state.introPage===0?'TAP TO BEGIN':'TAP TO CONTINUE',W/2,H-7,8,'#d9b878','center');
+ btxt('SKIP >>',W-11,19,9,'#f4e5bb','right');
+ if(state.introAge<.22&&page.stage!=='dark')px(0,0,W,sh,`rgba(10,23,36,${(.22-state.introAge)/.22*.3})`);
 }
 
 function frame(now){let dt=Math.min(.045,Math.max(0,(now-last)/1000));last=now;update(dt);refreshAction();if(state.scene==='intro')drawIntro();else drawGame();requestAnimationFrame(frame)}
