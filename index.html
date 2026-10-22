@@ -25,9 +25,6 @@ button:focus-visible{outline:2px solid #ffe7ac;outline-offset:3px}
 #context:active{transform:scale(.95);background:rgba(123,191,168,.63)}
 #context .symbol{color:#e3ffe7;font-size:28px;line-height:1;pointer-events:none}
 #contextLabel{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-.joystick{display:none;pointer-events:none;position:fixed;z-index:4;width:92px;height:92px;border:2px solid rgba(235,255,226,.36);border-radius:50%;background:rgba(30,58,65,.22);box-shadow:inset 0 0 0 1px #183a4266;transform:translate(-50%,-50%)}
-.joystick.active{display:block}
-.stick{position:absolute;width:35px;height:35px;top:50%;left:50%;margin-left:-17.5px;margin-top:-17.5px;border-radius:50%;border:2px solid #d4edd4aa;background:#8ad1af67;box-shadow:0 0 10px #0b222840}
 #introHint{position:fixed;left:calc(11px + env(safe-area-inset-left));bottom:calc(19px + env(safe-area-inset-bottom));z-index:2;max-width:155px;width:max-content;line-height:1.4;text-align:left;font-size:10px;letter-spacing:.02em;color:#e3efe3;background:#112d36a3;padding:5px 8px;border-radius:10px;pointer-events:none;transition:opacity .35s}
 #introHint.gone{opacity:0}
 #menuPanel[hidden]{display:none!important}
@@ -40,7 +37,7 @@ button:focus-visible{outline:2px solid #ffe7ac;outline-offset:3px}
 .menu-card #resume{grid-column:1/-1;background:#a8deb1;color:#15363a;border-color:#d7efc0}
 #potion{color:#c9f2d1}
 /* During the prologue there are no onscreen widgets: the entire view is the story. */
-body.cinematic .topbar,body.cinematic .touch,body.cinematic .joystick,body.cinematic #introHint{display:none!important}
+body.cinematic .topbar,body.cinematic .touch,body.cinematic #introHint{display:none!important}
 .sr-only{position:absolute!important;width:1px!important;height:1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;clip-path:inset(50%)}
 @media(orientation:landscape){#context{right:calc(21px + env(safe-area-inset-right));bottom:calc(15px + env(safe-area-inset-bottom));width:58px;height:58px}#introHint{bottom:calc(11px + env(safe-area-inset-bottom))}}
 @media(max-height:390px){.menu-card{padding:9px;gap:4px}.menu-card button{min-height:34px;padding:5px}.menu-heading{font-size:12px}}
@@ -59,8 +56,7 @@ body.cinematic .topbar,body.cinematic .touch,body.cinematic .joystick,body.cinem
   <div class="touch" aria-label="Touch controls">
     <button id="context" aria-label="Attack"><span class="symbol" id="contextIcon" aria-hidden="true">✦</span><span id="contextLabel">ATTACK</span></button>
   </div>
-  <div class="joystick" id="joystick" aria-hidden="true"><div class="stick" id="stick"></div></div>
-  <div id="introHint" aria-hidden="true">Drag left to move · Tap ✦ to act</div>
+  <div id="introHint" aria-hidden="true">Tap the world to walk · Tap ✦ to act</div>
   <div id="menuPanel" hidden aria-label="Game menu" role="dialog">
     <div class="menu-card">
       <div class="menu-heading">A SECOND LIFE</div>
@@ -222,7 +218,7 @@ let cam={x:0,y:0},last=performance.now();
 function xpNeed(){return state.hero.level*20}
 function hud(){let h=state.hero;ui.hp.textContent='♥ '+h.hp+'/'+h.maxHp;ui.level.textContent='LV '+h.level;ui.sigils.textContent='✦ '+state.sigils+'/3';ui.sigils.style.display=state.sheltered?'':'none';ui.potions.textContent=h.potions}
 function say(msg,time=3){state.toast=msg;state.toastTimer=time;ui.status.textContent=msg}
-function reset(){state.scene='play';state.hero={x:startPoint.x,y:startPoint.y,dir:'up',hp:6,maxHp:6,level:1,xp:0,gold:8,potions:1,inv:0,cooldown:0};state.quest=0;state.sheltered=false;state.sigils=0;state.found=[false,false,false];state.kills=0;state.enemies=makeEnemies();state.particles=[];state.floaters=[];state.slashTimer=0;state.dialogue=null;state.t=0;state.shake=0;state.autoSave=0;for(const k of Object.keys(key))key[k]=false;hud();say('A faint lantern glows north-west. Find shelter.',4);blip(620,.11,'triangle')}
+function reset(){state.scene='play';state.hero={x:startPoint.x,y:startPoint.y,dir:'up',hp:6,maxHp:6,level:1,xp:0,gold:8,potions:1,inv:0,cooldown:0};state.quest=0;state.sheltered=false;state.sigils=0;state.found=[false,false,false];state.kills=0;state.enemies=makeEnemies();state.particles=[];state.floaters=[];state.slashTimer=0;state.dialogue=null;state.t=0;state.shake=0;state.autoSave=0;for(const k of Object.keys(key))key[k]=false;stopWalk();hud();say('A faint lantern glows north-west. Find shelter.',4);blip(620,.11,'triangle')}
 // A second life, not reincarnation: the adult protagonist retains their identity.
 // The opening is the same top-down pixel-world language as the adventure.
 const introChapters=[
@@ -287,7 +283,7 @@ function swing(){if(state.scene==='dialogue'){advanceDialogue();return}if(state.
  if(hit)state.shake=2}
 function saveGame(silent=false){if(state.scene==='title'||state.scene==='dialogue')return false;try{const h=state.hero;localStorage.setItem('pixel_isekai_v2',JSON.stringify({v:2,hero:{x:h.x,y:h.y,dir:h.dir,hp:h.hp,maxHp:h.maxHp,level:h.level,xp:h.xp,gold:h.gold,potions:h.potions},quest:state.quest,sheltered:state.sheltered,sigils:state.sigils,found:state.found,kills:state.kills}));if(!silent)say('Adventure saved on this device.');return true}catch(_){if(!silent)say('Local saving unavailable in this browser.');return false}}
 function loadGame(){try{let data=JSON.parse(localStorage.getItem('pixel_isekai_v2')||'null');if(!data||data.v!==2){say('No saved adventure found.');blip(170,.1);return false}let h=data.hero;if(!h||!Number.isFinite(h.x)||!Number.isFinite(h.y)||!Array.isArray(data.found))throw Error('Invalid save');reset();Object.assign(state.hero,{x:clamp(h.x,20,WX-20),y:clamp(h.y,20,WY-20),dir:['up','down','left','right'].includes(h.dir)?h.dir:'down',hp:clamp(h.hp,1,40),maxHp:clamp(h.maxHp,6,40),level:clamp(h.level,1,30),xp:clamp(h.xp,0,1000),gold:clamp(h.gold,0,99999),potions:clamp(h.potions,0,99)});state.sheltered=Boolean(data.sheltered);state.quest=state.sheltered?clamp(data.quest||1,1,3):0;state.found=stones.map((_,i)=>Boolean(data.found[i]));state.sigils=state.found.filter(Boolean).length;state.kills=data.kills||0;hud();say('Saved adventure loaded.');return true}catch(_){say('Save data was invalid or could not be read.');return false}}
-function dialogue(name,pages,finish=null,shop=false){stopStick();state.scene='dialogue';state.dialogue={name,pages,index:0,finish,shop};for(const k of Object.keys(key))key[k]=false;blip(530,.05,'triangle')}
+function dialogue(name,pages,finish=null,shop=false){stopWalk();state.scene='dialogue';state.dialogue={name,pages,index:0,finish,shop};for(const k of Object.keys(key))key[k]=false;blip(530,.05,'triangle')}
 function advanceDialogue(){const d=state.dialogue;if(!d)return;if(d.index<d.pages.length-1){d.index++;blip(620,.045);return}state.dialogue=null;state.scene='play';if(d.shop){let h=state.hero;if(h.gold>=6){h.gold-=6;h.potions++;hud();say('Purchased one potion (-6 gold).');blip(850,.11,'triangle');saveGame(true)}else{say('You need 6 gold for a potion.');blip(195,.12)}}if(d.finish)d.finish()}
 function act(){if(state.scene==='title'){startIntro();return}if(state.scene==='victory'){state.scene='play';say('The path ahead is yours. Keep exploring!');return}if(state.scene==='dialogue'){advanceDialogue();return}if(state.scene==='journal'||state.scene==='inventory'||state.scene==='pause'){state.scene='play';return}if(state.scene!=='play')return;
  const h=state.hero;
@@ -306,27 +302,108 @@ function act(){if(state.scene==='title'){startIntro();return}if(state.scene==='v
  if(dist(h.x,h.y,gate.tx*T,gate.ty*T)<39){if(state.sigils<3)dialogue('OLD STONE ARCH',[`Three sigils fit the carvings. You carry ${state.sigils}.`,'Perhaps the missing pieces are somewhere in the forest.']);else{state.quest=3;state.scene='victory';chord();emit(gate.tx*T,gate.ty*T,'#acffee',55);saveGame(true)}return}
  say('Nothing nearby to interact with.',1.8)
 }
-function menu(which){stopStick();if(menuOpen)closeMenu(false);if(state.scene==='title'||state.scene==='victory'){if(state.scene==='title')say('Begin the adventure first.');return}if(state.scene==='dialogue')return;const active=which==='journal'?'journal':'inventory';state.scene=state.scene===active?'play':active;for(const k of Object.keys(key))key[k]=false;blip(520,.07,'triangle')}
-function pause(){stopStick();if(menuOpen){closeMenu();return}if(state.scene==='play'){state.scene='pause';for(const k of Object.keys(key))key[k]=false}else if(['pause','journal','inventory'].includes(state.scene))state.scene='play';else if(state.scene==='dialogue'){state.dialogue=null;state.scene='play'}}
+function menu(which){stopWalk();if(menuOpen)closeMenu(false);if(state.scene==='title'||state.scene==='victory'){if(state.scene==='title')say('Begin the adventure first.');return}if(state.scene==='dialogue')return;const active=which==='journal'?'journal':'inventory';state.scene=state.scene===active?'play':active;for(const k of Object.keys(key))key[k]=false;blip(520,.07,'triangle')}
+function pause(){stopWalk();if(menuOpen){closeMenu();return}if(state.scene==='play'){state.scene='pause';for(const k of Object.keys(key))key[k]=false}else if(['pause','journal','inventory'].includes(state.scene))state.scene='play';else if(state.scene==='dialogue'){state.dialogue=null;state.scene='play'}}
 const control={arrowup:'up',w:'up',arrowdown:'down',s:'down',arrowleft:'left',a:'left',arrowright:'right',d:'right'};
 function pressAction(a){switch(a){case'attack':swing();break;case'interact':act();break;case'potion':heal();break;case'pause':pause();break;case'quest':menu('journal');break;case'bag':menu('inventory');break}}
-window.addEventListener('keydown',e=>{let k=e.key.toLowerCase();if(state.scene==='intro'){if(['escape','s'].includes(k))advanceIntro(true);else if(['enter',' ','arrowright','e'].includes(k))advanceIntro();if(['escape','s','enter',' ','arrowright','e','arrowup','arrowdown','arrowleft'].includes(k))e.preventDefault();return}if(control[k]){e.preventDefault();key[control[k]]=true;return}if([' ','enter','j','e','h','q','i','escape','p'].includes(k))e.preventDefault();if(e.repeat&&['j','e',' ','enter','q','i','p','escape'].includes(k))return;
+window.addEventListener('keydown',e=>{let k=e.key.toLowerCase();if(state.scene==='intro'){if(['escape','s'].includes(k))advanceIntro(true);else if(['enter',' ','arrowright','e'].includes(k))advanceIntro();if(['escape','s','enter',' ','arrowright','e','arrowup','arrowdown','arrowleft'].includes(k))e.preventDefault();return}if(control[k]){e.preventDefault();stopWalk();key[control[k]]=true;return}if([' ','enter','j','e','h','q','i','escape','p'].includes(k))e.preventDefault();if(e.repeat&&['j','e',' ','enter','q','i','p','escape'].includes(k))return;
  if(k==='j'||k===' '){if(state.scene==='title')reset();else pressAction('attack')}else if(k==='e'||k==='enter')pressAction('interact');else if(k==='h')pressAction('potion');else if(k==='q')pressAction('quest');else if(k==='i')pressAction('bag');else if(k==='escape'||k==='p')pressAction('pause')});
 window.addEventListener('keyup',e=>{const d=control[e.key.toLowerCase()];if(d){e.preventDefault();key[d]=false}});
-window.addEventListener('blur',()=>{stopStick();for(const k of Object.keys(key))key[k]=false;if(state.scene==='play')state.scene='pause'});
-const stickRing=$('joystick'),stickThumb=$('stick'),hint=$('introHint');
-let joy={id:null,x:0,y:0,dx:0,dy:0};
+window.addEventListener('blur',()=>{stopWalk();for(const k of Object.keys(key))key[k]=false;if(state.scene==='play')state.scene='pause'});
+const hint=$('introHint');
+const NAV_STEP=8,NAV_COLS=Math.ceil(WX/NAV_STEP),NAV_ROWS=Math.ceil(WY/NAV_STEP);
+const nav={waypoints:[],action:null,marker:null,stuck:0};
 function dismissHint(){hint.classList.add('gone')}
 setTimeout(dismissHint,4500);
-function stopStick(){joy.id=null;joy.dx=joy.dy=0;stickRing.classList.remove('active');stickThumb.style.transform='translate(0px,0px)'}
-function moveStick(x,y){let vx=x-joy.x,vy=y-joy.y,len=Math.hypot(vx,vy),limit=40;joy.dx=len>9?vx/Math.max(limit,len):0;joy.dy=len>9?vy/Math.max(limit,len):0;stickThumb.style.transform=`translate(${Math.round(joy.dx*limit)}px,${Math.round(joy.dy*limit)}px)`}
-canvas.addEventListener('pointerdown',e=>{if(menuOpen)return;e.preventDefault();if(state.scene==='intro'){advanceIntro(e.clientX>innerWidth-89&&e.clientY<58);return}dismissHint();if(state.scene!=='play'){act();return}if(e.clientX>innerWidth*.68){contextualAction();return}if(joy.id!==null)return;joy.id=e.pointerId;joy.x=e.clientX;joy.y=e.clientY;stickRing.style.left=e.clientX+'px';stickRing.style.top=e.clientY+'px';stickRing.classList.add('active');canvas.setPointerCapture(e.pointerId)});
-canvas.addEventListener('pointermove',e=>{if(e.pointerId===joy.id)moveStick(e.clientX,e.clientY)});
-for(const ev of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(ev,e=>{if(e.pointerId===joy.id)stopStick()});
+function stopWalk(){nav.waypoints=[];nav.action=null;nav.stuck=0;state.moving=false}
+// Keep the hitbox clear all along a straight walking segment, not just at its ends.
+function clearSegment(ax,ay,bx,by){
+ const d=dist(ax,ay,bx,by),steps=Math.max(1,Math.ceil(d/3));
+ for(let i=1;i<=steps;i++){const t=i/steps;if(blocked(ax+(bx-ax)*t,ay+(by-ay)*t,5))return false}
+ return true;
+}
+function passableCell(cx,cy){return cx>=0&&cy>=0&&cx<NAV_COLS&&cy<NAV_ROWS&&!blocked((cx+.5)*NAV_STEP,(cy+.5)*NAV_STEP,5)}
+// Small-grid A* routes around trees, ponds and houses. Only runs when the user taps.
+function routeTo(sx,sy,tx,ty){
+ tx=clamp(tx,20,WX-20);ty=clamp(ty,20,WY-20);
+ if(!blocked(tx,ty,5)&&clearSegment(sx,sy,tx,ty))return [{x:tx,y:ty}];
+ const cx=Math.floor(sx/NAV_STEP),cy=Math.floor(sy/NAV_STEP);
+ let start=null,startDistance=Infinity;
+ for(let y=cy-2;y<=cy+2;y++)for(let x=cx-2;x<=cx+2;x++){
+  if(!passableCell(x,y))continue;const d=(x+.5-sx/NAV_STEP)**2+(y+.5-sy/NAV_STEP)**2;
+  if(d<startDistance){startDistance=d;start=[x,y]}
+ }
+ if(!start)return [];
+ const gx=Math.floor(tx/NAV_STEP),gy=Math.floor(ty/NAV_STEP);
+ let goal=null,goalDist=Infinity;
+ for(let y=gy-8;y<=gy+8;y++)for(let x=gx-8;x<=gx+8;x++){
+  if(!passableCell(x,y))continue;const d=((x+.5)*NAV_STEP-tx)**2+((y+.5)*NAV_STEP-ty)**2;
+  if(d<goalDist){goalDist=d;goal=[x,y]}
+ }
+ if(!goal)return [];
+ const total=NAV_COLS*NAV_ROWS,score=new Float32Array(total),parent=new Int32Array(total),closed=new Uint8Array(total);
+ score.fill(Infinity);parent.fill(-1);
+ const sid=start[1]*NAV_COLS+start[0],gid=goal[1]*NAV_COLS+goal[0];score[sid]=0;
+ const heap=[];
+ function push(id,f){let i=heap.length;heap.push([id,f]);while(i>0){let p=(i-1)>>1;if(heap[p][1]<=f)break;heap[i]=heap[p];i=p}heap[i]=[id,f]}
+ function pop(){const best=heap[0],last=heap.pop();if(heap.length){let i=0;while(true){let c=i*2+1;if(c>=heap.length)break;if(c+1<heap.length&&heap[c+1][1]<heap[c][1])c++;if(heap[c][1]>=last[1])break;heap[i]=heap[c];i=c}heap[i]=last}return best[0]}
+ const h=(x,y)=>Math.hypot(x-goal[0],y-goal[1]);
+ push(sid,h(start[0],start[1]));
+ let found=false,nearest=sid,nearDist=Infinity,checks=0;
+ while(heap.length&&checks++<total){
+  const id=pop();if(closed[id])continue;closed[id]=1;
+  const x=id%NAV_COLS,y=(id/NAV_COLS)|0;
+  const d=h(x,y);if(d<nearDist){nearest=id;nearDist=d}
+  if(id===gid){found=true;nearest=id;break}
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+   if(!dx&&!dy)continue;const nx=x+dx,ny=y+dy;
+   if(!passableCell(nx,ny))continue;
+   if(dx&&dy&&(!passableCell(nx,y)||!passableCell(x,ny)))continue;
+   const ni=ny*NAV_COLS+nx;if(closed[ni])continue;
+   const ng=score[id]+(dx&&dy?1.41421356237:1);
+   if(ng<score[ni]){score[ni]=ng;parent[ni]=id;push(ni,ng+h(nx,ny))}
+  }
+ }
+ if(!found&&nearest===sid)return [];
+ const steps=[];let at=nearest;
+ while(at!==sid&&at!==-1){const x=at%NAV_COLS,y=(at/NAV_COLS)|0;steps.push({x:(x+.5)*NAV_STEP,y:(y+.5)*NAV_STEP});at=parent[at]}
+ steps.reverse();
+ if(found&&!blocked(tx,ty,5)&&clearSegment(steps.length?steps[steps.length-1].x:sx,steps.length?steps[steps.length-1].y:sy,tx,ty))steps.push({x:tx,y:ty});
+ // Skip redundant tile waypoints to move naturally along clear lines.
+ const out=[];let pos=0,anchor={x:sx,y:sy};
+ while(pos<steps.length){let end=pos;
+  for(let j=pos;j<Math.min(steps.length,pos+22);j++){
+   if(clearSegment(anchor.x,anchor.y,steps[j].x,steps[j].y))end=j;
+  }
+  out.push(steps[end]);anchor=steps[end];pos=end+1;
+ }
+ return out;
+}
+function tappedActor(x,y){
+ const points=[{x:shelter.tx*T,y:shelter.ty*T,tap:59,reach:30}];
+ if(state.sheltered)for(const n of npc)points.push({x:n.tx*T,y:n.ty*T,tap:27,reach:27});
+ points.push({x:gate.tx*T,y:gate.ty*T,tap:39,reach:34});
+ return points.filter(o=>dist(x,y,o.x,o.y)<o.tap).sort((a,b)=>dist(x,y,a.x,a.y)-dist(x,y,b.x,b.y))[0]||null;
+}
+function tapWorld(clientX,clientY){
+ const box=canvas.getBoundingClientRect();
+ const x=clamp((clientX-box.left)*W/box.width+cam.x,16,WX-16),y=clamp((clientY-box.top)*H/box.height+cam.y,16,WY-16);
+ const target=tappedActor(x,y),end=target||{x,y};
+ if(target&&dist(state.hero.x,state.hero.y,target.x,target.y)<target.reach){stopWalk();act();return}
+ const points=routeTo(state.hero.x,state.hero.y,end.x,end.y);
+ stopWalk();
+ if(points.length){nav.waypoints=points;nav.action=target;nav.marker={x,y,life:.9}}
+}
+canvas.addEventListener('pointerdown',e=>{
+ if(menuOpen)return;e.preventDefault();
+ if(state.scene==='intro'){advanceIntro(e.clientX>innerWidth-89&&e.clientY<58);return}
+ dismissHint();if(state.scene!=='play'){act();return}
+ tapWorld(e.clientX,e.clientY);
+});
 const menuPanel=$('menuPanel'),menuToggle=$('menuToggle');
 let menuOpen=false;
 function closeMenu(resume=true){menuPanel.hidden=true;menuOpen=false;menuToggle.setAttribute('aria-expanded','false');menuToggle.setAttribute('aria-label','Open game menu');if(resume&&state.scene==='pause')state.scene='play'}
-function toggleMenu(){stopStick();if(menuOpen){closeMenu();return}if(state.scene==='dialogue')return;if(['play','journal','inventory'].includes(state.scene))state.scene='pause';for(const k of Object.keys(key))key[k]=false;menuOpen=true;menuPanel.hidden=false;menuToggle.setAttribute('aria-expanded','true');menuToggle.setAttribute('aria-label','Close game menu')}
+function toggleMenu(){stopWalk();if(menuOpen){closeMenu();return}if(state.scene==='dialogue')return;if(['play','journal','inventory'].includes(state.scene))state.scene='pause';for(const k of Object.keys(key))key[k]=false;menuOpen=true;menuPanel.hidden=false;menuToggle.setAttribute('aria-expanded','true');menuToggle.setAttribute('aria-label','Close game menu')}
 function hasNearbyInteraction(){let h=state.hero;return dist(h.x,h.y,shelter.tx*T,shelter.ty*T)<34||(state.sheltered&&npc.some(n=>dist(h.x,h.y,n.tx*T,n.ty*T)<30))||dist(h.x,h.y,gate.tx*T,gate.ty*T)<39}
 function contextualAction(){if(menuOpen){closeMenu();return}if(state.scene!=='play'){act();return}if(hasNearbyInteraction())act();else swing()}
 function refreshAction(){let scene=state.scene,h=state.hero;let atShelter=dist(h.x,h.y,shelter.tx*T,shelter.ty*T)<34;
@@ -349,9 +426,31 @@ function update(dt){state.t+=dt;if(state.scene==='intro'){state.introAge+=dt}con
  for(let i=state.floaters.length-1;i>=0;i--){let f=state.floaters[i];f.ttl-=dt;f.y-=18*dt;if(f.ttl<=0)state.floaters.splice(i,1)}
  if(state.scene!=='play')return;
  h.inv=Math.max(0,h.inv-dt);h.cooldown=Math.max(0,h.cooldown-dt);state.slashTimer=Math.max(0,state.slashTimer-dt);state.shake=Math.max(0,state.shake-dt*15);
- let dx=(key.right?1:0)-(key.left?1:0),dy=(key.down?1:0)-(key.up?1:0);if(!dx&&!dy){dx=joy.dx;dy=joy.dy}if(dx||dy){let magnitude=Math.hypot(dx,dy);dx/=magnitude;dy/=magnitude;if(Math.abs(dx)>Math.abs(dy))h.dir=dx>0?'right':'left';else h.dir=dy>0?'down':'up';moveObj(h,dx*78,dy*78,dt,5);state.walk+=dt*9}
+ let dx=(key.right?1:0)-(key.left?1:0),dy=(key.down?1:0)-(key.up?1:0);
+ state.moving=false;
+ if(dx||dy){stopWalk();let magnitude=Math.hypot(dx,dy);dx/=magnitude;dy/=magnitude;
+  if(Math.abs(dx)>Math.abs(dy))h.dir=dx>0?'right':'left';else h.dir=dy>0?'down':'up';
+  moveObj(h,dx*78,dy*78,dt,5);state.walk+=dt*9;state.moving=true;
+ }else if(nav.waypoints.length){
+  const next=nav.waypoints[0],d=dist(h.x,h.y,next.x,next.y);
+  if(d<2.1){nav.waypoints.shift()}
+  else {
+   dx=(next.x-h.x)/d;dy=(next.y-h.y)/d;
+   if(Math.abs(dx)>Math.abs(dy))h.dir=dx>0?'right':'left';else h.dir=dy>0?'down':'up';
+   const mx=h.x,my=h.y,step=Math.min(d,78*dt);
+   moveObj(h,dx*step/dt,dy*step/dt,dt,5);
+   const advanced=dist(mx,my,h.x,h.y);
+   state.moving=advanced>.05;
+   if(state.moving){nav.stuck=0;state.walk+=dt*9}else nav.stuck+=dt;
+   if(nav.stuck>.25){stopWalk()}
+   else if(dist(h.x,h.y,next.x,next.y)<2.1){nav.waypoints.shift()}
+  }
+  if(nav.action&&dist(h.x,h.y,nav.action.x,nav.action.y)<nav.action.reach){stopWalk();act()}
+  else if(!nav.waypoints.length){stopWalk()}
+ }
+ if(nav.marker){nav.marker.life-=dt;if(nav.marker.life<=0)nav.marker=null}
  for(const e of state.enemies){if(e.dead>0){e.dead-=dt;if(e.dead<=0){e.x=e.hx;e.y=e.hy;e.hp=e.maxHp;e.ang=Math.random()*6.28}continue}e.hurt=Math.max(0,e.hurt-dt);e.ang+=dt*.65;let d=dist(h.x,h.y,e.x,e.y),mx=0,my=0;if(d<107&&d>12){mx=(h.x-e.x)/d;my=(h.y-e.y)/d}else{mx=Math.cos(e.ang);my=Math.sin(e.ang)}let oldX=e.x,oldY=e.y;moveObj(e,mx*e.speed,my*e.speed,dt,5);if(dist(oldX,oldY,e.x,e.y)<.08)e.ang+=2;
- if(d<14&&h.inv<=0){h.hp--;h.inv=1.2;state.shake=3.5;emit(h.x,h.y,'#fa9fa6',14);floater(h.x,h.y-16,'-1 HP','#ff9299');blip(160,.16,'sawtooth');if(h.hp<=0){h.hp=h.maxHp;h.gold=Math.max(0,h.gold-4);h.x=state.sheltered?shelter.tx*T:startPoint.x;h.y=state.sheltered?shelter.ty*T+T:startPoint.y;say(state.sheltered?'You woke at the shelter. Lost up to 4 gold.':'You woke near the woods. Lost up to 4 gold.',4);emit(h.x,h.y,'#e7db9a',20)}hud()}}
+ if(d<14&&h.inv<=0){h.hp--;h.inv=1.2;state.shake=3.5;emit(h.x,h.y,'#fa9fa6',14);floater(h.x,h.y-16,'-1 HP','#ff9299');blip(160,.16,'sawtooth');if(h.hp<=0){h.hp=h.maxHp;h.gold=Math.max(0,h.gold-4);h.x=state.sheltered?shelter.tx*T:startPoint.x;h.y=state.sheltered?shelter.ty*T+T:startPoint.y;stopWalk();say(state.sheltered?'You woke at the shelter. Lost up to 4 gold.':'You woke near the woods. Lost up to 4 gold.',4);emit(h.x,h.y,'#e7db9a',20)}hud()}}
  for(let i=0;i<stones.length;i++){const p=stones[i];if(!state.found[i]&&dist(h.x,h.y,p.tx*T,p.ty*T)<17){state.found[i]=true;state.sigils++;if(state.sheltered&&state.quest===0)state.quest=1;addXP(14);emit(p.tx*T,p.ty*T,'#a4f9f1',38);chord();say(state.sigils===3?'ALL THREE SIGILS! Find the eastern shrine.':`Moon Sigil found! (${state.sigils}/3)`,4);state.quest=state.sheltered&&state.sigils===3?2:state.quest;hud();saveGame(true)}}
  state.autoSave+=dt;if(state.autoSave>10){state.autoSave=0;saveGame(true)}hud()}
 function followCam(){cam.x=Math.round(clamp(state.hero.x-W/2,0,WX-W));cam.y=Math.round(clamp(state.hero.y-H/2,0,WY-H))}
@@ -535,7 +634,7 @@ function drawActor(name,worldX,worldY,flip=false,blink=false){
  }
 }
 function drawSlime(e){let y=e.y+Math.sin(state.t*5+e.phase)*2;drawActor(e.kind,e.x,y,false,e.hurt>0&&Math.floor(state.t*19)%2===0);if(e.hp<e.maxHp){let x=e.x-cam.x,y2=e.y-cam.y-20;px(x-9,y2,18,3,'#172b3e');px(x-8,y2+1,Math.ceil(16*e.hp/e.maxHp),1,'#edb2a4')}}
-function drawHero(){let h=state.hero,bob=(key.up||key.down||key.left||key.right||joy.dx||joy.dy)?Math.round(Math.abs(Math.sin(state.walk))*2):0;drawActor('hero',h.x,h.y-bob,h.dir==='left',h.inv>0&&Math.floor(state.t*12)%2===0);
+function drawHero(){let h=state.hero,bob=state.moving?Math.round(Math.abs(Math.sin(state.walk))*2):0;drawActor('hero',h.x,h.y-bob,h.dir==='left',h.inv>0&&Math.floor(state.t*12)%2===0);
  if(state.slashTimer>0){let x=Math.round(h.x-cam.x),y=Math.round(h.y-cam.y);if(h.dir==='right'){px(x+9,y-12,3,19,'#e9e4c8');px(x+12,y-8,4,13,'#bdf5e9');px(x+8,y-11,2,4,'#ffdb8c')}if(h.dir==='left'){px(x-12,y-12,3,19,'#e9e4c8');px(x-16,y-8,4,13,'#bdf5e9');px(x-10,y-11,2,4,'#ffdb8c')}if(h.dir==='up'){px(x-12,y-25,20,3,'#e9e4c8');px(x-8,y-29,13,4,'#bdf5e9')}if(h.dir==='down'){px(x-12,y+5,23,3,'#e9e4c8');px(x-8,y+8,13,4,'#bdf5e9')}}}
 function drawEffects(){for(const p of state.particles){if(p.x<cam.x||p.x>cam.x+W||p.y<cam.y||p.y>cam.y+H)continue;px(p.x-cam.x,p.y-cam.y,p.ttl>.3?3:2,p.ttl>.3?3:2,p.color)}for(const f of state.floaters){btxt(f.text,f.x-cam.x,f.y-cam.y,9,f.color,'center')}}
 function drawMap(){const x=310,y=7,mw=68,mh=52;px(x-3,y-3,mw+6,mh+6,'#15232edc');px(x-2,y-2,mw+4,mh+4,'#a5bca7');px(x,y,mw,mh,'#2e5d51');for(let ty=0;ty<MH;ty+=2)for(let tx=0;tx<MW;tx+=2){if(road(tx,ty))px(x+tx*mw/MW,y+ty*mh/MH,2,1,'#a38a65');else if(water(tx,ty))px(x+tx*mw/MW,y+ty*mh/MH,2,1,'#448c93')}for(let i=0;i<stones.length;i++){if(state.found[i])continue;let p=stones[i];px(x+p.tx*mw/MW-1,y+p.ty*mh/MH-1,3,3,'#abf6e1')}px(x+gate.tx*mw/MW-1,y+gate.ty*mh/MH-1,3,3,state.sigils===3?'#fff3a7':'#bd8bdc');px(x+state.hero.x/WX*mw-1,y+state.hero.y/WY*mh-1,3,3,'#fff2d5')}
@@ -574,6 +673,12 @@ function drawGame(){followCam();let dx=state.shake?Math.round(Math.sin(state.t*7
  for(const e of state.enemies)if(e.dead<=0)objects.push({y:e.y,paint:()=>drawSlime(e)});
  objects.push({y:state.hero.y,paint:drawHero});objects.sort((a,b)=>a.y-b.y);
  for(const o of objects){if(o.y>cam.y-70&&o.y<cam.y+H+55)o.paint()}
+ if(state.scene==='play'&&nav.marker){
+  const m=nav.marker,x=Math.round(m.x-cam.x),y=Math.round(m.y-cam.y),a=nav.marker.life/.9;
+  ctx.save();ctx.globalAlpha=Math.max(0,Math.min(.75,a*.75));
+  px(x-5,y-1,11,2,'#132f38');px(x-1,y-5,2,11,'#132f38');
+  px(x-4,y,9,1,'#ffe4a1');px(x,y-4,1,9,'#ffe4a1');ctx.restore();
+ }
  drawEffects();drawAmbient();ctx.restore();
  if(state.scene!=='play'&&!(menuOpen&&state.scene==='pause'))drawOverlay();else if(!menuOpen)drawToast()}
 function panel(x,y,w,h,title){px(x,y,w,h,'#10232e');px(x,y,w,3,'#81bba6');px(x,y,3,h,'#577e80');px(x+w-3,y,3,h,'#577e80');px(x,y+h-3,w,3,'#577e80');if(title)btxt(title,x+14,y+24,15,'#f7df9f')}
