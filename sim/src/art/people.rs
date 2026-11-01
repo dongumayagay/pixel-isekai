@@ -227,7 +227,7 @@ pub struct Look {
     pub facial: u8,
 }
 
-pub const FACIAL: [&str; 8] = ["None", "Stubble", "Mustache", "Goatee", "Short beard", "Full beard", "Long beard", "Sideburns"];
+pub const FACIAL: [&str; 8] = ["None", "Stubble", "Hero mustache", "Goatee", "Short beard", "Full beard", "Sage beard", "Crescent mustache"];
 
 impl Look {
     /// Facial hair style actually drawn: grown men only; the legacy `beard`
@@ -2903,177 +2903,95 @@ fn face(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, pose: Pose
     }
 }
 
-/// Facial hair, shaped on the face's own jaw table so it follows the cheek
-/// and chin; symmetric in front view. Hair-colour tones, darker at the
-/// edges, small clumps at the tips, the mouth left clear.
+/// Facial hair as bold flat shapes, anime-style: each reads by its outline
+/// alone, in two tones (hair colour and one step darker along the bottom
+/// and outer edges), no highlight dots or strands; the mouth stays clear.
+/// Shapes are rows of (dy below the head centre, x0, x1): the front view
+/// gives the left half and mirrors it, the profile gives it directly.
 fn facial_hair(cv: &mut Canvas, look: &Look, dir: u8, cy: i32, c: &Colors) {
     let style = look.facial_style();
-    if style == 0 {
+    if style == 0 || dir == DIR_UP {
         return;
     }
     let h = &c.hair;
-    let stub = mix(c.skin[2], h[1], 0.38);
-    if dir == DIR_DOWN {
-        let hw = |dy: i32| face_hw(look, dy.min(14)) as i32;
-        let both = |cv: &mut Canvas, x: i32, y: i32, col: Rgb| {
-            cv.put(x, y, col);
-            cv.put(FW - 1 - x, y, col);
+    let front = dir == DIR_DOWN;
+    if style == 1 {
+        // Stubble: a flat shadow tone on the jaw and upper lip, no outline.
+        let tone = mix(c.skin[2], h[1], 0.32);
+        let rows: &[(i32, i32, i32)] = if front {
+            &[(10, 21, 22), (11, 22, 23), (12, 23, 24), (12, 29, 31), (13, 25, 27), (14, 27, 31)]
+        } else {
+            &[(10, 31, 32), (11, 32, 33), (12, 33, 35), (12, 39, 40), (13, 34, 38), (14, 36, 39)]
         };
-        let mustache = |cv: &mut Canvas, half: f32| {
-            hspan(cv, half, cy + 12, h[2]);
-            hspan(cv, 1.0, cy + 12, h[1]);
-            both(cv, (32.0 - half).round() as i32, cy + 13, h[2]);
-            both(cv, (32.0 - half).round() as i32 + 1, cy + 12, h[3]);
-        };
-        match style {
-            // Stubble: a shadow along the jaw, chin and upper lip.
-            1 => {
-                for dy in 10..=14 {
-                    let w = hw(dy);
-                    for k in 0..2 {
-                        both(cv, 32 - w + k, cy + dy, stub);
-                    }
-                }
-                hspan(cv, (hw(14) as f32 - 1.0).max(2.0), cy + 14, stub);
-                hspan(cv, 2.0, cy + 12, stub);
-            }
-            2 => mustache(cv, 3.0),
-            // Goatee joined to the mustache around the mouth.
-            3 => {
-                mustache(cv, 2.5);
-                both(cv, 29, cy + 13, h[2]);
-                hspan(cv, 2.5, cy + 14, h[2]);
-                hspan(cv, 2.0, cy + 15, h[1]);
-                hspan(cv, 1.0, cy + 15, h[2]);
-            }
-            // Beards: cheeks below the eyes stay clean, the jaw is covered,
-            // and the full and long ones hang below the chin.
-            4..=6 => {
-                let below = match style {
-                    4 => 1,
-                    5 => 5,
-                    _ => 13,
-                };
-                for dy in 9..=14 + below {
-                    let half = if dy <= 14 {
-                        hw(dy) as f32
-                    } else {
-                        let t = (dy - 14) as f32;
-                        if style == 6 { (6.0 - t * 0.38).max(1.0) } else { (5.0 - t * 0.75).max(1.0) }
-                    };
-                    let x0 = (32.0 - half).round() as i32;
-                    for x in x0..32 {
-                        let inner = x - x0;
-                        // Cheek area above the mouth stays visible.
-                        if dy <= 12 && inner > if dy <= 10 { 2 } else { 3 } {
-                            continue;
-                        }
-                        if dy == 13 && x >= 30 {
-                            continue;
-                        }
-                        let tip = dy > 14 && (x - x0) % 3 == 0 && dy == 14 + below;
-                        let col = if inner == 0 || tip { h[1] } else if (x + dy) % 5 == 0 && dy > 11 { h[3] } else { h[2] };
-                        both(cv, x, cy + dy, col);
-                    }
-                }
-                mustache(cv, 3.0);
-                if style == 6 {
-                    // Strand lines down the long beard.
-                    for dy in 16..14 + below {
-                        both(cv, 30, cy + dy, h[1]);
-                    }
-                }
-            }
-            // Sideburns: strips down the face edges from the hair.
-            _ => {
-                for dy in 1..=11 {
-                    let w = hw(dy);
-                    let wide = if dy < 9 { 3 } else { 2 };
-                    for k in 0..wide {
-                        both(cv, 32 - w + k, cy + dy, if k == 0 { h[1] } else { h[2] });
-                    }
+        for &(dy, x0, x1) in rows {
+            for x in x0..=x1 {
+                cv.put(x, cy + dy, tone);
+                if front {
+                    cv.put(FW - 1 - x, cy + dy, tone);
                 }
             }
         }
-    } else if dir == DIR_SIDE {
-        // Profile: the face edge comes from the side head table.
-        let edge = |dy: i32| SIDE_HEAD[(dy.clamp(-13, 14) + 13) as usize];
-        let put = |cv: &mut Canvas, x: i32, dy: i32, col: Rgb| cv.put(x, cy + dy, col);
-        let mustache = |cv: &mut Canvas| {
-            let r = 32 + edge(12).1;
-            for x in r - 5..r - 1 {
-                put(cv, x, 12, h[2]);
+        return;
+    }
+    // (dy, x0, x1) spans; front = left half up to the centre column 31.
+    let shape: Vec<(i32, i32, i32)> = match (style, front) {
+        // Hero block (Omni-Man): flat-topped under the nose, thick over the
+        // outer thirds, square ends dropping past the mouth corners.
+        (2, true) => vec![(11, 26, 30), (12, 25, 31), (13, 25, 28), (14, 25, 27)],
+        (2, false) => vec![(11, 37, 41), (12, 36, 41), (13, 36, 38)],
+        // Van Dyke: a thin mustache and a pointed wedge under the lip.
+        (3, true) => vec![(12, 28, 31), (14, 29, 31), (15, 30, 31), (16, 31, 31)],
+        (3, false) => vec![(12, 39, 41), (14, 37, 40), (15, 37, 39), (16, 37, 38)],
+        // Short boxed: a band from the sideburn along the jaw, joined to
+        // the mustache, flat across under the chin.
+        (4, true) => vec![(4, 20, 21), (5, 20, 21), (6, 20, 21), (7, 20, 21), (8, 20, 21), (9, 21, 22), (10, 21, 22), (11, 22, 24), (12, 23, 25), (12, 28, 31), (13, 25, 29), (14, 27, 31), (15, 28, 31)],
+        (4, false) => vec![(4, 31, 32), (5, 31, 32), (6, 31, 32), (7, 31, 32), (8, 31, 32), (9, 31, 33), (10, 31, 33), (11, 32, 34), (12, 33, 36), (12, 39, 41), (13, 34, 38), (14, 36, 40), (15, 35, 39)],
+        // Full warrior: cheeks below the cheekbone, past the chin, a lobed
+        // bottom edge.
+        (5, true) => vec![(4, 20, 21), (5, 20, 21), (6, 20, 21), (7, 20, 21), (8, 20, 22), (9, 21, 23), (10, 21, 24), (11, 22, 26), (12, 23, 31), (13, 25, 31), (14, 26, 31), (15, 26, 31), (16, 27, 31), (17, 27, 29), (17, 31, 31)],
+        (5, false) => vec![(4, 31, 32), (5, 31, 32), (6, 31, 32), (7, 31, 32), (8, 31, 33), (9, 31, 34), (10, 31, 35), (11, 31, 37), (12, 31, 41), (13, 32, 41), (14, 33, 41), (15, 34, 41), (16, 34, 40), (17, 35, 36), (17, 38, 39)],
+        // Sage: full, then a long wedge narrowing to a point well below the
+        // chin.
+        (6, true) => {
+            let mut v = vec![(4, 20, 21), (5, 20, 21), (6, 20, 21), (7, 20, 21), (8, 20, 22), (9, 21, 23), (10, 21, 24), (11, 22, 26), (12, 23, 31), (13, 25, 31)];
+            for (k, x0) in [26, 26, 27, 27, 28, 28, 29, 29, 30, 30, 31].into_iter().enumerate() {
+                v.push((14 + k as i32, x0, 31));
             }
-            put(cv, r - 5, 13, h[2]);
-        };
-        match style {
-            // Stubble: a light band along the jaw and chin.
-            1 => {
-                for dy in 12..=14 {
-                    let (_, r) = edge(dy);
-                    for x in 33..(32 + r - 1) {
-                        if dy == 14 || x < 36 || (dy == 12 && x > 32 + r - 5) {
-                            put(cv, x, dy, stub);
-                        }
-                    }
-                }
+            v
+        }
+        (6, false) => {
+            let mut v = vec![(4, 31, 32), (5, 31, 32), (6, 31, 32), (7, 31, 32), (8, 31, 33), (9, 31, 34), (10, 31, 35), (11, 31, 37), (12, 31, 41), (13, 32, 41)];
+            for k in 0..11 {
+                let t = k as f32;
+                v.push((14 + k, (33.0 + t * 0.55).round() as i32, (41.0 - t * 0.25).round() as i32));
             }
-            2 => mustache(cv),
-            3 => {
-                mustache(cv);
-                let r = 32 + edge(14).1;
-                for dy in 14..=15 {
-                    for x in r - 4..r {
-                        put(cv, x, dy, h[if dy == 15 { 1 } else { 2 }]);
-                    }
-                }
+            v
+        }
+        // Crescent (Whitebeard): a long sweep over the lip, tips curling up.
+        (_, true) => vec![(10, 23, 23), (11, 23, 25), (12, 25, 31), (13, 26, 29)],
+        (_, false) => vec![(10, 36, 36), (11, 36, 37), (12, 37, 41)],
+    };
+    let inside = |x: i32, dy: i32| shape.iter().any(|&(d, x0, x1)| d == dy && x >= x0 && x <= x1);
+    cv.begin();
+    for &(dy, x0, x1) in &shape {
+        for x in x0..=x1 {
+            // Edge tone along the bottom and the outer (cheek or back) side.
+            let edge = !inside(x, dy + 1) || !inside(x - 1, dy);
+            let col = h[if edge { 1 } else { 2 }];
+            cv.fill(x, cy + dy, col);
+            if front && x < 32 {
+                cv.fill(FW - 1 - x, cy + dy, col);
             }
-            4..=6 => {
-                let below = match style {
-                    4 => 1,
-                    5 => 5,
-                    _ => 13,
-                };
-                // A beard is a mass: from the sideburn it covers the jaw and
-                // chin (the lips stay clear), then hangs in front of the neck
-                // and chest, narrowing to clumped points.
-                for dy in 9..=14 + below {
-                    let t = (dy - 14).max(0) as f32;
-                    let (x0, x1) = if dy <= 14 {
-                        let (l, r) = edge(dy);
-                        let back = if dy <= 11 { 33 } else { 32 + l.max(-2) };
-                        (back, 32 + r - 1)
-                    } else {
-                        let (back, front) = if style == 6 { (0.4, 0.5) } else { (0.8, 0.9) };
-                        ((33.0 + t * back).round() as i32, (41.5 - t * front).round() as i32)
-                    };
-                    for x in x0..x1.max(x0 + 1) {
-                        // Only the sideburn above the cheek; the lips clear.
-                        if dy <= 10 && x > 35 {
-                            continue;
-                        }
-                        if (12..=13).contains(&dy) && x >= x1 - 2 {
-                            continue;
-                        }
-                        let tip = dy == 14 + below && (x - x0) % 2 == 1;
-                        if tip {
-                            continue;
-                        }
-                        let edge_px = x == x0 || x == x1 - 1 || dy == 14 + below;
-                        let col = if edge_px { h[1] } else if (x + dy) % 4 == 0 { h[3] } else { h[2] };
-                        put(cv, x, dy, col);
-                    }
-                }
-                mustache(cv);
-            }
-            // Sideburns: down from the hairline in front of the ear.
-            _ => {
-                for dy in 1..=10 {
-                    for x in 33..35 {
-                        put(cv, x, dy, h[2]);
-                    }
-                }
-            }
+        }
+    }
+    // Beards over the lips keep the mouth as a dark notch.
+    if matches!(style, 5 | 6) {
+        let dark = mix(h[0], pal::INK, 0.3);
+        if front {
+            hspan(cv, 1.5, cy + 13, dark);
+        } else {
+            cv.put(40, cy + 13, dark);
+            cv.put(41, cy + 13, dark);
         }
     }
 }
