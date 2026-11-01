@@ -1170,8 +1170,10 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             let len = b.thigh + 4.0;
             let sway = b.sway;
             cv.begin();
-            cv.profile(top, top + len, |y| cx + (y - top) / len * sway * 0.8, |y| b.waist_w + 1.2 + (y - top) * 0.45, &c.top, -0.02);
-            hem_folds(cv, top, top + len, cx, b.waist_w + 1.2, 0.45, &c.top, sway);
+            let (w0, k) = skirt_shape(side, b.waist_w + 1.2, 0.45);
+            let sc = if side { cx - 0.5 } else { cx };
+            cv.profile(top, top + len, |y| sc + (y - top) / len * sway * 0.8, |y| w0 + (y - top) * k, &c.top, -0.02);
+            hem_folds(cv, top, top + len, sc, w0, k, &c.top, sway);
             sash(cv, b, &c.linen, lean, width);
         }
         outfit::DIRNDL | outfit::GUILD => {
@@ -1198,8 +1200,10 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             let len = b.thigh + 2.5;
             let sway = b.sway;
             cv.begin();
-            cv.profile(top, top + len, |y| cx + (y - top) / len * sway * 0.8, |y| b.waist_w + 1.8 + (y - top) * 0.52, &skirt, 0.0);
-            hem_folds(cv, top, top + len, cx, b.waist_w + 1.8, 0.52, &skirt, sway);
+            let (w0, k) = skirt_shape(side, b.waist_w + 1.8, 0.52);
+            let sc = if side { cx - 0.5 } else { cx };
+            cv.profile(top, top + len, |y| sc + (y - top) / len * sway * 0.8, |y| w0 + (y - top) * k, &skirt, 0.0);
+            hem_folds(cv, top, top + len, sc, w0, k, &skirt, sway);
             if !back {
                 if look.outfit == outfit::DIRNDL {
                     let aw = if side { 3.0 } else { 5.0 };
@@ -1229,8 +1233,9 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             let len = bottom - top;
             let sway = b.sway;
             cv.begin();
-            cv.profile(top, bottom, |y| cx + (y - top) / len * sway * 0.7, |y| b.waist_w + 1.6 + (y - top) * 0.24, &c.top, 0.0);
-            hem_folds(cv, top, bottom, cx, b.waist_w + 1.6, 0.24, &c.top, sway);
+            let (w0, k) = skirt_shape(side, b.waist_w + 1.6, 0.24);
+            cv.profile(top, bottom, |y| cx + (y - top) / len * sway * 0.7, |y| w0 + (y - top) * k, &c.top, 0.0);
+            hem_folds(cv, top, bottom, cx, w0, k, &c.top, sway);
             if !side && !back {
                 let gold = gold5();
                 for y in (sy + 1.0) as i32..bottom as i32 {
@@ -1382,6 +1387,12 @@ fn sash(cv: &mut Canvas, b: &Build, ramp: &R5, lean: impl Fn(f32) -> f32, width:
     let c = lean(y);
     cv.begin();
     cv.profile(y - 1.0, y + 1.5, |_| c, |_| w, ramp, 0.05);
+}
+
+/// Skirt start half-width and flare per row. In profile a skirt only has
+/// the body's depth to hang from and flares far less.
+fn skirt_shape(side: bool, w0: f32, k: f32) -> (f32, f32) {
+    if side { (6.2, k * 0.5) } else { (w0, k) }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1537,7 +1548,9 @@ fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
         }
         _ => {
             for dy in -13..=14 {
-                let hw = face_hw(look, dy);
+                // From behind there is no jaw: the skull under the hair,
+                // then only the neck.
+                let hw = if dir == DIR_UP && dy > 4 { if look.female { 3.5 } else { 4.5 } } else { face_hw(look, dy) };
                 if hw <= 0.0 {
                     continue;
                 }
@@ -1801,8 +1814,14 @@ fn back_hair(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     // Ponytail and twin tails hang behind in front and side views.
     match look.hair_style {
         2 if side => {
-            let base = v(32.0 - 13.0, hc.y - 6.0);
-            tail_lock(cv, h, base, base.add(v(-5.0 - sway * 2.0, 26.0)), 4.2);
+            // Tied high at the back of the head: sweeps out, then falls.
+            let tie = v(32.0 - 12.5, hc.y - 7.0);
+            let mid = tie.add(v(-4.5 - sway, 7.0));
+            let end = mid.add(v(-1.0 - sway * 2.0, 17.0));
+            lock_segment(cv, h, tie, mid, 3.6, false);
+            tail_lock(cv, h, mid.add(v(0.5, -1.0)), end, 4.2);
+            cv.begin();
+            cv.ellipse(tie.add(v(0.5, 0.0)), 2.0, 2.4, &r5(&ramp4(&pal::CLOTH[1])), 0.05);
         }
         2 => {
             let base = v(32.0 + 11.0, hc.y + 2.0);
@@ -1875,6 +1894,11 @@ fn flow_lines(cv: &mut Canvas, h: &R5, cx: f32, crown_y: f32, skull_y: f32, bott
 
 /// A tapered lock (ponytail, twin tail) with flat banded shading.
 fn tail_lock(cv: &mut Canvas, h: &R5, a: V2, b: V2, r: f32) {
+    lock_segment(cv, h, a, b, r, true);
+}
+
+/// One segment of a lock; `taper` false keeps it full (for joining a curve).
+fn lock_segment(cv: &mut Canvas, h: &R5, a: V2, b: V2, r: f32, taper: bool) {
     let (dx, dy) = (b.x - a.x, b.y - a.y);
     let len2 = (dx * dx + dy * dy).max(1e-4);
     let (x0, x1) = ((a.x.min(b.x) - r - 1.0) as i32, (a.x.max(b.x) + r + 1.0) as i32);
@@ -1884,7 +1908,7 @@ fn tail_lock(cv: &mut Canvas, h: &R5, a: V2, b: V2, r: f32) {
             let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
             let t = (((px - a.x) * dx + (py - a.y) * dy) / len2).clamp(0.0, 1.0);
             // Full near the tie, swelling, then tapering to a point.
-            let rr = r * (0.75 + (t * 3.0).min(1.0) * 0.35) * (1.0 - t.powf(1.6) * 0.92);
+            let rr = if taper { r * (0.75 + (t * 3.0).min(1.0) * 0.35) * (1.0 - t.powf(1.6) * 0.92) } else { r * (0.85 + t * 0.15) };
             let (ox, oy) = (px - (a.x + dx * t), py - (a.y + dy * t));
             let d2 = ox * ox + oy * oy;
             if d2 > rr * rr {
