@@ -692,8 +692,7 @@ fn build(look: &Look, pose: Pose, plant: f32) -> Build {
         [(11.0, 10.4, 8.4, 9.2, 4.7, 3.0), (12.0, 11.5, 9.0, 9.8, 5.0, 3.4), (13.4, 13.0, 9.6, 10.2, 5.8, 4.1), (12.6, 13.0, 12.2, 11.4, 6.0, 3.7)][bd]
     };
     let bust: f32 = if fig {
-        let r = [0.0f32, 4.2, 5.4, 6.4, 7.2][look.figure.min(4) as usize];
-        if look.age == 2 { r * 0.85 } else { r }
+        [0.0f32, 4.2, 5.4, 6.4, 7.2][look.figure.min(4) as usize]
     } else {
         0.0
     };
@@ -1964,10 +1963,6 @@ fn face(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, pose: Pose
                 cv.put(x, cy + 11, blush);
                 cv.put(FW - 1 - x, cy + 11, blush);
             }
-        }
-        if look.age == 2 {
-            cv.put(22, cy + 11, c.skin[2]);
-            cv.put(FW - 1 - 22, cy + 11, c.skin[2]);
         }
         if look.glasses {
             // Thin half-rim frames: lower rim, short sides, bridge, a glint.

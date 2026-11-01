@@ -22,8 +22,8 @@ const OUTFITS = ['Tunic', 'Dress', 'Robe', 'Apron', 'Armor', 'Cloak', 'Vest', 'D
 const HATS = ['None', 'Straw hat', 'Bandana', 'Helmet', 'Hood', 'Cap', 'Witch hat', 'Flower', 'Chef', 'Ribbon', 'Maid band', 'Miner helmet'];
 const HELD = ['None', 'Staff', 'Hammer', 'Mug', 'Book', 'Sword', 'Basket', 'Axe', 'Pickaxe', 'Hoe', 'Fishing rod', 'Spear', 'Ladle'];
 const BEASTS = ['Cat', 'Fox', 'Wolf', 'Rabbit'];
-// No child characters for now; age 1 = adult, 2 = elder.
-const AGES = ['Adult', 'Elder'];
+// Everyone is a grown adult; looking older comes from grey hair, a bald cut
+// or a beard rather than an age switch.
 const DIRS = [
   { name: 'Down', dir: 0, flip: false },
   { name: 'Up', dir: 1, flip: false },
@@ -138,7 +138,7 @@ function renderControls() {
   f.innerHTML = `
     <h3>Race</h3><div class="row" id="c-race"></div>
     <div id="c-beast-wrap"><h3>Beast kind</h3><div class="row" id="c-beast"></div></div>
-    <h3>Body</h3><div class="row" id="c-sex"></div><div class="row" id="c-age" style="margin-top:5px"></div>
+    <h3>Body</h3><div class="row" id="c-sex"></div>
     <h3>Height</h3><div class="row" id="c-height"></div>
     <h3>Build</h3><div class="row" id="c-build"></div>
     <div id="c-fig-wrap"><h3>Figure</h3><div class="row" id="c-fig"></div></div>
@@ -158,7 +158,6 @@ function renderControls() {
   $('#c-beast-wrap').style.display = look.race === 3 ? '' : 'none';
   buttons($('#c-beast'), BEASTS, (b) => b, (i) => look.beast === i, (i) => set({ beast: i }));
   buttons($('#c-sex'), ['Female', 'Male'], (s) => s, (i) => look.female === (i === 0), (i) => set({ female: i === 0 }));
-  buttons($('#c-age'), AGES, (a) => a, (i) => look.age === i + 1, (i) => set({ age: i + 1 }));
   buttons($('#c-height'), info.heights, (h) => h, (i) => (look.height ?? 1) === i, (i) => set({ height: i }));
   buttons($('#c-build'), look.female ? info.buildsF : info.buildsM, (b) => b, (i) => look.build === i, (i) => set({ build: i }));
   $('#c-fig-wrap').style.display = look.female && look.age > 0 ? '' : 'none';
