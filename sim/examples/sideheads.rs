@@ -9,22 +9,22 @@ fn main() {
     let base = people::cast()[1].1;
     let (cw, ch) = (40, 44);
     let n = people::HAIR_STYLES as i32;
-    let mut img = Img::new(cw * n, ch * 2);
+    let mut img = Img::new(cw * n, ch * 4);
     for y in 0..img.h {
         for x in 0..img.w {
             img.set(x, y, if (x / cw + y / ch) % 2 == 0 { hex(0x6a9a5a) } else { hex(0x5a8a4e) });
         }
     }
     for style in 0..n {
-        for (row, female) in [true, false].into_iter().enumerate() {
+        for (row, (female, dir)) in [(true, 0u8), (true, 2), (false, 0), (false, 2)].into_iter().enumerate() {
             let look = Look { hair_style: style as u8, female, hat: 0, held: 0, outfit: 0, hair: [1, 3, 0, 4][style as usize % 4], ..base };
-            let fr = people::frame(&look, 2, 0);
+            let fr = people::frame(&look, dir, 0);
             let mut head = Img::new(cw, ch);
             head.blit(&fr, -12, -14, false);
             img.blit(&head, style * cw, row as i32 * ch, false);
         }
     }
-    let s = 5usize;
+    let s = 4usize;
     let (ow, oh) = (img.w as usize * s, img.h as usize * s);
     let mut o = vec![0u8; ow * oh * 4];
     for yy in 0..oh {

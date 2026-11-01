@@ -750,7 +750,9 @@ fn limbs(b: &Build, pose: Pose, dir: u8) -> Limbs {
     let (knee_l, ankle_l) = leg(hip_l, -1.0, sl, lift_l);
     let (knee_r, ankle_r) = leg(hip_r, 1.0, sr, lift_r);
     let sh_dx = if side { 0.0 } else { b.shoulder_w - 0.6 };
-    let sh_y = b.shoulder_y + 3.0;
+    // The arm's ball sits just under the shoulder line so the deltoid reads
+    // as a one-pixel rounding, not a pad poking above the slope.
+    let sh_y = b.shoulder_y + 2.0 + b.arm_r * 0.6;
     let sh_l = v(b.cx - sh_dx, sh_y);
     let sh_r = v(b.cx + sh_dx, sh_y);
     let arm = |sh: V2, swing: f32, out: f32| -> (V2, V2) {
@@ -1180,14 +1182,14 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     let hk = b.hip_w / 11.2;
     let (front_keys, back_keys): (Vec<(f32, f32)>, Vec<(f32, f32)>) = if look.female {
         (
-            vec![(sy - 0.5, 3.6), (sy + 4.0, 5.0), (sy + 10.0, 4.6), (b.waist_y, 3.8), (b.hip_y, 4.4), (cy + 1.0, 4.0)],
-            vec![(sy - 0.5, -3.8), (sy + 4.0, -5.2), (b.waist_y - 1.0, -3.4), (b.hip_y + 1.0, -3.4 - 3.6 * hk), (cy + 1.0, -4.6 * hk)],
+            vec![(sy - 0.5, 4.0), (sy + 4.0, 5.8), (sy + 10.0, 5.6), (b.waist_y, 5.0), (b.hip_y, 5.6), (cy + 1.0, 5.0)],
+            vec![(sy - 0.5, -4.2), (sy + 4.0, -5.8), (b.waist_y - 1.0, -4.6), (b.hip_y + 1.0, -4.4 - 3.6 * hk), (cy + 1.0, -5.6 * hk)],
         )
     } else {
         let bk = b.chest_w / 11.5;
         (
-            vec![(sy - 0.5, 4.2), (sy + 4.0, 6.4 * bk), (sy + 11.0, 6.0 * bk), (b.waist_y, 4.6 * b.waist_w / 9.0), (b.hip_y, 4.8), (cy + 1.0, 4.4)],
-            vec![(sy - 0.5, -4.4), (sy + 4.0, -6.0 * bk), (b.waist_y - 1.0, -4.4), (b.hip_y + 1.0, -5.4 * hk), (cy + 1.0, -4.8)],
+            vec![(sy - 0.5, 4.6), (sy + 4.0, 7.0 * bk), (sy + 11.0, 6.6 * bk), (b.waist_y, 5.6 * b.waist_w / 9.0), (b.hip_y, 5.6), (cy + 1.0, 5.2)],
+            vec![(sy - 0.5, -4.8), (sy + 4.0, -6.6 * bk), (b.waist_y - 1.0, -5.4), (b.hip_y + 1.0, -6.2 * hk), (cy + 1.0, -5.6)],
         )
     };
     let keys: Vec<(f32, f32)> = if side {
@@ -1763,24 +1765,26 @@ const SIDE_HEAD: [(i32, i32); 28] = [
     (-13, 12),
     (-13, 12),
     (-13, 12),
-    // Brow, a slight eye socket, cheek, nose tip at the eye's bottom, lips,
-    // chin. Behind the ear the skull narrows into the nape, and the jaw
-    // angles from under the ear down to the chin.
+    // Face front on the same rows as the front view: forehead and bridge
+    // straight down past the eye, a one-pixel nose on the front nose row,
+    // the lips on the mouth row, a small chin tucked behind the nose. Behind
+    // the ear the skull narrows into the nape, and the jaw angles from under
+    // the ear to the chin.
     (-13, 12),
     (-13, 12),
-    (-13, 11),
-    (-12, 11),
-    (-12, 11),
-    (-11, 11),
-    (-10, 11),
+    (-13, 12),
+    (-12, 12),
+    (-12, 12),
+    (-11, 12),
     (-9, 12),
-    (-8, 12),
-    (-7, 13),
-    (-6, 12),
-    (-6, 11),
-    (-1, 11),
-    (2, 10),
-    (4, 9),
+    (-7, 12),
+    (-5, 12),
+    (-4, 12),
+    (-4, 12),
+    (-4, 13),
+    (-3, 12),
+    (2, 12),
+    (5, 11),
 ];
 
 fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
@@ -1798,16 +1802,19 @@ fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             }
         }
         _ => {
-            if dir == DIR_UP && look.race != RACE_ELF {
-                // Ears at the sides of the head, seen from behind.
-                for s in [-1.0f32, 1.0] {
-                    cv.ellipse(v(32.0 + s * 12.6, hc.y + 3.5), 1.9, 3.0, &c.skin, -0.05);
-                }
-            }
+            // From behind, anime heads hide the ears under the hair.
             for dy in -13..=14 {
                 // From behind there is no jaw: the skull under the hair,
                 // then only the neck.
-                let hw = if dir == DIR_UP && dy > 4 { if look.female { 4.5 } else { 5.5 } } else { face_hw(look, dy) };
+                // From behind, the back of the skull and jaw narrow smoothly
+                // into the neck under the hairline.
+                let hw = if dir == DIR_UP && dy > 4 {
+                    let neck = if look.female { 4.5 } else { 5.5 };
+                    let top = face_hw(look, 4);
+                    top + (neck - top) * ((dy - 4) as f32 / 8.0).min(1.0).powf(0.7)
+                } else {
+                    face_hw(look, dy)
+                };
                 if hw <= 0.0 {
                     continue;
                 }
@@ -1865,15 +1872,26 @@ const EYE_CLOSED: [&str; 8] = [
     ".......",
 ];
 /// Side-view eye facing right (column 0 is the back corner).
+/// Same rows as the front eye; about half its width is visible, the lash
+/// bar stays as thick, and the iris is pushed to the front edge with the
+/// white showing behind it.
 const EYE_SIDE: [&str; 8] = [
     "aKKKa",
     "KKKKK",
     ".bDDK",
-    ".WDDS",
-    ".WDMS",
-    ".MMLS",
-    "..LM.",
-    "..b..",
+    ".SWDD",
+    ".SDMD",
+    "..MLM",
+    "..LLM",
+    "...b.",
+];
+const EYE_SIDE_M: [&str; 6] = [
+    "aKKKa",
+    "KKKKK",
+    ".SDDK",
+    ".SWDM",
+    "..MLM",
+    "...b.",
 ];
 const EYE_SIDE_CLOSED: [&str; 8] = [".....", ".....", ".....", ".....", ".....", "KKKKa", ".bb..", "....."];
 
@@ -1954,15 +1972,24 @@ fn face(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, pose: Pose
         }
         facial_hair(cv, look, dir, cy, c);
     } else if dir == DIR_SIDE {
-        let ex = 36;
+        // Two pixels of skin between the eye and the bridge, as in front.
+        let ex = 37;
         let ey = cy + 3;
-        stamp(cv, ex, ey, if pose.blink { &EYE_SIDE_CLOSED } else { &EYE_SIDE }, false, &eye_pal);
+        if pose.blink {
+            stamp(cv, ex, ey, &EYE_SIDE_CLOSED, false, &eye_pal);
+        } else if soft {
+            stamp(cv, ex, ey, &EYE_SIDE, false, &eye_pal);
+        } else {
+            stamp(cv, ex, ey + 1, &EYE_SIDE_M, false, &eye_pal);
+        }
+        // Nose shadow under the tip, on the front view's nose row.
+        cv.put(32 + 12, cy + 12, c.skin[2]);
         if soft {
             for k in 0..3 {
                 cv.put(ex - 1 + k, cy + 11, blush);
             }
         }
-        cv.put(32 + 9, cy + 13, lip);
+        cv.put(32 + 11, cy + 13, lip);
         facial_hair(cv, look, dir, cy, c);
         if look.glasses {
             let g = hex(0x4a3a30);
@@ -2363,25 +2390,30 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             let mc = v(32.0, hc.y - 1.0);
             // From behind, hair comes down to about the jaw; gathered styles
             // show more of the nape.
-            let nape = hc.y + if matches!(style, 2 | 3) { 9.0 } else { k.nape.max(12.0) };
-            let ear = mc.y + 4.0;
+            let gathered = matches!(style, 2 | 3);
+            let nape = hc.y + if gathered { 10.0 } else { k.nape.max(12.0) };
             let neck_w = if look.female { 6.0 } else { 7.0 };
             for y in (mc.y - ry).floor() as i32..=nape.ceil() as i32 {
                 let fy = y as f32 + 0.5;
-                // Full head width down to the ears, then tapering to the neck.
-                let half = if fy < ear {
+                // An egg from behind: round crown, widest at the temples,
+                // then curving in smoothly to the nape (no bell flare and
+                // pinch), never narrower than the neck.
+                let half = if fy < mc.y {
                     let ny = (fy - mc.y) / ry;
-                    rx * (1.0 - ny.min(0.0) * ny.min(0.0)).max(0.0).sqrt()
+                    rx * (1.0 - ny * ny).max(0.0).sqrt()
                 } else {
-                    let t = ((fy - ear) / (nape - ear).max(1.0)).clamp(0.0, 1.0);
-                    rx * (1.0 - (4.0 - 3.0 * t) * 0.0) + (neck_w - rx) * t.powf(1.4)
+                    let t = ((fy - mc.y) / (nape - mc.y + 2.0)).clamp(0.0, 1.0);
+                    (rx * (1.0 - t * t).sqrt()).max(neck_w)
                 };
                 for x in (32.0 - rx - 1.0) as i32..=(32.0 + rx + 1.0) as i32 {
                     let nx = (x as f32 + 0.5 - mc.x) / rx;
                     let ny = (fy - mc.y) / ry;
                     let d = (x as f32 + 0.5 - 32.0).abs();
                     // Hairline dips in the middle and rises at the sides.
-                    if d > half + EPS || fy > nape - (d / neck_w).powi(2) * 2.0 {
+                    // Gathered hair shows the hairline: it curves up behind
+                    // the ears into a rounded V at the nape.
+                    let rise = if gathered { (d / rx).min(1.0).powf(1.6) * 7.0 } else { (d / neck_w).min(1.0).powi(2) * 2.0 };
+                    if d > half + EPS || fy > nape - rise {
                         continue;
                     }
                     cv.fill(x, y, h[if nx.abs() > 0.86 || ny > 0.7 { 2 } else { 3 }]);
@@ -2457,8 +2489,8 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     cv.fill(x, y, h[if rim { 2 } else { 3 }]);
                 }
             }
-            // The ear sits on the hair just behind the jaw hinge, from the
-            // eye line to the nose, tucked behind the side lock. Beastfolk
+            // The ear sits just behind the head's centre, from mid-eye down
+            // to the nose row, its front edge tucked under the side lock. Beastfolk
             // hear with their animal ears and elves draw their own.
             if !matches!(look.race, RACE_ELF | RACE_BEAST) {
                 let s = c.skin;
@@ -2469,7 +2501,7 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     _ => None,
                 };
                 cv.begin();
-                stamp_fill(cv, 26, cy.round() as i32 + 3, &EAR_SIDE, false, &pal);
+                stamp_fill(cv, 27, cy.round() as i32 + 5, &EAR_SIDE, false, &pal);
                 cv.begin();
             }
             // Side lock in front of the ear.
