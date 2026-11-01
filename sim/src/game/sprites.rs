@@ -14,7 +14,7 @@ use crate::world::{Prop, PropKind, World, TILE};
 pub const PAGE_NATURE: usize = 0;
 pub const PAGE_HOUSES: usize = 1;
 pub const PAGE_CHARS: usize = 2;
-pub const PAGES: usize = 4;
+pub const PAGES: usize = 5;
 
 pub struct HouseArt {
     pub sprite: u16,
@@ -145,9 +145,12 @@ impl SpriteBank {
     pub fn add_sheet(&mut self, look: &people::Look) -> u16 {
         let frames = people::sheet(look);
         let mut first = None;
-        for f in frames.iter() {
+        for full in frames.iter() {
+            // Crop transparent margins to save atlas space.
+            let (f, pivot) = crop(full, people::PIVOT);
+            let f = &f;
             let id = loop {
-                if let Some(id) = self.atlas.try_add(self.next_char_page, f, people::PIVOT) {
+                if let Some(id) = self.atlas.try_add(self.next_char_page, f, pivot) {
                     break id;
                 }
                 if self.next_char_page + 1 >= PAGES {
@@ -220,6 +223,33 @@ impl SpriteBank {
         };
         self.atlas.get(&name)
     }
+}
+
+/// Crop an image to its opaque bounding box, adjusting the pivot.
+fn crop(img: &Img, pivot: (i32, i32)) -> (Img, (i32, i32)) {
+    let (mut x0, mut y0, mut x1, mut y1) = (img.w, img.h, -1, -1);
+    for y in 0..img.h {
+        for x in 0..img.w {
+            if img.alpha(x, y) != 0 {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x);
+                y1 = y1.max(y);
+            }
+        }
+    }
+    if x1 < 0 {
+        return (Img::new(1, 1), (0, 0));
+    }
+    let mut o = Img::new(x1 - x0 + 1, y1 - y0 + 1);
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            if let Some(c) = img.get(x, y) {
+                o.set(x - x0, y - y0, c);
+            }
+        }
+    }
+    (o, (pivot.0 - x0, pivot.1 - y0))
 }
 
 pub fn building_kind(state: u8) -> BuildingKind {

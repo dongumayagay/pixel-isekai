@@ -20,11 +20,11 @@ pub enum BuildingKind {
 impl BuildingKind {
     pub fn size(self) -> (u8, u8) {
         match self {
-            BuildingKind::Home => (4, 3),
-            BuildingKind::Inn => (6, 4),
-            BuildingKind::Store => (5, 3),
-            BuildingKind::Smithy => (5, 3),
-            BuildingKind::Chapel => (4, 4),
+            BuildingKind::Home => (5, 3),
+            BuildingKind::Inn => (7, 4),
+            BuildingKind::Store => (6, 3),
+            BuildingKind::Smithy => (6, 3),
+            BuildingKind::Chapel => (5, 4),
         }
     }
     pub fn label(self) -> &'static str {
@@ -60,7 +60,7 @@ pub struct Village {
 }
 
 fn site_score(w: &World, cx: i32, cy: i32) -> Option<f32> {
-    let r = 12;
+    let r = 14;
     let lv = w.level(cx, cy);
     if w.terrain(cx, cy) != Terrain::Grass || lv == 3 {
         return None;
@@ -281,7 +281,7 @@ pub fn generate(w: &mut World, rng: &mut Rng) {
 
 fn area_free(w: &World, x0: i32, y0: i32, fw: i32, fh: i32, lv: u8) -> bool {
     // Footprint grows north from row y0; require a 1-tile margin.
-    for y in (y0 - fh + 1)..=(y0 + 1) {
+    for y in (y0 - fh - 2)..=(y0 + 1) {
         for x in (x0 - 1)..=(x0 + fw) {
             if !w.free_for_prop(x, y) || w.level(x, y) != lv || w.terrain(x, y) != Terrain::Grass {
                 return false;
@@ -292,7 +292,7 @@ fn area_free(w: &World, x0: i32, y0: i32, fw: i32, fh: i32, lv: u8) -> bool {
 }
 
 fn mark_no_props(w: &mut World, x0: i32, y0: i32, fw: i32, fh: i32) {
-    for y in (y0 - fh)..=(y0 + 1) {
+    for y in (y0 - fh - 2)..=(y0 + 1) {
         for x in (x0 - 1)..=(x0 + fw) {
             w.set_flag(x, y, flag::NO_PROPS, true);
         }
@@ -336,7 +336,7 @@ fn layout(w: &mut World, rng: &mut Rng, pf: &mut PathFinder, v: &mut Village) {
         let (fw, fh) = (fw as i32, fh as i32);
         let mut placed = false;
         for attempt in 0..400 {
-            let ring = 5.5 + (attempt as f32 / 25.0).floor() * 1.0 + rng.f32() * 2.0;
+            let ring = 7.0 + (attempt as f32 / 25.0).floor() * 1.2 + rng.f32() * 2.5;
             let ang = rng.f32() * std::f32::consts::TAU;
             let x0 = cx + (ang.cos() * ring) as i32 - fw / 2;
             let y0 = cy + (ang.sin() * ring * 0.85) as i32 + fh / 2;

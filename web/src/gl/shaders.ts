@@ -108,6 +108,7 @@ uniform vec2 u_size;
 uniform float u_time;
 uniform float u_wind;
 uniform float u_page;
+uniform vec3 u_cast; // shadow projection: x shear, y squash, enabled
 out vec3 v_uv;
 out float v_flash;
 out float v_alpha;
@@ -123,7 +124,13 @@ void main() {
     float s = sin(u_time * 1.4 + a_pos.x * 0.023 + a_pos.y * 0.011) + 0.4 * sin(u_time * 3.1 + a_pos.x * 0.05);
     local.x += floor(s * amp * h * h + 0.5);
   }
-  vec2 world = floor(a_pos + 0.5) + local;
+  if (u_cast.z > 0.5) {
+    // Project the sprite onto the ground: height above the feet becomes a
+    // sheared, squashed offset away from the sun.
+    float height = max(0.0, -local.y);
+    local = vec2(local.x + height * u_cast.x, max(local.y, 0.0) + height * u_cast.y);
+  }
+  vec2 world = floor(a_pos + 0.5) + floor(local + 0.5);
   gl_Position = toClip(world - u_cam, u_size);
   float u = flip ? 1.0 - c.x : c.x;
   v_uv = vec3((a_rect.x + u * a_rect.z) / u_page, (a_rect.y + c.y * a_rect.w) / u_page, a_layer);
@@ -134,6 +141,7 @@ void main() {
 
 export const spriteFS = common + /* glsl */ `
 uniform highp sampler2DArray u_atlas;
+uniform vec4 u_shadowColor; // rgb multiply tint, a = 1 when drawing shadows
 in vec3 v_uv;
 in float v_flash;
 in float v_alpha;
@@ -141,6 +149,10 @@ out vec4 o;
 void main() {
   vec4 c = texture(u_atlas, v_uv);
   if (c.a < 0.5) discard;
+  if (u_shadowColor.a > 0.5) {
+    o = vec4(u_shadowColor.rgb, 1.0);
+    return;
+  }
   vec3 col = mix(c.rgb, vec3(1.0), v_flash * 0.75);
   o = vec4(col, v_alpha);
 }
@@ -170,14 +182,16 @@ export const shadowFS = common + hash + /* glsl */ `
 in vec2 v_local;
 in float v_alpha;
 in vec2 v_r;
+uniform vec3 u_tint;
 out vec4 o;
 void main() {
   vec2 q = (floor(v_local) + 0.5) / v_r;
   float d = dot(q, q);
   if (d > 1.0) discard;
-  float a = v_alpha * (d > 0.72 ? 0.55 : 1.0);
-  if (d > 0.72 && bayer4(gl_FragCoord.xy) > 0.6) discard;
-  o = vec4(0.10, 0.07, 0.20, a);
+  if (d > 0.7 && bayer4(gl_FragCoord.xy) > 0.5) discard;
+  // Multiply blend: deeper at the core for contact occlusion.
+  float k = v_alpha * (d < 0.45 ? 1.0 : 0.75);
+  o = vec4(mix(vec3(1.0), u_tint, k), 1.0);
 }
 `;
 

@@ -405,8 +405,8 @@ impl Game {
         let mut best: Option<(u32, f32)> = None;
         for v in self.villagers.iter().filter(|v| v.alive && !v.actor.hidden) {
             let dx = x - v.actor.x;
-            let dy = y - (v.actor.y - 20.0);
-            if dx.abs() < 14.0 && dy.abs() < 26.0 {
+            let dy = y - (v.actor.y - 40.0);
+            if dx.abs() < 16.0 && dy.abs() < 42.0 {
                 let d = dx * dx + dy * dy;
                 if best.map_or(true, |(_, b)| d < b) {
                     best = Some((v.id, d));
@@ -504,8 +504,8 @@ impl Game {
             }
             let (x, y) = prop_pivot(p);
             match p.kind {
-                PropKind::Lamp => out.extend_from_slice(&[x, y - 50.0, 120.0, 1.0, 0.72, 0.38, -1.0]),
-                PropKind::Shrine => out.extend_from_slice(&[x, y - 50.0, 70.0, 1.0, 0.86, 0.5, -1.0]),
+                PropKind::Lamp => out.extend_from_slice(&[x, y - 84.0, 130.0, 1.0, 0.72, 0.38, -1.0]),
+                PropKind::Shrine => out.extend_from_slice(&[x, y - 70.0, 80.0, 1.0, 0.86, 0.5, -1.0]),
                 PropKind::Campfire => out.extend_from_slice(&[x, y - 6.0, 140.0, 1.0, 0.55, 0.25, -1.0]),
                 PropKind::House => {
                     if let Some(h) = self.sprites.houses.get(&i) {

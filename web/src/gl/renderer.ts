@@ -17,9 +17,13 @@ interface Program {
 interface Target {
   fb: WebGLFramebuffer;
   tex: WebGLTexture;
+  rb?: WebGLRenderbuffer;
 }
 
 export interface FrameParams {
+  /** Ground shadow projection (x shear, y squash) and strength 0..1. */
+  sun: [number, number, number];
+  shadowTint: [number, number, number];
   camX: number;
   camY: number;
   time: number;
@@ -82,6 +86,7 @@ export class Renderer {
   private vaos: Record<string, WebGLVertexArrayObject> = {};
   private bufs: Record<string, WebGLBuffer> = {};
   sprites = new Batch(SPRITE_STRIDE, 4096);
+  casters = new Batch(SPRITE_STRIDE, 2048);
   overlay = new Batch(SPRITE_STRIDE, 256);
   shadows = new Batch(SHADOW_STRIDE, 2048);
   lights = new Batch(LIGHT_STRIDE, 512);
@@ -122,8 +127,8 @@ export class Renderer {
     const cam = ['u_cam', 'u_size'];
     this.progs = {
       ground: this.compile(S.groundVS, S.groundFS, [...cam, 'u_origin', 'u_chunk', 'u_tex', 'u_time', 'u_night']),
-      sprite: this.compile(S.spriteVS, S.spriteFS, [...cam, 'u_time', 'u_wind', 'u_page', 'u_atlas']),
-      shadow: this.compile(S.shadowVS, S.shadowFS, cam),
+      sprite: this.compile(S.spriteVS, S.spriteFS, [...cam, 'u_time', 'u_wind', 'u_page', 'u_atlas', 'u_cast', 'u_shadowColor']),
+      shadow: this.compile(S.shadowVS, S.shadowFS, [...cam, 'u_tint']),
       light: this.compile(S.lightVS, S.lightFS, cam),
       color: this.compile(S.colorVS, S.colorFS, cam),
       composite: this.compile(S.compositeVS, S.compositeFS, [
@@ -134,6 +139,7 @@ export class Renderer {
     // Instanced VAOs: [location, size] per attribute.
     this.makeVao('sprite', SPRITE_STRIDE, [[1, 2], [2, 4], [3, 2], [4, 1], [5, 1], [6, 1]]);
     this.makeVao('overlay', SPRITE_STRIDE, [[1, 2], [2, 4], [3, 2], [4, 1], [5, 1], [6, 1]]);
+    this.makeVao('casters', SPRITE_STRIDE, [[1, 2], [2, 4], [3, 2], [4, 1], [5, 1], [6, 1]]);
     this.makeVao('shadow', SHADOW_STRIDE, [[1, 4], [2, 1]]);
     this.makeVao('light', LIGHT_STRIDE, [[1, 3], [2, 4]]);
     this.makeVao('color', COLOR_STRIDE, [[1, 4], [2, 4]]);
@@ -164,11 +170,12 @@ export class Renderer {
     this.vaos[name] = vao;
   }
 
-  private target(w: number, h: number, old?: Target): Target {
+  private target(w: number, h: number, old?: Target, stencil = false): Target {
     const gl = this.gl;
     if (old) {
       gl.deleteFramebuffer(old.fb);
       gl.deleteTexture(old.tex);
+      if (old.rb) gl.deleteRenderbuffer(old.rb);
     }
     const tex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -180,34 +187,47 @@ export class Renderer {
     const fb = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    let rb: WebGLRenderbuffer | undefined;
+    if (stencil) {
+      rb = gl.createRenderbuffer()!;
+      gl.bindRenderbuffer(gl.RENDERBUFFER, rb);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH24_STENCIL8, w, h);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_STENCIL_ATTACHMENT, gl.RENDERBUFFER, rb);
+    }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    return { fb, tex };
+    return { fb, tex, rb };
   }
 
-  /** Fit the canvas to the window with a crisp integer scale. */
+  /** Fixed 9:16 portrait frame (360×640 logical px), integer-scaled. */
+  static readonly LOGICAL_W = 360;
+  static readonly LOGICAL_H = 640;
   resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
-    const sw = Math.round(window.innerWidth * dpr);
-    const sh = Math.round(window.innerHeight * dpr);
-    // Aim for ~440 logical px on the short side (about 14 tiles of 32px).
-    const short = Math.min(sw, sh);
-    this.scale = Math.max(1, Math.round(short / 440));
-    this.viewW = Math.ceil(sw / this.scale);
-    this.viewH = Math.ceil(sh / this.scale);
+    const dpr = Math.min(window.devicePixelRatio || 1, 4);
+    const sw = window.innerWidth * dpr;
+    const sh = window.innerHeight * dpr;
+    this.viewW = Renderer.LOGICAL_W;
+    this.viewH = Renderer.LOGICAL_H;
+    this.scale = Math.max(1, Math.floor(Math.min(sw / this.viewW, sh / this.viewH)));
     this.fboW = this.viewW + 2;
     this.fboH = this.viewH + 2;
     this.canvas.width = this.viewW * this.scale;
     this.canvas.height = this.viewH * this.scale;
-    this.canvas.style.width = `${this.canvas.width / dpr}px`;
-    this.canvas.style.height = `${this.canvas.height / dpr}px`;
-    this.scene = this.target(this.fboW, this.fboH, this.scene);
+    // CSS size: exact device-pixel mapping when it fits, otherwise shrink to fit.
+    const fit = Math.min(1, window.innerWidth / (this.canvas.width / dpr), window.innerHeight / (this.canvas.height / dpr));
+    const cssW = (this.canvas.width / dpr) * fit;
+    const cssH = (this.canvas.height / dpr) * fit;
+    this.cssW = cssW;
+    document.documentElement.style.setProperty('--stage-w', `${cssW}px`);
+    document.documentElement.style.setProperty('--stage-h', `${cssH}px`);
+    this.scene = this.target(this.fboW, this.fboH, this.scene, true);
     this.light = this.target(this.fboW, this.fboH, this.light);
   }
 
+  cssW = 360;
+
   /** Device px per CSS px, for converting pointer events to logical px. */
   cssToLogical(): number {
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
-    return dpr / this.scale;
+    return this.viewW / this.cssW;
   }
 
   initAtlas(pages: Uint8Array[], size: number) {
@@ -326,16 +346,47 @@ export class Renderer {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    // Shadows
+    // Shadows: multiply-blended, each pixel darkened once (stencil), in a
+    // cool tint so shaded ground reads blue against warm sunlight.
+    gl.enable(gl.STENCIL_TEST);
+    gl.clearStencil(0);
+    gl.clear(gl.STENCIL_BUFFER_BIT);
+    gl.stencilFunc(gl.EQUAL, 0, 0xff);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.INCR);
+    gl.blendFunc(gl.DST_COLOR, gl.ZERO);
+    const tint = fp.shadowTint;
+    if (fp.sun[2] > 0.01 && this.casters.n) {
+      const p = this.progs.sprite;
+      gl.useProgram(p.p);
+      gl.uniform2f(p.u.u_cam, camIX, camIY);
+      gl.uniform2f(p.u.u_size, ...size);
+      gl.uniform1f(p.u.u_time, fp.time);
+      gl.uniform1f(p.u.u_wind, fp.wind);
+      gl.uniform1f(p.u.u_page, this.pageSize);
+      gl.uniform1i(p.u.u_atlas, 1);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.atlas);
+      gl.uniform3f(p.u.u_cast, fp.sun[0], fp.sun[1], 1);
+      const k = fp.sun[2];
+      gl.uniform4f(p.u.u_shadowColor, 1 - (1 - tint[0]) * k, 1 - (1 - tint[1]) * k, 1 - (1 - tint[2]) * k, 1);
+      this.upload('casters', this.casters);
+      gl.bindVertexArray(this.vaos.casters);
+      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.casters.n);
+      gl.uniform3f(p.u.u_cast, 0, 0, 0);
+      gl.uniform4f(p.u.u_shadowColor, 1, 1, 1, 0);
+    }
     if (this.shadows.n) {
       const p = this.progs.shadow;
       gl.useProgram(p.p);
       gl.uniform2f(p.u.u_cam, camIX, camIY);
       gl.uniform2f(p.u.u_size, ...size);
+      gl.uniform3f(p.u.u_tint, ...tint);
       this.upload('shadow', this.shadows);
       gl.bindVertexArray(this.vaos.shadow);
       gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.shadows.n);
     }
+    gl.disable(gl.STENCIL_TEST);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     // Ground-level particles (dust, splashes) under sprites.
     if (this.particles.n) this.drawColor('color', this.particles, camIX, camIY);
@@ -349,6 +400,8 @@ export class Renderer {
     gl.uniform1f(sp.u.u_wind, fp.wind);
     gl.uniform1f(sp.u.u_page, this.pageSize);
     gl.uniform1i(sp.u.u_atlas, 1);
+    gl.uniform3f(sp.u.u_cast, 0, 0, 0);
+    gl.uniform4f(sp.u.u_shadowColor, 1, 1, 1, 0);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.atlas);
     if (this.sprites.n) {

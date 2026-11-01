@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::actor::Actor;
-use crate::art::people::Look;
+use crate::art::people::{self, held, outfit, Look};
 use crate::names;
 use crate::rng::Rng;
 use crate::world::villages::BuildingKind;
@@ -21,6 +21,10 @@ pub enum Job {
     Guard,
     Priest,
     Adventurer,
+    Healer,
+    Scholar,
+    Mage,
+    Cook,
     Child,
     Retired,
 }
@@ -38,23 +42,37 @@ impl Job {
             Job::Guard => "Guard",
             Job::Priest => "Priest",
             Job::Adventurer => "Adventurer",
+            Job::Healer => "Healer",
+            Job::Scholar => "Scholar",
+            Job::Mage => "Mage",
+            Job::Cook => "Cook",
             Job::Child => "Child",
             Job::Retired => "Retired",
         }
     }
     /// Outfit and hat that make the job readable at a glance.
+    /// Outfit, hat and held item that make the job readable at a glance.
     pub fn dress(self, look: &mut Look, rng: &mut Rng) {
+        look.held = held::NONE;
+        look.glasses = false;
+        if look.hat != 7 && look.hat != 9 {
+            look.hat = 0;
+        }
         match self {
             Job::Farmer => {
                 if rng.chance(0.6) {
                     look.hat = 1;
                 }
-                if look.outfit != 1 && rng.chance(0.4) {
-                    look.outfit = 6;
+                if look.outfit != outfit::DRESS && rng.chance(0.4) {
+                    look.outfit = outfit::VEST;
+                }
+                if rng.chance(0.3) {
+                    look.held = held::BASKET;
                 }
             }
             Job::Woodcutter => {
                 look.top = 1;
+                look.outfit = outfit::TUNIC;
                 if rng.chance(0.5) {
                     look.hat = 2;
                 }
@@ -63,6 +81,7 @@ impl Job {
                 look.hat = 5;
                 look.hat_color = 3;
                 look.top = 8;
+                look.outfit = outfit::TUNIC;
             }
             Job::Fisher => {
                 look.hat = if rng.chance(0.5) { 5 } else { 1 };
@@ -70,44 +89,83 @@ impl Job {
                 look.top = 9;
             }
             Job::Smith => {
-                look.outfit = 3;
-                look.top = 8;
+                look.outfit = outfit::SMITH;
+                look.bottom = 8;
+                look.held = held::HAMMER;
                 if rng.chance(0.5) {
                     look.hat = 2;
                     look.hat_color = 1;
                 }
             }
             Job::Merchant => {
-                look.outfit = 6;
+                look.outfit = outfit::APRON;
                 look.hat = 5;
-                look.hat_color = 5;
+                look.hat_color = 6;
+                look.glasses = rng.chance(0.4);
+                look.held = held::BASKET;
             }
             Job::Innkeeper => {
-                look.outfit = 3;
+                if look.female {
+                    look.outfit = outfit::DIRNDL;
+                    look.top = *rng.pick(&[1, 0, 2]);
+                    look.bottom = *rng.pick(&[2, 0, 6]);
+                    look.hat = 10;
+                } else {
+                    look.outfit = outfit::APRON;
+                }
+                look.held = held::MUG;
             }
             Job::Guard => {
-                look.outfit = 4;
+                look.outfit = outfit::ARMOR;
                 look.hat = 3;
                 look.hat_color = 1;
+                look.held = held::SWORD;
             }
             Job::Priest => {
-                look.outfit = 2;
+                look.outfit = outfit::ROBE;
                 look.top = 7;
+                look.held = held::BOOK;
                 if rng.chance(0.4) {
                     look.hat = 4;
                     look.hat_color = 7;
                 }
             }
             Job::Adventurer => {
-                look.outfit = 5;
+                look.outfit = outfit::CLOAK;
                 look.hat_color = *rng.pick(&[1, 2, 5, 9]);
-                if rng.chance(0.4) {
+                look.held = held::SWORD;
+                if rng.chance(0.3) {
                     look.hat = 4;
                 }
             }
+            Job::Healer => {
+                look.outfit = outfit::ROBE;
+                look.top = *rng.pick(&[7, 2]);
+                look.held = held::BASKET;
+                if rng.chance(0.5) {
+                    look.hat = 4;
+                    look.hat_color = 7;
+                }
+            }
+            Job::Scholar => {
+                look.outfit = outfit::VEST;
+                look.glasses = true;
+                look.held = held::BOOK;
+            }
+            Job::Mage => {
+                look.outfit = outfit::ROBE;
+                look.top = *rng.pick(&[5, 0, 8]);
+                look.hat = 6;
+                look.hat_color = look.top;
+                look.held = held::STAFF;
+            }
+            Job::Cook => {
+                look.outfit = outfit::APRON;
+                look.hat = 8;
+            }
             Job::Child => {
                 if look.female && rng.chance(0.5) {
-                    look.hat = 7;
+                    look.hat = if rng.chance(0.5) { 7 } else { 9 };
                 }
             }
             Job::Retired => {}
@@ -239,6 +297,8 @@ pub struct Villager {
     pub first: String,
     pub family: String,
     pub female: bool,
+    #[serde(default)]
+    pub race: u8,
     pub age: f32,
     pub look: Look,
     pub traits: Traits,
@@ -281,19 +341,30 @@ impl Villager {
     }
 
     pub fn stage(&self) -> &'static str {
-        if self.age < 13.0 {
+        let a = self.life_age();
+        if a < 13.0 {
             "Child"
-        } else if self.age < 18.0 {
+        } else if a < 18.0 {
             "Teen"
-        } else if self.age < 60.0 {
+        } else if a < 60.0 {
             "Adult"
         } else {
             "Elder"
         }
     }
 
+    /// Years of life per human-equivalent year: elves and demons are long-lived.
+    pub fn life_mult(&self) -> f32 {
+        race_life_mult(self.race)
+    }
+
+    /// Age in human-equivalent years (drives life stages).
+    pub fn life_age(&self) -> f32 {
+        self.age / self.life_mult()
+    }
+
     pub fn is_adult(&self) -> bool {
-        self.age >= 18.0
+        self.life_age() >= 18.0
     }
 
     pub fn opinion_of(&self, id: u32) -> f32 {
@@ -321,19 +392,69 @@ impl Villager {
     }
 }
 
+pub fn race_life_mult(race: u8) -> f32 {
+    match race {
+        people::RACE_ELF => 4.0,
+        people::RACE_DWARF => 2.5,
+        people::RACE_DEMON => 5.0,
+        people::RACE_BEAST => 0.9,
+        _ => 1.0,
+    }
+}
+
+/// Pick a race for someone born in a village of this culture.
+pub fn pick_race(rng: &mut Rng, culture: usize) -> u8 {
+    let w: [f32; 5] = match culture {
+        0 => [0.7, 0.08, 0.06, 0.13, 0.03],
+        1 => [0.35, 0.03, 0.5, 0.09, 0.03],
+        2 => [0.55, 0.05, 0.06, 0.3, 0.04],
+        _ => [0.25, 0.6, 0.03, 0.1, 0.02],
+    };
+    rng.weighted(&w) as u8
+}
+
 /// Make a new villager of a given age. Sheet is assigned by the caller.
 #[allow(clippy::too_many_arguments)]
 pub fn make(id: u32, rng: &mut Rng, culture: usize, family: &str, female: bool, age: f32, job: Job, village: usize, home: usize, x: f32, y: f32) -> Villager {
+    let race = pick_race(rng, culture);
+    make_race(id, rng, culture, family, female, age, job, village, home, x, y, race)
+}
+
+/// `age` is in human-equivalent years; it's scaled by the race's lifespan.
+#[allow(clippy::too_many_arguments)]
+pub fn make_race(id: u32, rng: &mut Rng, culture: usize, family: &str, female: bool, age: f32, job: Job, village: usize, home: usize, x: f32, y: f32, race: u8) -> Villager {
     let stage = if age < 13.0 { 0 } else if age >= 60.0 { 2 } else { 1 };
     let mut look = Look::random(rng, female, stage);
     look.mature = age >= 18.0;
+    look.race = race;
+    match race {
+        people::RACE_BEAST => look.beast = rng.below(4) as u8,
+        people::RACE_DEMON => look.skin = rng.below(3) as u8,
+        people::RACE_DWARF => {
+            look.beard = !female && stage > 0 && rng.chance(0.9);
+        }
+        people::RACE_ELF => {
+            if rng.chance(0.4) {
+                look.hair = *rng.pick(&[3, 5, 7]);
+            }
+        }
+        _ => {}
+    }
+    let age = age * race_life_mult(race);
     job.dress(&mut look, rng);
+    // Elves take forest names, dwarves highland names.
+    let name_culture = match race {
+        people::RACE_ELF => 3,
+        people::RACE_DWARF => 1,
+        _ => culture,
+    };
     let speed = if stage == 0 { 2.4 } else if stage == 2 { 1.8 } else { 2.2 };
     Villager {
         id,
-        first: names::first(rng, culture, female),
+        first: names::first(rng, name_culture, female),
         family: family.to_string(),
         female,
+        race,
         age,
         look,
         traits: Traits::random(rng),
@@ -389,6 +510,16 @@ pub fn populate(world: &World, rng: &mut Rng) -> Vec<Villager> {
             }
         }
         jobs.push(Job::Guard);
+        jobs.push(Job::Healer);
+        if rng.chance(0.6) {
+            jobs.push(Job::Cook);
+        }
+        if rng.chance(0.5) {
+            jobs.push(Job::Scholar);
+        }
+        if rng.chance(0.5) {
+            jobs.push(Job::Mage);
+        }
         let near_water = (0..24).any(|d| world.terrain(v.cx + d, v.cy).is_water() || world.terrain(v.cx - d, v.cy).is_water() || world.terrain(v.cx, v.cy + d).is_water());
         let highland = world.level(v.cx, v.cy) >= 2;
         let mut job_iter = 0;

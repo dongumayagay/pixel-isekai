@@ -17,7 +17,7 @@ fn main() {
     let w = worldgen::generate(seed);
     let v = &w.villages[0];
     let p = |i: usize, d: i32| a.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
-    let (x0, y0, tw, th) = (p(4, v.cx - 10), p(5, v.cy - 7), p(6, 20), p(7, 13));
+    let (x0, y0, tw, th) = (p(4, v.cx - 12), p(5, v.cy - 10), p(6, 24), p(7, 18));
     let (pw, ph) = (tw * TILE, th * TILE);
     let mut img = Img::new(pw, ph);
     let baker = Baker::new(seed);
@@ -90,8 +90,8 @@ fn main() {
         let frames = people::sheet(&look);
         let f = [0usize, 2, 16, 8, 18, 0, 4, 1][k];
         let ang = k as f32 * 0.8;
-        let sx = (v.cx - x0) * TILE + 16 + (ang.cos() * 68.0) as i32;
-        let sy = (v.cy - y0) * TILE + 16 + (ang.sin() * 52.0) as i32 + 12;
+        let sx = (v.cx - x0) * TILE + 16 + (ang.cos() * 84.0) as i32;
+        let sy = (v.cy - y0) * TILE + 16 + (ang.sin() * 64.0) as i32 + 12;
         let mut fr = frames[f].clone();
         if k % 3 == 1 {
             fr = fr.flipped();

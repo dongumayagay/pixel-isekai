@@ -50,7 +50,7 @@ export class UI {
   private feedCount = 0;
 
   constructor() {
-    document.body.insertAdjacentHTML('beforeend', this.template());
+    document.getElementById('stage')!.insertAdjacentHTML('beforeend', this.template());
     $('#begin').addEventListener('click', () => this.begin());
     $('#seed').addEventListener('keydown', (e) => {
       if ((e as KeyboardEvent).key === 'Enter') this.begin();
@@ -317,13 +317,18 @@ export class UI {
     }
   }
 
+  /** Head-and-shoulders crop of a character frame. */
   private drawPortrait(px: Uint8Array): HTMLCanvasElement {
     const w = px[0];
     const h = px[1];
     const c = document.createElement('canvas');
-    c.width = w;
-    c.height = h;
-    if (w && h) c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(px.slice(2, 2 + w * h * 4)), w, h), 0, 0);
+    const ph = Math.min(h, 44);
+    c.width = Math.max(1, w);
+    c.height = Math.max(1, ph);
+    if (w && h) {
+      const full = new ImageData(new Uint8ClampedArray(px.slice(2, 2 + w * h * 4)), w, h);
+      c.getContext('2d')!.putImageData(full, 0, 0, 0, 0, w, ph);
+    }
     return c;
   }
 

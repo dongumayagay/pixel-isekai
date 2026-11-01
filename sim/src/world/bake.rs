@@ -288,109 +288,19 @@ impl Baker {
         c
     }
 
-    fn grass(&self, w: &World, px: i32, py: i32, tx: i32, ty: i32, s: &Surf, season: u8) -> Rgb {
-        let ramp = season_grass(season);
-        let _ = (tx, ty);
-        let forest = field_at(w, &w.forest, px, py);
-        let moist = field_at(w, &w.moist, px, py);
-        let x = px as f32;
-        let y = py as f32;
-        let lo = self.n_lo.fbm(x / 90.0, y / 90.0, 3, 2.0, 0.5);
-        let mid = self.n_mid.get(x / 14.0, y / 14.0);
-        let mut v = 0.58 + lo * 0.12 + mid * 0.04 - forest * 0.18 + (moist - 0.5) * 0.06;
-        // Grass tufts: tiny "v" strokes placed on a jittered grid.
-        let (gx, gy) = (px.div_euclid(5), py.div_euclid(4));
-        let h = hash2(gx, gy, self.seed ^ 0xabc);
-        let ox = (h % 5) as i32;
-        let oy = ((h >> 4) % 4) as i32;
-        let (dx, dy) = (px.rem_euclid(5) - ox, py.rem_euclid(4) - oy);
-        let tuft = (h >> 8) % 100 < 55;
-        if tuft {
-            if (dx == 0 || dx == 2) && dy == 0 || dx == 1 && dy == 1 {
-                v += 0.14;
-            } else if dx == 1 && dy == 2 {
-                v -= 0.1;
-            }
-        }
-        // Speckle
-        let sp = hash2f(px, py, self.seed ^ 0x55);
-        if sp < 0.04 {
-            v -= 0.08;
-        } else if sp > 0.975 {
-            v += 0.08;
-        }
-        let mut c = ramp_dither(ramp, v, px, py, 0.22);
-        // Flowers in sunny meadows (none in winter).
-        if season != 3 && s.inner > 2.0 {
-            let meadow = self.n_mid.get(x / 70.0 + 40.0, y / 70.0 - 13.0) * 0.5 + 0.5;
-            let density = (meadow - 0.55).max(0.0) * 1.6 * (1.0 - forest) + if season == 0 { 0.05 } else { 0.0 };
-            let (fx, fy) = (px.div_euclid(7), py.div_euclid(7));
-            let fh = hash2(fx, fy, self.seed ^ 0xf10);
-            if ((fh % 1000) as f32) < density * 1000.0 * 0.5 {
-                let cx = fx * 7 + 2 + ((fh >> 10) % 3) as i32;
-                let cy = fy * 7 + 2 + ((fh >> 12) % 3) as i32;
-                let kind = &pal::FLOWERS[((fh >> 14) as usize) % pal::FLOWERS.len()];
-                let (dx, dy) = (px - cx, py - cy);
-                if dx == 0 && dy == 0 {
-                    c = hex(0xf6d860);
-                } else if (dx.abs() + dy.abs()) == 1 {
-                    c = hex(if dy == -1 { kind[2] } else { kind[1] });
-                } else if dx == 0 && dy == 2 {
-                    c = ramp_at(ramp, 1);
-                }
-            }
-        }
-        // Edges: a darker outline where grass overhangs lower ground, and a
-        // muddy bank against water.
-        if s.inner < 1.3 {
-            c = if s.below <= R_SHALLOW { hex(0x3d3036) } else { ramp_at(ramp, 1) };
-        } else if s.inner < 2.4 {
-            c = if s.below <= R_SHALLOW { ramp_at(pal::DIRT, 1) } else { self.darken(c, 0.25) };
-        }
-        c
-    }
-
-    fn dirt(&self, px: i32, py: i32, s: &Surf, season: u8) -> Rgb {
-        let x = px as f32;
-        let y = py as f32;
-        let mut v = 0.55 + self.n_mid.get(x / 11.0, y / 11.0) * 0.1 + self.n_lo.get(x / 45.0, y / 45.0) * 0.08;
-        // Pebbles
-        let (gx, gy) = (px.div_euclid(6), py.div_euclid(6));
-        let h = hash2(gx, gy, self.seed ^ 0xd17);
-        if h % 100 < 35 {
-            let cx = gx * 6 + (h >> 8) as i32 % 5;
-            let cy = gy * 6 + (h >> 12) as i32 % 5;
-            if py == cy && (px == cx || px == cx + 1) {
-                v += 0.2;
-            } else if py == cy + 1 && (px == cx || px == cx + 1) {
-                v -= 0.18;
-            }
-        }
-        let mut c = ramp_dither(pal::DIRT, v, px, py, 0.3);
-        if season == 3 && hash2f(px, py, self.seed ^ 0x5) < 0.25 + self.n_mid.get(x / 6.0, y / 6.0).max(0.0) {
-            c = ramp_at(pal::SNOW, 4);
-        }
-        // Shadow cast by an overhanging higher terrain.
-        if s.outer < 1.5 {
-            c = self.darken(c, 0.38);
-        } else if s.outer < 3.0 {
-            c = self.darken(c, 0.16);
-        }
-        c
-    }
-
-    fn cobble(&self, px: i32, py: i32, s: &Surf) -> Rgb {
-        // Irregular rounded flagstones: jittered cells, nearest-centre wins.
-        let cell = 10;
-        let (gx, gy) = (px.div_euclid(cell), py.div_euclid(cell));
+    /// Clustered cells (stretched Voronoi) used for grass clumps and
+    /// cobbles. Returns (distance-to-edge, light shade, hash, cell centre).
+    fn cells(&self, px: i32, py: i32, cw: i32, ch: i32, salt: u32) -> (f32, f32, u32, i32, i32) {
+        let (gx, gy) = (px.div_euclid(cw), py.div_euclid(ch));
         let mut best = (i32::MAX, i32::MAX, 0u32, 0i32, 0i32);
+        let (sx2, sy2) = (ch * ch, cw * cw);
         for oy in -1..=1 {
             for ox in -1..=1 {
                 let (cx, cy) = (gx + ox, gy + oy);
-                let h = hash2(cx, cy, self.seed ^ 0xc0b);
-                let sx = cx * cell + (h % cell as u32) as i32;
-                let sy = cy * cell + ((h >> 8) % cell as u32) as i32;
-                let d = (px - sx).pow(2) + (py - sy).pow(2);
+                let h = hash2(cx, cy, self.seed ^ salt);
+                let sx = cx * cw + (h % cw as u32) as i32;
+                let sy = cy * ch + ((h >> 8) % ch as u32) as i32;
+                let d = (px - sx).pow(2) * sx2 + (py - sy).pow(2) * sy2;
                 if d < best.0 {
                     best = (d, best.0, h, sx, sy);
                 } else if d < best.1 {
@@ -399,23 +309,114 @@ impl Baker {
             }
         }
         let (d1, d2, h, sx, sy) = best;
-        let edge = (d2 as f32).sqrt() - (d1 as f32).sqrt();
-        let tint = (h >> 16) % 13;
-        let ramp = if tint == 0 { pal::ROCK } else { pal::STONE_WALL };
-        let base = 0.5 + ((h >> 20) % 100) as f32 / 100.0 * 0.22;
-        let c = if edge < 1.0 {
-            if hash2(px, py, self.seed ^ 0x6) % 5 == 0 { ramp_at(pal::GRASS_SUMMER, 2) } else { ramp_at(pal::STONE_WALL, 0) }
-        } else {
-            // Light from the upper left.
-            let shade = ((sx - px) + (sy - py)) as f32 * 0.04;
-            let v = base + shade + if edge < 2.0 && (py > sy || px > sx) { -0.15 } else { 0.0 };
-            ramp_dither(ramp, v, px, py, 0.3)
-        };
-        if s.outer < 1.5 {
-            self.darken(c, 0.35)
-        } else {
-            c
+        let norm = (cw * ch) as f32;
+        let edge = ((d2 as f32).sqrt() - (d1 as f32).sqrt()) / norm * cw.min(ch) as f32;
+        let light = ((sx - px) as f32 / cw as f32 * 0.6 + (sy - py) as f32 / ch as f32 * 1.0).clamp(-1.0, 1.0);
+        (edge, light, h, sx, sy)
+    }
+
+    fn grass(&self, w: &World, px: i32, py: i32, tx: i32, ty: i32, s: &Surf, season: u8) -> Rgb {
+        let ramp = season_grass(season);
+        let _ = (tx, ty);
+        let forest = field_at(w, &w.forest, px, py);
+        let moist = field_at(w, &w.moist, px, py);
+        let x = px as f32;
+        let y = py as f32;
+        // Broad tonal patches, quantised with a dithered border.
+        let lo = self.n_lo.fbm(x / 160.0, y / 160.0, 3, 2.0, 0.5);
+        let patch = lo + (moist - 0.5) * 0.4 - forest * 0.55;
+        let tone = if patch > 0.22 { 0.08 } else if patch < -0.25 { -0.1 } else { 0.0 };
+        // Leafy clumps: each one domed and lit from the upper left, with a
+        // dark crease along its lower edge.
+        let (edge, light, h, _, sy) = self.cells(px, py, 11, 7, 0x6a55);
+        let var = ((h >> 16) % 100) as f32 / 100.0 * 0.06;
+        let mut v = 0.5 + tone + light * 0.11 + var;
+        if edge < 1.0 && py > sy {
+            v -= 0.16;
+        } else if edge < 1.0 {
+            v -= 0.06;
         }
+        // Blade strokes catching light at the top of some clumps.
+        if light > 0.55 && h % 3 == 0 && (px + (h >> 4) as i32) % 3 == 0 {
+            v += 0.1;
+        }
+        let mut c = ramp_at(ramp, (v.clamp(0.0, 0.999) * ramp.len() as f32) as i32);
+        // Flower clusters in sunny meadows (none in winter).
+        if season != 3 && s.inner > 3.0 {
+            let meadow = self.n_mid.get(x / 90.0 + 40.0, y / 90.0 - 13.0) * 0.5 + 0.5;
+            let density = (meadow - 0.6).max(0.0) * 2.0 * (1.0 - forest) + if season == 0 { 0.04 } else { 0.0 };
+            let (fx, fy) = (px.div_euclid(9), py.div_euclid(8));
+            let fh = hash2(fx, fy, self.seed ^ 0xf10);
+            if ((fh % 1000) as f32) < density * 600.0 {
+                let cx = fx * 9 + 2 + ((fh >> 10) % 5) as i32;
+                let cy = fy * 8 + 2 + ((fh >> 13) % 4) as i32;
+                let kind = &pal::FLOWERS[((fh >> 16) as usize) % pal::FLOWERS.len()];
+                let (dx, dy) = (px - cx, py - cy);
+                if dx == 0 && dy == 0 {
+                    c = hex(0xf6d860);
+                } else if dx.abs() + dy.abs() == 1 {
+                    c = hex(if dy < 0 || dx < 0 { kind[2] } else { kind[1] });
+                } else if dx == 1 && dy == 1 {
+                    c = hex(kind[0]);
+                } else if dx == 0 && dy == 2 {
+                    c = ramp_at(ramp, 1);
+                }
+            }
+        }
+        // Edges: darker grass where it overhangs lower ground; a muddy bank
+        // against water.
+        if s.inner < 1.3 {
+            c = if s.below <= R_SHALLOW { hex(0x3a2e36) } else { ramp_at(ramp, 1) };
+        } else if s.inner < 2.6 {
+            c = if s.below <= R_SHALLOW { ramp_at(pal::DIRT, 1) } else { ramp_at(ramp, 2) };
+        }
+        c
+    }
+
+    fn dirt(&self, px: i32, py: i32, s: &Surf, season: u8) -> Rgb {
+        let x = px as f32;
+        let y = py as f32;
+        // Packed earth, lighter where feet wear the middle of the path.
+        let wear = (s.inner.min(10.0) / 10.0) * 0.12;
+        let mut v = 0.5 + wear + self.n_lo.get(x / 40.0, y / 40.0) * 0.06;
+        let (edge, light, h, _, _) = self.cells(px, py, 6, 4, 0xd17);
+        if edge < 0.9 && h % 4 == 0 {
+            v -= 0.1;
+        }
+        // Scattered pebbles with a highlight and a shadow.
+        if h % 9 == 0 && edge > 1.6 {
+            v = if light > 0.0 { 0.85 } else { 0.32 };
+        }
+        let mut c = ramp_at(pal::DIRT, (v.clamp(0.0, 0.999) * pal::DIRT.len() as f32) as i32);
+        if season == 3 && self.n_mid.get(x / 9.0, y / 9.0) > -0.1 {
+            c = ramp_at(pal::SNOW, if light > 0.2 { 5 } else { 4 });
+        }
+        // Shade under the grass lip.
+        if s.outer < 1.5 {
+            c = self.darken(c, 0.4);
+        } else if s.outer < 3.0 {
+            c = self.darken(c, 0.18);
+        }
+        c
+    }
+
+    fn cobble(&self, px: i32, py: i32, s: &Surf) -> Rgb {
+        // Tidy rounded cobbles: warm sandstone and grey, light mortar.
+        let (edge, light, h, _, _) = self.cells(px, py, 8, 6, 0xc0b);
+        let warm = (h >> 18) % 9 == 0;
+        let ramp = if warm { pal::SAND } else { pal::STONE_WALL };
+        let base = if warm { 0.36 } else { 0.5 } + ((h >> 20) % 100) as f32 / 100.0 * 0.14;
+        let c = if edge < 1.0 {
+            ramp_at(pal::STONE_WALL, 1)
+        } else if edge < 2.0 {
+            ramp_at(ramp, ((base + light * 0.2 - 0.08) * ramp.len() as f32) as i32)
+        } else {
+            ramp_at(ramp, ((base + light * 0.22) * ramp.len() as f32).min(ramp.len() as f32 - 1.0) as i32)
+        };
+        // A curb of darker stones around the plaza edge.
+        let c = if s.outer < 99.0 && s.outer < 3.0 { self.darken(c, 0.3) } else { c };
+        let _ = (hash2f(px, py, 0), s);
+        c
     }
 
     fn sand(&self, w: &World, px: i32, py: i32, s: &Surf) -> Rgb {

@@ -13,6 +13,7 @@ import { EF, ENT_STRIDE, H, HEADER, Activity, type Cmd, type FromWorker, type To
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const renderer = new Renderer(canvas);
+renderer.resize();
 const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
 const ui = new UI();
 const fx = new Particles();
@@ -138,7 +139,6 @@ worker.onmessage = (ev: MessageEvent<FromWorker>) => {
 ui.onSend = send;
 ui.onCmd = cmd;
 ui.onStart = (seed: number) => {
-  renderer.resize();
   send({ t: 'init', seed });
 };
 
@@ -203,6 +203,35 @@ function pushSprite(d: Drawable) {
   a[o + 10] = d.alpha;
 }
 
+function pushCaster(x: number, y: number, sid: number, flags: number) {
+  const s = sid * 7;
+  if (s + 6 >= table.length) return;
+  const o = renderer.casters.slot();
+  const a = renderer.casters.data;
+  a[o] = x;
+  a[o + 1] = y;
+  a[o + 2] = table[s + 1];
+  a[o + 3] = table[s + 2];
+  a[o + 4] = table[s + 3];
+  a[o + 5] = table[s + 4];
+  a[o + 6] = table[s + 5];
+  a[o + 7] = table[s + 6];
+  a[o + 8] = table[s];
+  a[o + 9] = flags & (EF.FLIP | EF.SWAY);
+  a[o + 10] = 1;
+}
+
+/** Ground shadow projection from the sun (or moon) for this time of day. */
+function sunParams(minute: number, weather: number, night: number): [number, number, number] {
+  const t = Math.min(1, Math.max(0, (minute - 360) / 780));
+  const dx = -1.25 + 2.5 * t + 0.2;
+  const dy = 0.3 + Math.abs(t - 0.5) * 0.35;
+  let k = night > 0.6 ? 0.35 : 1 - night * 0.55;
+  if (night > 0.6) return [0.35, 0.28, k * [1, 0.5, 0.25, 0.15, 0.4, 0.2][weather]];
+  k *= [1, 0.55, 0.32, 0.22, 0.5, 0.25][weather];
+  return [dx, dy, k];
+}
+
 function spriteW(sid: number) {
   return table[sid * 7 + 3] || 16;
 }
@@ -240,7 +269,7 @@ function render(now: number) {
   if (po !== undefined) {
     const [px, py] = lerpPos(0, po);
     const tx = px - renderer.viewW / 2;
-    const ty = py - 24 - renderer.viewH / 2;
+    const ty = py - 40 - renderer.viewH / 2;
     if (!cam.ready) {
       cam.x = tx;
       cam.y = ty;
@@ -261,6 +290,7 @@ function render(now: number) {
   r.sprites.reset();
   r.overlay.reset();
   r.shadows.reset();
+  r.casters.reset();
   r.lights.reset();
   r.particles.reset();
   r.particlesTop.reset();
@@ -289,10 +319,11 @@ function render(now: number) {
         }
         draw.push({ x, y, sid, flags: f, alpha: 1, layerY: y });
         const w = spriteW(sid);
-        if (f & EF.BIG_SHADOW) r.shadows.push(x + 2, y - 1, Math.min(30, w * 0.3), Math.min(11, w * 0.11), 0.34);
-        else if (f & EF.SHADOW) r.shadows.push(x, y - 1, Math.max(5, Math.min(22, w * 0.36)), Math.max(2, Math.min(8, w * 0.14)), 0.3);
+        if (f & (EF.SHADOW | EF.BIG_SHADOW | EF.HOUSE)) pushCaster(x, y, sid, f);
+        if (f & EF.BIG_SHADOW) r.shadows.push(x, y - 1, 10, 4, 0.8);
+        else if (f & EF.SHADOW) r.shadows.push(x, y - 1, Math.max(5, Math.min(18, w * 0.32)), Math.max(2, Math.min(6, w * 0.12)), 0.7);
         if (f & EF.HOUSE) {
-          r.shadows.push(x + w / 2 - 6, y + 2, w * 0.5, 7, 0.32);
+          r.shadows.push(x + w / 2 - 6, y + 1, w * 0.52, 6, 0.6);
           if (litHouses.has(pidx) && at.night > 0.05) {
             const ov = houseOverlay.get(pidx);
             if (ov !== undefined) draw.push({ x, y, sid: ov, flags: 0, alpha: Math.min(1, at.night * 1.6), layerY: y + 0.01 });
@@ -313,12 +344,13 @@ function render(now: number) {
     const sid = snap[o + 3];
     const f = snap[o + 4];
     draw.push({ x, y, sid, flags: f & (EF.FLIP | EF.FLASH), alpha: 1, layerY: y });
-    r.shadows.push(x, y - 1, 8, 3, 0.36);
+    pushCaster(x, y, sid, f & EF.FLIP);
+    r.shadows.push(x, y - 1, 10, 4, 0.85);
     const emote = snap[o + 5];
     if (emote > 0) emotes.push([x, y, emote]);
     const act = snap[o + 6] & 255;
     workFx(id, x, y, act, f, dt);
-    if (f & EF.PLAYER && at.night > 0.2) r.lights.push(x, y - 20, 84, 1, 0.9, 0.75, 0.5 * at.night);
+    if (f & EF.PLAYER && at.night > 0.2) r.lights.push(x, y - 40, 96, 1, 0.9, 0.75, 0.5 * at.night);
   }
 
   draw.sort((a, b) => a.layerY - b.layerY);
@@ -328,7 +360,7 @@ function render(now: number) {
     if (sid === undefined) continue;
     const bob = Math.round(Math.sin(time * 4 + x) * 1.5);
     const s = sid * 7;
-    r.overlay.push(x, y - 50 + bob, table[s + 1], table[s + 2], table[s + 3], table[s + 4], table[s + 5], table[s + 6], table[s], 0, 1);
+    r.overlay.push(x, y - 94 + bob, table[s + 1], table[s + 2], table[s + 3], table[s + 4], table[s + 5], table[s + 6], table[s], 0, 1);
   }
 
   // Lights: lamps, windows of lit houses, fires.
@@ -359,8 +391,11 @@ function render(now: number) {
   }
   flash = Math.max(0, flash - dt * 3.5);
 
+  const sun = sunParams(minute, weather, at.night);
   r.frame(
     {
+      sun,
+      shadowTint: at.night > 0.6 ? [0.78, 0.8, 0.9] : [0.7, 0.74, 0.9],
       camX: cam.x,
       camY: cam.y,
       time,
@@ -373,7 +408,7 @@ function render(now: number) {
       flash: flash > 0.5 ? flash * 0.6 : flash * 0.15,
       saturation: at.saturation,
       tint: at.tint,
-      vignette: 0.55 + at.night * 0.35,
+      vignette: 0.22 + at.night * 0.4,
       windDir: [0.8 + wind, 0.3],
     },
     info.chunkPx,
@@ -557,9 +592,7 @@ window.addEventListener('blur', () => {
   keys.clear();
   sendDir();
 });
-window.addEventListener('resize', () => {
-  if (info) renderer.resize();
-});
+window.addEventListener('resize', () => renderer.resize());
 
 requestAnimationFrame(render);
 

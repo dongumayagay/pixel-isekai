@@ -113,6 +113,10 @@ impl Game {
             }
             Job::Priest => "The Goddess watches over every soul, even ones from far away.",
             Job::Adventurer => "I've seen ruins out east that no map shows. One day I'll go inside.",
+            Job::Healer => "Scraped knee? Fever? Come see me. Herbs fix most things; kindness fixes the rest.",
+            Job::Scholar => "Did you know the old roads follow ley lines? I'm writing a treatise on it.",
+            Job::Mage => "Magic is just listening to the world very carefully. Most people never stop to listen.",
+            Job::Cook => "Today's stew has river trout and wild thyme. You'll smell it from the plaza.",
             Job::Child => "Wanna play tag? You're it!",
             Job::Retired => "In my day, winters were twice as long and we liked it.",
         };
