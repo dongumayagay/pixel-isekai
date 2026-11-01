@@ -170,6 +170,7 @@ pub fn creator_info() -> String {
         "skins": crate::palette::SKIN.len(), "demonSkins": crate::palette::DEMON_SKIN.len(),
         "hairs": crate::palette::HAIR.len(), "cloths": crate::palette::CLOTH.len(),
         "hairStyles": people::HAIR_STYLES,
+        "figures": people::FIGURES, "buildsF": people::BUILDS_F, "buildsM": people::BUILDS_M,
         "swatch": {
             "skin": crate::palette::SKIN.iter().map(|r| r[2]).collect::<Vec<_>>(),
             "demon": crate::palette::DEMON_SKIN.iter().map(|r| r[2]).collect::<Vec<_>>(),
@@ -201,4 +202,11 @@ pub fn lint_look(look_json: &str) -> String {
         .map(|i| serde_json::json!({ "kind": i.kind, "dir": i.dir, "frame": i.frame, "detail": i.detail }))
         .collect();
     serde_json::Value::Array(issues).to_string()
+}
+
+/// The curated core cast as JSON [{name, look}].
+#[wasm_bindgen]
+pub fn cast_list() -> String {
+    let v: Vec<_> = people::cast().into_iter().map(|(n, l)| serde_json::json!({ "name": n, "look": l })).collect();
+    serde_json::Value::Array(v).to_string()
 }

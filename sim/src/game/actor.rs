@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::art::people::FRAMES_PER_DIR;
+use crate::art::people::{FRAMES_PER_DIR, IDLE_FRAMES, WALK_FIRST, WALK_FRAMES, WORK_FIRST};
 use crate::world::path::{simplify, PathFinder};
 use crate::world::{World, TILE};
 
@@ -193,13 +193,13 @@ impl Actor {
             Facing::Left => (2, true),
         };
         let f = if self.moving {
-            2 + ((self.anim * 8.0) as u16 % 4)
+            WALK_FIRST + ((self.anim * 10.0) as u16 % WALK_FRAMES)
         } else if self.activity != Activity::None && self.activity != Activity::Talk && self.activity != Activity::Pray {
-            6 + ((self.anim * 3.0) as u16 % 2)
+            WORK_FIRST + ((self.anim * 3.0) as u16 % 2)
         } else if dir == 0 && self.blink < 0.0 {
             return (self.sheet + FRAMES_PER_DIR * 3, flip);
         } else {
-            (self.anim * 1.4) as u16 % 2
+            (self.anim * 2.5) as u16 % IDLE_FRAMES
         };
         (self.sheet + dir * FRAMES_PER_DIR + f, flip)
     }

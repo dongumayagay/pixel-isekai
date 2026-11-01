@@ -3,17 +3,18 @@
 // the visual QA linter live, browse random galleries and export sheets.
 
 import './creator.css';
-import init, { creator_info, render_frame, random_look, lint_look } from './pkg/sim.js';
+import init, { creator_info, render_frame, random_look, lint_look, cast_list } from './pkg/sim.js';
 import wasmUrl from './pkg/sim_bg.wasm?url';
 
 interface Look {
   skin: number; hair: number; hair_style: number; top: number; bottom: number; outfit: number;
   hat: number; hat_color: number; female: boolean; age: number; beard: boolean; eyes: number;
   mature: boolean; race: number; beast: number; held: number; glasses: boolean;
+  figure: number; build: number;
 }
 interface Info {
   fw: number; fh: number; pivot: [number, number]; framesPerDir: number; sheetFrames: number;
-  races: string[]; hairStyles: number;
+  races: string[]; hairStyles: number; figures: string[]; buildsF: string[]; buildsM: string[];
   swatch: { skin: number[]; demon: number[]; hair: number[]; cloth: number[]; eyes: number[] };
 }
 
@@ -29,13 +30,14 @@ const DIRS = [
   { name: 'Left', dir: 2, flip: true },
   { name: 'Right', dir: 2, flip: false },
 ];
-// Frame sequences (indices into a direction's 8 poses; 8 = blink, down only)
-// with per-frame hold times in ms.
+// Frame sequences (indices into a direction's 12 poses; 12 = blink, down
+// only) with per-frame hold times in ms, matching the in-game rates.
+const BLINK = 12;
 const ANIMS: Record<string, { frames: number[]; ms: number[] }> = {
-  Idle: { frames: [0, 1, 0, 1, 0, 8], ms: [600, 600, 600, 600, 500, 120] },
-  Walk: { frames: [2, 3, 4, 5], ms: [130, 130, 130, 130] },
-  Work: { frames: [6, 7], ms: [260, 260] },
-  Blink: { frames: [0, 8], ms: [700, 140] },
+  Idle: { frames: [0, 1, 2, 3, 0, 1, 2, 3, 0, BLINK], ms: [400, 400, 400, 400, 400, 400, 400, 400, 300, 120] },
+  Walk: { frames: [4, 5, 6, 7, 8, 9], ms: [100, 100, 100, 100, 100, 100] },
+  Work: { frames: [10, 11], ms: [330, 330] },
+  Blink: { frames: [0, BLINK], ms: [700, 140] },
 };
 const BGS: Record<string, string> = { Grass: '#5f8f52', Dark: '#1a1524', Light: '#d8d0c0', Cobble: '#6e6878' };
 
@@ -132,6 +134,8 @@ function renderControls() {
     <h3>Race</h3><div class="row" id="c-race"></div>
     <div id="c-beast-wrap"><h3>Beast kind</h3><div class="row" id="c-beast"></div></div>
     <h3>Body</h3><div class="row" id="c-sex"></div><div class="row" id="c-age" style="margin-top:5px"></div>
+    <h3>Build</h3><div class="row" id="c-build"></div>
+    <div id="c-fig-wrap"><h3>Figure</h3><div class="row" id="c-fig"></div></div>
     <h3>Skin</h3><div class="row" id="c-skin"></div>
     <h3>Eyes</h3><div class="row" id="c-eyes"></div>
     <h3>Hair style</h3><div class="row" id="c-style"></div>
@@ -148,6 +152,9 @@ function renderControls() {
   buttons($('#c-beast'), BEASTS, (b) => b, (i) => look.beast === i, (i) => set({ beast: i }));
   buttons($('#c-sex'), ['Female', 'Male'], (s) => s, (i) => look.female === (i === 0), (i) => set({ female: i === 0 }));
   buttons($('#c-age'), AGES, (a) => a, (i) => look.age === i, (i) => set({ age: i }));
+  buttons($('#c-build'), look.female ? info.buildsF : info.buildsM, (b) => b, (i) => look.build === i, (i) => set({ build: i }));
+  $('#c-fig-wrap').style.display = look.female && look.age > 0 ? '' : 'none';
+  buttons($('#c-fig'), info.figures, (f) => f, (i) => look.figure === i, (i) => set({ figure: i }));
   swatches($('#c-skin'), look.race === 4 ? info.swatch.demon : info.swatch.skin, (i) => look.skin === i, (i) => set({ skin: i }));
   swatches($('#c-eyes'), info.swatch.eyes, (i) => look.eyes === i, (i) => set({ eyes: i }));
   buttons($('#c-style'), STYLES, (s) => s, (i) => look.hair_style === i, (i) => set({ hair_style: i }));
@@ -170,7 +177,7 @@ function renderControls() {
 function renderSheet() {
   const host = $('#sheet');
   host.innerHTML = '';
-  const names = ['idle', 'breathe', 'walk 1', 'walk 2', 'walk 3', 'walk 4', 'work 1', 'work 2'];
+  const names = ['idle 1', 'idle 2', 'idle 3', 'idle 4', 'walk 1', 'walk 2', 'walk 3', 'walk 4', 'walk 5', 'walk 6', 'work 1', 'work 2'];
   for (const d of [0, 1, 2]) {
     for (let f = 0; f < info.framesPerDir; f++) {
       const cell = document.createElement('div');
@@ -232,7 +239,7 @@ function frameAt(t: number, dir: number): number {
   for (let i = 0; i < a.frames.length; i++) {
     if (m < a.ms[i]) {
       const f = a.frames[i];
-      return f === 8 && dir !== 0 ? 0 : f;
+      return f === BLINK && dir !== 0 ? 0 : f;
     }
     m -= a.ms[i];
   }
@@ -241,13 +248,39 @@ function frameAt(t: number, dir: number): number {
 
 function tick(t: number) {
   DIRS.forEach((v, i) => draw(viewCanvases[i], look, v.dir, frameAt(t, v.dir), v.flip, zoom));
+  castLooks.forEach((l, i) => draw(castCanvases[i], l, 0, frameAt(t + i * 211, 0), false, 2));
   galleryLooks.forEach((l, i) => {
     const phase = t + i * 97;
-    const f = ANIMS.Walk.frames[Math.floor((phase * speed) / 130) % 4];
+    const f = ANIMS.Walk.frames[Math.floor((phase * speed) / 100) % 6];
     const d = Math.floor(phase / 2600) % 4;
     draw(galleryCanvases[i], l, DIRS[d].dir, f, DIRS[d].flip, 2);
   });
   requestAnimationFrame(tick);
+}
+
+const castCanvases: HTMLCanvasElement[] = [];
+let castLooks: Look[] = [];
+function buildCast() {
+  const host = $('#cast');
+  const list = JSON.parse(cast_list()) as { name: string; look: Look }[];
+  castLooks = list.map((c) => c.look);
+  list.forEach((c) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    const cv = document.createElement('canvas');
+    cv.width = info.fw * 2;
+    cv.height = info.fh * 2;
+    card.appendChild(cv);
+    const s = document.createElement('small');
+    s.textContent = c.name;
+    card.appendChild(s);
+    card.onclick = () => {
+      set(c.look);
+      document.querySelector('main')!.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    host.appendChild(card);
+    castCanvases.push(cv);
+  });
 }
 
 function buildGallery() {
@@ -293,13 +326,13 @@ function exportSheet() {
   c.height = info.fh * 4;
   const ctx = c.getContext('2d')!;
   for (const d of [0, 1, 2]) for (let f = 0; f < info.framesPerDir; f++) ctx.drawImage(frameCanvas(look, d, f), f * info.fw, d * info.fh);
-  ctx.drawImage(frameCanvas(look, 0, 8), 0, 3 * info.fh);
+  ctx.drawImage(frameCanvas(look, 0, BLINK), 0, 3 * info.fh);
   c.toBlob((b) => b && download('character.png', b), 'image/png');
   const meta = {
     frame: { w: info.fw, h: info.fh },
     pivot: { x: info.pivot[0], y: info.pivot[1] },
     rows: ['down', 'up', 'side (faces right; mirror for left)', 'blink (down)'],
-    poses: ['idle', 'breathe', 'walk1', 'walk2', 'walk3', 'walk4', 'work1', 'work2'],
+    poses: ['idle1', 'idle2', 'idle3', 'idle4', 'walk1', 'walk2', 'walk3', 'walk4', 'walk5', 'walk6', 'work1', 'work2'],
     animations: Object.fromEntries(Object.entries(ANIMS).map(([k, v]) => [k.toLowerCase(), v])),
     look,
   };
@@ -330,6 +363,7 @@ async function boot() {
       </div>
       <div class="views" id="views"></div>
       <div id="qa"></div>
+      <section><h2>Core cast</h2><div class="gallery" id="cast"></div></section>
       <section><h2>Every frame</h2><div class="sheet" id="sheet"></div></section>
       <section><h2>Gallery — click to edit <button id="reroll">Reroll</button></h2><div class="gallery" id="gallery"></div></section>
     </main>`;
@@ -359,6 +393,7 @@ async function boot() {
   $('#reroll').onclick = buildGallery;
   buildViews();
   set({});
+  buildCast();
   buildGallery();
   requestAnimationFrame(tick);
 }
