@@ -119,7 +119,7 @@ impl Game {
         let next_id = villagers.iter().map(|v| v.id).max().unwrap_or(0) + 1;
         let mut look = Look::random(&mut rng.fork(77), false, 1);
         look.hair = 0;
-        look.hair_style = 4;
+        look.hair_style = 13;
         look.outfit = 5;
         look.hat_color = 0;
         look.top = 7;

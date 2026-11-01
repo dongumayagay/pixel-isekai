@@ -7,8 +7,9 @@ use sim::palette::hex;
 fn main() {
     let out = std::env::args().nth(1).unwrap_or("hairstyles.png".into());
     let base = people::cast()[1].1;
-    let views = [(0u8, 0u16), (2, 0), (1, 0)];
-    let (cw, ch) = (people::FW, 70);
+    let f: u16 = std::env::var("FRAME").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let views = [(0u8, f), (2, f), (1, f)];
+    let (cw, ch) = (people::FW, 84);
     let n = people::HAIR_STYLES as i32;
     let mut img = Img::new(cw * views.len() as i32 * 2, ch * n);
     for y in 0..img.h {
@@ -18,7 +19,7 @@ fn main() {
     }
     for style in 0..n {
         for (si, female) in [true, false].into_iter().enumerate() {
-            let look = Look { hair_style: style as u8, female, hat: 0, held: 0, outfit: 0, hair: [1, 3, 0, 4][style as usize % 4], ..base };
+            let look = Look { hair_style: style as u8, female, hat: 0, held: 0, outfit: 0, hair: [1, 3, 0, 4, 2][style as usize % 5], ..base };
             for (k, &(d, f)) in views.iter().enumerate() {
                 let fr = people::frame(&look, d, f);
                 let mut head = Img::new(cw, ch);

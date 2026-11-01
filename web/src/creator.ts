@@ -14,14 +14,13 @@ interface Look {
 }
 interface Info {
   fw: number; fh: number; pivot: [number, number]; framesPerDir: number; sheetFrames: number;
-  races: string[]; hairStyles: number; figures: string[]; heights: string[]; facial: string[]; buildsF: string[]; buildsM: string[];
+  races: string[]; hairStyles: string[]; figures: string[]; heights: string[]; facial: string[]; buildsF: string[]; buildsM: string[];
   swatch: { skin: number[]; demon: number[]; hair: number[]; cloth: number[]; eyes: number[] };
 }
 
 const OUTFITS = ['Tunic', 'Dress', 'Robe', 'Apron', 'Armor', 'Cloak', 'Vest', 'Dirndl', 'Guild', 'Smith', 'Gothic gown', 'Long coat'];
 const HATS = ['None', 'Straw hat', 'Bandana', 'Helmet', 'Hood', 'Cap', 'Witch hat', 'Flower', 'Chef', 'Ribbon', 'Maid band', 'Miner helmet'];
 const HELD = ['None', 'Staff', 'Hammer', 'Mug', 'Book', 'Sword', 'Basket', 'Axe', 'Pickaxe', 'Hoe', 'Fishing rod', 'Spear', 'Ladle'];
-const STYLES = ['Short', 'Long', 'Ponytail', 'Bun', 'Spiky', 'Bob', 'Twin tails', 'Side-swept'];
 const BEASTS = ['Cat', 'Fox', 'Wolf', 'Rabbit'];
 // No child characters for now; age 1 = adult, 2 = elder.
 const AGES = ['Adult', 'Elder'];
@@ -166,7 +165,7 @@ function renderControls() {
   buttons($('#c-fig'), info.figures, (f) => f, (i) => look.figure === i, (i) => set({ figure: i }));
   swatches($('#c-skin'), look.race === 4 ? info.swatch.demon : info.swatch.skin, (i) => look.skin === i, (i) => set({ skin: i }));
   swatches($('#c-eyes'), info.swatch.eyes, (i) => look.eyes === i, (i) => set({ eyes: i }));
-  buttons($('#c-style'), STYLES, (s) => s, (i) => look.hair_style === i, (i) => set({ hair_style: i }));
+  buttons($('#c-style'), info.hairStyles, (s) => s, (i) => look.hair_style === i, (i) => set({ hair_style: i }));
   swatches($('#c-hair'), info.swatch.hair, (i) => look.hair === i, (i) => set({ hair: i }));
   buttons($('#c-outfit'), OUTFITS, (s) => s, (i) => look.outfit === i, (i) => set({ outfit: i }));
   swatches($('#c-top'), info.swatch.cloth, (i) => look.top === i, (i) => set({ top: i }));

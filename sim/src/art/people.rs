@@ -163,14 +163,17 @@ pub const FIGURES: [&str; 5] = ["Flat", "Small", "Medium", "Large", "Huge"];
 pub const BUILDS_F: [&str; 4] = ["Slim", "Standard", "Curvy", "Thick"];
 pub const BUILDS_M: [&str; 4] = ["Slim", "Standard", "Muscular", "Heavy"];
 
-pub const HAIR_STYLES: u8 = 8;
+pub const HAIR_STYLES: u8 = 19;
+pub const HAIR_STYLE_NAMES: [&str; HAIR_STYLES as usize] = [
+    "Short", "Long", "Ponytail", "Bun", "Spiky", "Bob", "Twin tails", "Side-swept", "Hime cut", "Drills", "Twin braids", "Side braid", "Very long", "Messy", "Low tie", "Slicked back", "Undercut", "Samurai", "Bald",
+];
 pub const HATS: u8 = 12;
 
 impl Look {
     pub fn random(rng: &mut Rng, female: bool, age: u8) -> Look {
         let hair = if rng.chance(0.12) { 6 + rng.below(3) as u8 } else { rng.below(5) as u8 };
-        let styles_f: &[u8] = &[1, 2, 3, 5, 6, 7, 1, 5];
-        let styles_m: &[u8] = &[0, 4, 7, 0, 5];
+        let styles_f: &[u8] = &[1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 1, 5, 2];
+        let styles_m: &[u8] = if age == 2 { &[0, 15, 18, 18, 14] } else { &[0, 4, 7, 13, 14, 15, 16, 17, 0, 13] };
         Look {
             skin: rng.below(pal::SKIN.len()) as u8,
             hair: if age == 2 { 5 } else { hair },
@@ -333,6 +336,29 @@ impl Canvas<'_> {
         self.img.get(x, y)
     }
 
+    /// Whether the current part painted this pixel.
+    fn owns(&self, x: i32, y: i32) -> bool {
+        self.img.inside(x, y) && self.ids[(y * self.img.w + x) as usize] == self.cur
+    }
+
+    /// Copy every part from `first` to the current one across the centre
+    /// line as new parts, so paired pieces (drills, braids) mirror exactly.
+    fn mirror_from(&mut self, first: u8) {
+        let last = self.cur;
+        let w = self.img.w;
+        for id in first..=last {
+            let px: Vec<(i32, i32, Rgb)> = (0..self.img.h)
+                .flat_map(|y| (0..w).map(move |x| (x, y)))
+                .filter(|&(x, y)| self.ids[(y * w + x) as usize] == id)
+                .filter_map(|(x, y)| self.img.get(x, y).map(|c| (x, y, c)))
+                .collect();
+            self.begin();
+            for (x, y, c) in px {
+                self.fill(FW - 1 - x, y, c);
+            }
+        }
+    }
+
     /// Filled ellipse lit as a dome.
     fn ellipse(&mut self, c: V2, rx: f32, ry: f32, ramp: &R5, bias: f32) {
         self.register(ramp);
@@ -423,9 +449,14 @@ impl Canvas<'_> {
     /// Pixel line (DDA) drawn as detail.
     fn line(&mut self, a: V2, b: V2, mut col: impl FnMut(f32) -> Option<Rgb>) {
         let n = (b.x - a.x).abs().max((b.y - a.y).abs()).ceil().max(1.0) as i32;
+        // Interpolate relative to the centre line on a fine grid: endpoints
+        // computed as 32 +/- d carry different rounding errors, and mirrored
+        // lines must land on mirrored pixels.
+        let snap = |q: f32| ((q - 32.0) * 256.0).round() / 256.0;
+        let (ax, bx) = (snap(a.x), snap(b.x));
         for i in 0..=n {
             let t = i as f32 / n as f32;
-            let (x, y) = (a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+            let (x, y) = (32.0 + (ax + (bx - ax) * t), a.y + (b.y - a.y) * t);
             if let Some(c) = col(t) {
                 // Nudge toward the centre line so mirrored lines that land on
                 // exact integers round to mirrored pixels.
@@ -2156,11 +2187,48 @@ fn facial_hair(cv: &mut Canvas, look: &Look, dir: u8, cy: i32, c: &Colors) {
 
 // ---------------------------------------------------------------- hair
 
+/// What a hairstyle adds on top of the basic cap, bangs, locks and back
+/// sheet.
+#[derive(Clone, Copy, PartialEq)]
+enum Extra {
+    None,
+    /// High ponytail tied at the back of the crown.
+    Ponytail,
+    /// One bun on top.
+    Bun,
+    /// Shonen spikes fanned over the crown.
+    Spikes,
+    /// Twin tails tied high at the sides.
+    TwinTails,
+    /// Ojou-sama tate-roll ringlets hanging at the temples.
+    Drills,
+    /// Two braids from behind the ears, over the shoulders.
+    TwinBraids,
+    /// One thick braid over the right shoulder.
+    SideBraid,
+    /// Very long hair with a small half-up loop and ribbon at the back.
+    HalfUp,
+    /// Messy protagonist hair: an ahoge strand and tufts at the nape.
+    Messy,
+    /// Long hair tied low at the nape (butler, elf lord).
+    LowTie,
+    /// Combed straight back off the forehead.
+    Slick,
+    /// Long top with clipped sides.
+    Undercut,
+    /// Samurai: hair tied high at the crown, the tail to the shoulders.
+    TopKnot,
+    /// Bald crown with a horseshoe of hair at the sides and back.
+    Bald,
+}
+
 /// How a hairstyle is cut.
 struct Cut {
     /// Bang tips: (x offset from centre, tip y offset from head centre,
     /// slope of the clump's sides). Lower slope = blunter cut.
     tips: &'static [(f32, f32, f32)],
+    /// The same bangs seen in profile (x offset forward of the head centre).
+    side_tips: &'static [(f32, f32, f32)],
     /// Side locks framing the face: length below the head centre, width.
     lock: (f32, f32),
     /// Length of the back mass below the head centre (front view behind the
@@ -2168,26 +2236,63 @@ struct Cut {
     back: f32,
     /// How far the hair reaches below the head centre at the nape.
     nape: f32,
+    /// Hair pulled up or tied: the nape and the hairline show from behind.
+    gathered: bool,
+    /// Locks cut straight across instead of tapering to a point.
+    blunt: bool,
+    /// Depth of the V in the back sheet's hem (0 = straight across).
+    hem: f32,
+    /// Close to the skull (short men's cuts).
+    tight: bool,
+    extra: Extra,
 }
 
+const SIDE_SOFT: &[(f32, f32, f32)] = &[(5.0, 2.0, 1.5), (9.0, 0.5, 1.6), (12.5, 1.5, 1.4)];
+const SIDE_SHORT: &[(f32, f32, f32)] = &[(5.0, 0.0, 1.6), (8.5, 1.0, 1.5), (12.0, -1.0, 1.3)];
+
 fn cut(style: u8) -> Cut {
+    let base = Cut { tips: &[], side_tips: SIDE_SOFT, lock: (0.0, 3.0), back: 0.0, nape: 9.0, gathered: false, blunt: false, hem: 6.0, tight: false, extra: Extra::None };
     match style {
         // Short, slightly messy (masculine).
-        0 => Cut { tips: &[(-11.0, -1.0, 1.6), (-7.5, 0.0, 1.8), (-3.5, 1.0, 1.8), (0.5, 0.0, 1.8), (4.5, 1.0, 1.8), (8.5, -0.5, 1.6), (12.0, -2.0, 1.4)], lock: (4.0, 3.0), back: 0.0, nape: 8.0 },
-        // Long straight, hime-style.
-        1 => Cut { tips: &[(-10.5, 4.5, 1.5), (-6.5, 0.5, 1.7), (-2.0, 4.0, 1.7), (2.0, 4.0, 1.7), (6.5, 0.5, 1.7), (10.5, 4.5, 1.5)], lock: (24.0, 4.0), back: 46.0, nape: 12.0 },
+        0 => Cut { tips: &[(-11.0, -1.0, 1.6), (-7.5, 0.0, 1.8), (-3.5, 1.0, 1.8), (0.5, 0.0, 1.8), (4.5, 1.0, 1.8), (8.5, -0.5, 1.6), (12.0, -2.0, 1.4)], side_tips: SIDE_SHORT, lock: (4.0, 3.0), nape: 8.0, tight: true, ..base },
+        // Long straight.
+        1 => Cut { tips: &[(-10.5, 4.5, 1.5), (-6.5, 0.5, 1.7), (-2.0, 4.0, 1.7), (2.0, 4.0, 1.7), (6.5, 0.5, 1.7), (10.5, 4.5, 1.5)], lock: (24.0, 4.0), back: 46.0, nape: 12.0, ..base },
         // Ponytail.
-        2 => Cut { tips: &[(-10.5, 4.0, 1.5), (-6.5, 1.5, 1.6), (-2.0, 3.5, 1.7), (2.5, 2.5, 1.7), (6.5, 1.0, 1.6), (10.5, 3.5, 1.5)], lock: (12.0, 3.5), back: 0.0, nape: 6.0 },
+        2 => Cut { tips: &[(-10.5, 4.0, 1.5), (-6.5, 1.5, 1.6), (-2.0, 3.5, 1.7), (2.5, 2.5, 1.7), (6.5, 1.0, 1.6), (10.5, 3.5, 1.5)], lock: (12.0, 3.5), nape: 6.0, gathered: true, extra: Extra::Ponytail, ..base },
         // Bun.
-        3 => Cut { tips: &[(-10.5, 3.5, 1.5), (-6.5, 1.0, 1.8), (-2.5, 3.0, 1.8), (2.5, 3.0, 1.8), (6.5, 1.0, 1.8), (10.5, 3.5, 1.5)], lock: (9.0, 3.0), back: 0.0, nape: 6.0 },
+        3 => Cut { tips: &[(-10.5, 3.5, 1.5), (-6.5, 1.0, 1.8), (-2.5, 3.0, 1.8), (2.5, 3.0, 1.8), (6.5, 1.0, 1.8), (10.5, 3.5, 1.5)], lock: (9.0, 3.0), nape: 6.0, gathered: true, extra: Extra::Bun, ..base },
         // Spiky hero.
-        4 => Cut { tips: &[(-11.0, 0.5, 1.3), (-7.0, 1.5, 1.5), (-3.0, 2.0, 1.6), (1.0, 1.0, 1.6), (5.0, 2.0, 1.5), (9.0, 0.5, 1.4), (12.0, -1.0, 1.3)], lock: (6.0, 3.5), back: 0.0, nape: 9.0 },
+        4 => Cut { tips: &[(-11.0, 0.5, 1.3), (-7.0, 1.5, 1.5), (-3.0, 2.0, 1.6), (1.0, 1.0, 1.6), (5.0, 2.0, 1.5), (9.0, 0.5, 1.4), (12.0, -1.0, 1.3)], side_tips: SIDE_SHORT, lock: (6.0, 3.5), tight: true, extra: Extra::Spikes, ..base },
         // Bob with a blunt fringe.
-        5 => Cut { tips: &[(-10.0, 2.0, 0.6), (-6.5, 1.5, 0.6), (-2.0, 2.0, 0.6), (2.0, 2.0, 0.6), (6.5, 1.5, 0.6), (10.0, 2.0, 0.6)], lock: (13.0, 5.5), back: 12.0, nape: 13.0 },
+        5 => Cut { tips: &[(-10.0, 2.0, 0.6), (-6.5, 1.5, 0.6), (-2.0, 2.0, 0.6), (2.0, 2.0, 0.6), (6.5, 1.5, 0.6), (10.0, 2.0, 0.6)], side_tips: &[(5.0, 1.5, 0.7), (9.0, 1.5, 0.7), (12.5, 1.0, 0.7)], lock: (13.0, 5.5), back: 12.0, nape: 13.0, ..base },
         // Twin tails.
-        6 => Cut { tips: &[(-10.5, 4.5, 1.5), (-6.5, 0.5, 1.7), (-2.0, 4.0, 1.7), (2.0, 4.0, 1.7), (6.5, 0.5, 1.7), (10.5, 4.5, 1.5)], lock: (11.0, 3.5), back: 0.0, nape: 9.0 },
+        6 => Cut { tips: &[(-10.5, 4.5, 1.5), (-6.5, 0.5, 1.7), (-2.0, 4.0, 1.7), (2.0, 4.0, 1.7), (6.5, 0.5, 1.7), (10.5, 4.5, 1.5)], lock: (11.0, 3.5), extra: Extra::TwinTails, ..base },
         // Side-swept.
-        _ => Cut { tips: &[(-10.0, 4.0, 1.2), (-6.0, 3.5, 1.2), (-2.0, 2.5, 1.3), (2.0, 1.0, 1.4), (6.0, -0.5, 1.5), (10.0, -1.0, 1.5)], lock: (14.0, 4.0), back: 10.0, nape: 11.0 },
+        7 => Cut { tips: &[(-10.0, 4.0, 1.2), (-6.0, 3.5, 1.2), (-2.0, 2.5, 1.3), (2.0, 1.0, 1.4), (6.0, -0.5, 1.5), (10.0, -1.0, 1.5)], side_tips: &[(5.0, 3.5, 1.2), (9.0, 2.5, 1.3), (12.5, 0.0, 1.4)], lock: (14.0, 4.0), back: 10.0, nape: 11.0, ..base },
+        // Hime cut: dead-straight bangs at the brow, side locks cut level
+        // at the chin, a sleek sheet to the waist with a straight hem.
+        8 => Cut { tips: &[(-10.5, 2.0, 0.2), (-6.5, 2.0, 0.2), (-2.0, 2.0, 0.2), (2.0, 2.0, 0.2), (6.5, 2.0, 0.2), (10.5, 2.0, 0.2)], side_tips: &[(5.0, 2.0, 0.25), (9.0, 2.0, 0.25), (12.5, 2.0, 0.25)], lock: (13.5, 5.0), back: 46.0, nape: 12.0, blunt: true, hem: 0.0, ..base },
+        // Ojou drills: swept bangs, ringlets at the temples, hair to the
+        // shoulder blades behind.
+        9 => Cut { tips: &[(-10.5, 4.0, 1.4), (-6.0, 1.0, 1.6), (-2.0, 3.0, 1.7), (2.0, 3.0, 1.7), (6.0, 1.0, 1.6), (10.5, 4.0, 1.4)], lock: (7.0, 3.0), back: 18.0, nape: 12.0, hem: 3.0, extra: Extra::Drills, ..base },
+        // Twin braids (osage): centre part, a braid from behind each ear.
+        10 => Cut { tips: &[(-10.0, 4.5, 1.2), (-6.0, 3.0, 1.4), (-2.5, 0.0, 1.8), (2.5, 0.0, 1.8), (6.0, 3.0, 1.4), (10.0, 4.5, 1.2)], lock: (6.0, 3.0), gathered: true, extra: Extra::TwinBraids, ..base },
+        // Side braid: soft swept bangs, one thick plait over the shoulder.
+        11 => Cut { tips: &[(-10.0, 4.0, 1.3), (-6.0, 3.0, 1.3), (-2.0, 2.0, 1.4), (2.0, 1.5, 1.4), (6.0, 0.5, 1.5), (10.0, 0.0, 1.5)], side_tips: &[(5.0, 3.0, 1.3), (9.0, 2.0, 1.3), (12.5, 0.5, 1.4)], lock: (10.0, 3.5), gathered: true, extra: Extra::SideBraid, ..base },
+        // Very long with a half-up loop: parted bangs, locks past the chest.
+        12 => Cut { tips: &[(-10.5, 5.0, 1.3), (-6.5, 2.0, 1.5), (-2.5, -0.5, 1.8), (2.5, -0.5, 1.8), (6.5, 2.0, 1.5), (10.5, 5.0, 1.3)], lock: (28.0, 4.0), back: 58.0, nape: 12.0, hem: 7.0, extra: Extra::HalfUp, ..base },
+        // Messy isekai protagonist: uneven bangs to the eyes, an ahoge.
+        13 => Cut { tips: &[(-11.0, 1.0, 1.5), (-7.5, 3.0, 1.6), (-3.5, 4.5, 1.8), (0.5, 2.5, 1.9), (4.0, 5.0, 1.7), (8.0, 2.5, 1.6), (11.5, 0.0, 1.4)], side_tips: &[(5.0, 2.5, 1.5), (8.5, 3.5, 1.5), (12.5, 1.0, 1.3)], lock: (6.0, 3.2), nape: 10.0, tight: true, extra: Extra::Messy, ..base },
+        // Long-haired pretty boy: parted bangs, long locks, tied low.
+        14 => Cut { tips: &[(-10.5, 3.0, 1.4), (-6.5, 2.0, 1.6), (-2.5, -1.0, 1.8), (2.5, -1.0, 1.8), (6.5, 2.0, 1.6), (10.5, 3.0, 1.4)], lock: (20.0, 3.5), nape: 10.0, gathered: true, extra: Extra::LowTie, ..base },
+        // Slicked back: the forehead bare, combed over the crown.
+        15 => Cut { tips: &[(-10.0, -4.0, 0.9), (-5.0, -5.5, 0.6), (0.0, -6.0, 0.5), (5.0, -5.5, 0.6), (10.0, -4.0, 0.9)], side_tips: &[(5.0, -5.5, 0.6), (9.0, -6.0, 0.6), (12.5, -5.0, 0.8)], nape: 9.0, tight: true, extra: Extra::Slick, ..base },
+        // Undercut: centre-parted top over clipped sides.
+        16 => Cut { tips: &[(-8.0, 0.0, 1.4), (-4.5, 1.5, 1.6), (-1.5, -3.0, 1.8), (1.5, -3.0, 1.8), (4.5, 1.5, 1.6), (8.0, 0.0, 1.4)], side_tips: &[(5.0, 0.5, 1.5), (8.5, 1.0, 1.5), (12.0, -0.5, 1.3)], nape: 8.0, tight: true, extra: Extra::Undercut, ..base },
+        // Samurai: widow's peak, long locks, tied high at the crown.
+        17 => Cut { tips: &[(-10.5, 3.0, 1.4), (-6.0, 0.5, 1.6), (-2.0, -3.0, 1.8), (2.0, -3.0, 1.8), (6.0, 0.5, 1.6), (10.5, 3.0, 1.4)], lock: (16.0, 3.0), nape: 8.0, gathered: true, extra: Extra::TopKnot, ..base },
+        // Bald with a horseshoe fringe (elders).
+        _ => Cut { tips: &[], side_tips: &[], nape: 8.0, tight: true, extra: Extra::Bald, ..base },
     }
 }
 
@@ -2200,7 +2305,7 @@ fn fringe_bottom(tips: &[(f32, f32, f32)], cy: f32, x: i32) -> f32 {
 
 /// Hair mass radii (front view).
 fn mass_r(look: &Look) -> (f32, f32) {
-    if look.hair_style == 0 || look.hair_style == 4 { (14.0, 14.5) } else { (14.5, 15.0) }
+    if cut(look.hair_style).tight { (14.0, 14.5) } else { (14.5, 15.0) }
 }
 
 /// Long-hair width down the back: just under the skull width at the nape,
@@ -2212,6 +2317,7 @@ fn sheet_w(rx: f32, t: f32) -> f32 {
 fn back_hair(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     let h = &c.hair;
     let hc = b.head_c;
+    let cy = hc.y;
     let side = dir == DIR_SIDE;
     let sway = b.sway;
     let k = cut(look.hair_style);
@@ -2221,11 +2327,11 @@ fn back_hair(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
         if side {
             // Continues the skull's back curve, then falls along the back,
             // narrowing toward the tips.
-            let top = hc.y - 4.0;
+            let top = cy - 4.0;
             let len = k.back + 2.0;
             let back_x = |t: f32| 17.0 + 5.0 * t.powf(1.2) + t * t * sway * 2.2;
             let front_x = |t: f32| 33.0 - 4.0 * t + t * t * sway * 1.2;
-            hair_sheet(cv, h, top, top + len, true, 3.0, |y| {
+            hair_sheet(cv, h, top, top + len, true, k.hem * 0.5, |y| {
                 let t = ((y - top) / len).clamp(0.0, 1.0);
                 (back_x(t) + front_x(t)) * 0.5
             }, |y| {
@@ -2233,33 +2339,47 @@ fn back_hair(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                 (front_x(t) - back_x(t)) * 0.5
             });
         } else {
-            let top = hc.y - 2.0;
+            let top = cy - 2.0;
             let len = k.back;
-            hair_sheet(cv, h, top, top + len, false, 5.0, |_| 32.0, |y| sheet_w(rx, ((y - top) / len).clamp(0.0, 1.0)));
+            hair_sheet(cv, h, top, top + len, false, (k.hem - 1.0).max(0.0), |_| 32.0, |y| sheet_w(rx, ((y - top) / len).clamp(0.0, 1.0)));
         }
     }
-    // Ponytail and twin tails hang behind in front and side views.
-    match look.hair_style {
-        2 if side => {
+    // Tails that hang behind the body.
+    let tie = r5(&ramp4(&pal::CLOTH[1]));
+    match k.extra {
+        Extra::Ponytail if side => {
             // Tied high at the back of the head: sweeps out, then falls.
-            let tie = v(32.0 - 12.5, hc.y - 7.0);
-            let mid = tie.add(v(-4.5 - sway, 7.0));
+            let at = v(32.0 - 12.5, cy - 7.0);
+            let mid = at.add(v(-4.5 - sway, 7.0));
             let end = mid.add(v(-1.0 - sway * 2.0, 17.0));
-            lock_segment(cv, h, tie, mid, 3.6, false);
+            lock_segment(cv, h, at, mid, 3.6, false);
             tail_lock(cv, h, mid.add(v(0.5, -1.0)), end, 4.2);
             cv.begin();
-            cv.ellipse(tie.add(v(0.5, 0.0)), 2.0, 2.4, &r5(&ramp4(&pal::CLOTH[1])), 0.05);
+            cv.ellipse(at.add(v(0.5, 0.0)), 2.0, 2.4, &tie, 0.05);
         }
-        2 => {
-            let base = v(32.0 + 11.0, hc.y + 2.0);
+        Extra::Ponytail => {
+            let base = v(32.0 + 11.0, cy + 2.0);
             tail_lock(cv, h, base, base.add(v(2.0 + sway, 18.0)), 3.2);
         }
-        6 => {
+        Extra::TwinTails => {
             let sides: &[f32] = if side { &[-1.0] } else { &[-1.0, 1.0] };
             for &s in sides {
-                let base = v(32.0 + s * 14.5 + if side { 4.0 } else { 0.0 }, hc.y - 4.0);
+                let base = v(32.0 + s * 14.5 + if side { 4.0 } else { 0.0 }, cy - 4.0);
                 tail_lock(cv, h, base, base.add(v(s * 3.0 + sway, 30.0)), 4.0);
             }
+        }
+        // A long tail tied at the nape, straight down the back.
+        Extra::LowTie if side => {
+            let at = v(20.5, cy + 6.0);
+            tail_lock(cv, h, at, v(19.5 - sway * 1.5, cy + 34.0), 3.0);
+        }
+        // Samurai: tied high at the back of the crown, the tail arcing out
+        // and down to the shoulders.
+        Extra::TopKnot if side => {
+            let at = v(20.5, cy - 10.0);
+            let mid = at.add(v(-4.0 - sway * 0.5, 4.0));
+            lock_segment(cv, h, at, mid, 3.0, false);
+            tail_lock(cv, h, mid.add(v(0.3, -0.8)), mid.add(v(-1.0 - sway * 2.0, 20.0)), 3.4);
         }
         _ => {}
     }
@@ -2294,7 +2414,9 @@ fn hair_sheet(cv: &mut Canvas, h: &R5, top: f32, end: f32, lit: bool, vdepth: f3
             // Each clump has its own length (deterministic, mirrored).
             let extra = [0.0, 2.0, 0.5, 3.0, 1.0][(k as usize) % 5];
             let tip = (1.0 - (uc - 0.5).abs() * 2.0) * 4.0;
-            if fy > end - u.abs().powf(1.3) * vdepth - (4.0 - tip) - extra {
+            // A zero-depth hem is cut straight across (hime cut).
+            let hem = if vdepth <= 0.0 { end } else { end - u.abs().powf(1.3) * vdepth - (4.0 - tip) - extra };
+            if fy > hem {
                 continue;
             }
             let edge = u.abs() > 0.88;
@@ -2322,6 +2444,105 @@ fn flow_lines(cv: &mut Canvas, h: &R5, cx: f32, crown_y: f32, skull_y: f32, bott
 /// A tapered lock (ponytail, twin tail) with flat banded shading.
 fn tail_lock(cv: &mut Canvas, h: &R5, a: V2, b: V2, r: f32) {
     lock_segment(cv, h, a, b, r, true);
+}
+
+/// Point and unit direction at arc length `s` along a polyline.
+fn along(pts: &[V2], s: f32) -> (V2, V2) {
+    let mut left = s;
+    let last = pts.len().saturating_sub(2);
+    for (i, w) in pts.windows(2).enumerate() {
+        let (dx, dy) = (w[1].x - w[0].x, w[1].y - w[0].y);
+        let l = (dx * dx + dy * dy).sqrt().max(1e-4);
+        if left <= l || i == last {
+            let t = (left / l).min(1.0);
+            return (v(w[0].x + dx * t, w[0].y + dy * t), v(dx / l, dy / l));
+        }
+        left -= l;
+    }
+    (pts[0], v(0.0, 1.0))
+}
+
+fn path_len(pts: &[V2]) -> f32 {
+    pts.windows(2).map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt()).sum()
+}
+
+/// A three-strand braid along a path: round lobes stepping left and right,
+/// each its own part so the contour pass draws the tuck where it overlaps
+/// the next; a tie and a small brush tuft at the end.
+fn braid(cv: &mut Canvas, h: &R5, pts: &[V2], r0: f32, r1: f32, tie: &R5, flip: f32) {
+    let total = path_len(pts);
+    let step = (r0 * 1.15).max(2.2);
+    let n = ((total - 2.0) / step).floor().max(1.0) as i32;
+    // Bottom lobe first, so each upper lobe overlaps the one below it.
+    for i in (0..=n).rev() {
+        let s = i as f32 * step;
+        let (p, d) = along(pts, s);
+        let t = s / total;
+        let r = r0 + (r1 - r0) * t;
+        let side = if i % 2 == 0 { flip } else { -flip };
+        let c = v(p.x - d.y * side * r * 0.32, p.y + d.x * side * r * 0.32);
+        // Each lobe is a slanted lozenge, tilted alternately: the chevron
+        // pattern that reads as a plait rather than a stack of beads.
+        let (sn, cs) = (side * 0.6f32).sin_cos();
+        let u = v(d.x * cs - d.y * sn, d.x * sn + d.y * cs);
+        let (a, bb) = (r * 1.1, r * 0.62);
+        cv.begin();
+        let span = a.ceil() as i32 + 1;
+        for y in (c.y as i32 - span)..=(c.y as i32 + span) {
+            for x in (c.x as i32 - span)..=(c.x as i32 + span) {
+                let (ox, oy) = (x as f32 + 0.5 - c.x, y as f32 + 0.5 - c.y);
+                let pu = ox * u.x + oy * u.y;
+                let pv = -ox * u.y + oy * u.x;
+                let q = (pu / a).powi(2) + (pv / bb).powi(2);
+                if q > 1.0 + EPS {
+                    continue;
+                }
+                // Lit along the upper flank, shadowed where it tucks under.
+                let tone = if q > 0.55 && pv * side > 0.0 { 1 } else if pv * side > 0.15 || q > 0.7 { 2 } else { 3 };
+                cv.fill(x, y, h[tone]);
+            }
+        }
+    }
+    let (end, d) = along(pts, total);
+    let tie_at = v(end.x - d.x * 1.5, end.y - d.y * 1.5);
+    cv.begin();
+    tail_lock(cv, h, tie_at, v(end.x + d.x * 4.0, end.y + d.y * 4.0), (r1 * 0.9).max(1.6));
+    cv.begin();
+    cv.ellipse(tie_at, (r1 * 0.75).max(1.3), 1.0, tie, 0.1);
+}
+
+/// Tate-roll drill: a tight ringlet hanging from `top`, coils stacked down
+/// the length, fullest in the middle and narrowing to a curled tip, each
+/// coil its own part with a diagonal shadow showing the spiral.
+fn drill(cv: &mut Canvas, h: &R5, top: V2, len: f32, r: f32, lean: f32) {
+    let coil = (r * 0.95).max(2.4);
+    let n = (len / coil).floor().max(2.0) as i32;
+    for i in 0..n {
+        let t = i as f32 / (n - 1) as f32;
+        let rr = r * (0.75 + 0.35 * (std::f32::consts::PI * t.min(0.7) / 0.7).sin()) * (1.0 - 0.45 * t * t);
+        let c = v(top.x + lean * t * t, top.y + coil * (i as f32 + 0.5));
+        cv.begin();
+        cv.ellipse(c, rr.max(1.2), coil * 0.62, h, 0.04);
+        // The spiral: the coil's lower edge sweeps across in shadow.
+        let y = (c.y + coil * 0.25).floor() as i32;
+        let x0 = (c.x - rr * 0.7).round() as i32;
+        let x1 = (c.x + rr * 0.7).round() as i32;
+        for x in x0..=x1 {
+            // Mirrored drills spiral the mirrored way.
+            let run = if lean < 0.0 { x1 - x } else { x - x0 };
+            let yy = y - (run as f32 / (x1 - x0).max(1) as f32 * 1.4).round() as i32;
+            if cv.owns(x, yy) {
+                cv.put(x, yy, h[2]);
+            }
+        }
+    }
+}
+
+/// Ahoge: one antenna strand springing from the crown and curling over.
+fn ahoge(cv: &mut Canvas, h: &R5, root: V2, dir: f32) {
+    cv.begin();
+    let pts = [root, v(root.x + dir * 1.0, root.y - 4.0), v(root.x + dir * 3.5, root.y - 6.5), v(root.x + dir * 5.5, root.y - 5.0)];
+    curve(cv, &pts, 1.3, 0.5, h);
 }
 
 /// One segment of a lock; `taper` false keeps it full (for joining a curve).
@@ -2352,24 +2573,28 @@ fn lock_segment(cv: &mut Canvas, h: &R5, a: V2, b: V2, r: f32, taper: bool) {
 fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     let h = &c.hair;
     let hc = b.head_c;
-    let style = look.hair_style;
-    let k = cut(style);
+    let cy = hc.y;
+    let k = cut(look.hair_style);
+    let ex = k.extra;
     let sway = b.sway;
     let (rx, ry) = mass_r(look);
     let shine = h[4];
+    let tie = r5(&ramp4(&pal::CLOTH[1]));
+    // Clipped hair (undercut, a bald man's fringe): skin showing through.
+    let clipped: R5 = [mix(c.skin[0], h[0], 0.7), mix(c.skin[1], h[0], 0.7), mix(c.skin[2], h[1], 0.72), mix(c.skin[3], h[1], 0.65), mix(c.skin[4], h[2], 0.6)];
+    cv.register(&clipped);
     cv.begin();
-    if style == 4 {
-        spikes(cv, h, hc.y, dir);
+    if ex == Extra::Spikes {
+        spikes(cv, h, cy, dir);
     }
     match dir {
         DIR_UP => {
             // Back of the head: the whole cap, nape, and the long sheet over
             // the back.
-            let mc = v(32.0, hc.y - 1.0);
+            let mc = v(32.0, cy - 1.0);
             // From behind, hair comes down to about the jaw; gathered styles
             // show more of the nape.
-            let gathered = matches!(style, 2 | 3);
-            let nape = hc.y + if gathered { 10.0 } else { k.nape.max(12.0) };
+            let nape = cy + if k.gathered { 10.0 } else { k.nape.max(12.0) };
             let neck_w = if look.female { 6.0 } else { 7.0 };
             for y in (mc.y - ry).floor() as i32..=nape.ceil() as i32 {
                 let fy = y as f32 + 0.5;
@@ -2379,8 +2604,9 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                 // (a late pinch reads as a bell or a bowling ball on a stick).
                 // A hair under the full radius keeps the widest row from
                 // poking out a one-pixel nub on each side.
-                let er = rx - 0.4;
-                let ear = hc.y + 3.0;
+                // A bald man's fringe lies flat on the skull.
+                let er = if ex == Extra::Bald { 12.8 } else { rx - 0.4 };
+                let ear = cy + 3.0;
                 let half = if fy < mc.y {
                     let ny = (fy - mc.y) / ry;
                     er * (1.0 - ny * ny).max(0.0).sqrt()
@@ -2394,56 +2620,108 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     let nx = (x as f32 + 0.5 - mc.x) / rx;
                     let ny = (fy - mc.y) / ry;
                     let d = (x as f32 + 0.5 - 32.0).abs();
-                    // Hairline dips in the middle and rises at the sides.
                     // The hairline curves up behind the ears into a rounded U
                     // at the nape; gathered hair shows more of it.
-                    let rise = (d / rx).min(1.0).powf(1.6) * if gathered { 7.0 } else { 4.0 };
+                    let rise = (d / rx).min(1.0).powf(1.6) * if k.gathered { 7.0 } else { 4.0 };
                     if d > half + EPS || fy > nape - rise {
                         continue;
                     }
-                    cv.fill(x, y, h[if nx.abs() > 0.86 || ny > 0.7 { 2 } else { 3 }]);
+                    let col = match ex {
+                        // Only the horseshoe below the crown.
+                        Extra::Bald if fy < cy - 3.0 => continue,
+                        Extra::Bald => h[if nx.abs() > 0.8 { 2 } else { 3 }],
+                        Extra::Undercut if fy > cy - 2.0 => clipped[if nx.abs() > 0.8 { 1 } else { 2 }],
+                        _ => h[if nx.abs() > 0.86 || ny > 0.7 { 2 } else { 3 }],
+                    };
+                    cv.fill(x, y, col);
                 }
             }
-            let top = hc.y + 5.0;
+            let top = cy + 5.0;
             let len = (k.back - 5.0).max(0.0);
             if k.back > 0.0 {
-                hair_sheet(cv, h, top, top + len, true, 6.0, |_| 32.0, |y| sheet_w(rx, ((y - top) / len).clamp(0.0, 1.0)));
+                hair_sheet(cv, h, top, top + len, true, k.hem, |_| 32.0, |y| sheet_w(rx, ((y - top) / len).clamp(0.0, 1.0)));
             }
             // Flow lines that follow the skull, then fall with the hair.
-            let bottom = if k.back > 0.0 { top + len - 7.0 } else { nape - 2.0 };
-            flow_lines(cv, h, 32.0, hc.y - 12.0, hc.y + 4.0, bottom, &[4.0, 9.5]);
-            highlight_ring(cv, h, shine, v(32.0, hc.y - 1.0), rx, ry, &[]);
-            match style {
-                2 => {
-                    let base = v(32.0, hc.y + 1.0);
+            let bottom = match ex {
+                Extra::Undercut => cy - 3.0,
+                _ if k.back > 0.0 => top + len - 7.0,
+                _ => nape - 2.0,
+            };
+            if ex != Extra::Bald {
+                flow_lines(cv, h, 32.0, cy - 12.0, cy + 4.0, bottom, &[4.0, 9.5]);
+                highlight_ring(cv, h, shine, v(32.0, cy - 1.0), rx, ry, &[]);
+            }
+            match ex {
+                Extra::Ponytail => {
+                    let base = v(32.0, cy + 1.0);
                     cv.begin();
                     tail_lock(cv, h, base, base.add(v(sway, 24.0)), 4.2);
-                    cv.rect(30, hc.y as i32, 4, 2, hex(0xc83a4a));
+                    cv.rect(30, cy as i32, 4, 2, hex(0xc83a4a));
                 }
-                3 => {
+                Extra::Bun => {
                     cv.begin();
-                    cv.ellipse(v(32.0, hc.y - ry - 0.5), 5.5, 5.0, h, 0.05);
+                    cv.ellipse(v(32.0, cy - ry - 0.5), 5.5, 5.0, h, 0.05);
                 }
-                6 => {
+                Extra::TwinTails => {
                     for s in [-1.0f32, 1.0] {
-                        let base = v(32.0 + s * (rx + 0.5), hc.y - 4.0);
+                        let base = v(32.0 + s * (rx + 0.5), cy - 4.0);
                         cv.begin();
                         tail_lock(cv, h, base, base.add(v(s * 3.0 + sway, 30.0)), 4.0);
-                        cv.ellipse(base.add(v(0.0, -1.0)), 2.4, 2.0, &r5(&ramp4(&pal::CLOTH[1])), 0.1);
+                        cv.ellipse(base.add(v(0.0, -1.0)), 2.4, 2.0, &tie, 0.1);
                     }
+                }
+                Extra::Drills => {
+                    let first = cv.cur + 1;
+                    drill(cv, h, v(18.5, cy - 1.0), 24.0, 3.6, -1.5);
+                    cv.mirror_from(first);
+                }
+                // Both braids go forward over the shoulders: only their
+                // roots show from behind.
+                Extra::TwinBraids => {
+                    let first = cv.cur + 1;
+                    braid(cv, h, &[v(21.5, cy + 6.0), v(19.5, cy + 16.0)], 2.4, 2.2, &tie, -1.0);
+                    cv.mirror_from(first);
+                }
+                // Gathered to the right shoulder (screen right from behind).
+                Extra::SideBraid => {
+                    braid(cv, h, &[v(40.5, cy + 6.0), v(43.5, cy + 17.0)], 2.9, 2.6, &tie, 1.0);
+                }
+                Extra::HalfUp => {
+                    cv.begin();
+                    for s in [-1.0f32, 1.0] {
+                        cv.ellipse(v(32.0 + s * 2.5, cy - 5.0), 2.3, 1.6, &tie, 0.1);
+                    }
+                    cv.ellipse(v(32.0, cy - 5.0), 1.1, 1.1, &tie, -0.1);
+                }
+                Extra::Messy => {
+                    cv.begin();
+                    for (dx, len) in [(-5.0f32, 4.0f32), (0.0, 5.0), (5.0, 4.0)] {
+                        tail_lock(cv, h, v(32.0 + dx, nape - 3.0), v(32.0 + dx * 1.2, nape + len - 2.0), 2.0);
+                    }
+                    ahoge(cv, h, v(31.5, cy - 15.0), -1.0);
+                }
+                Extra::LowTie => {
+                    let at = v(32.0, cy + 8.0);
+                    cv.begin();
+                    tail_lock(cv, h, at, v(32.0 + sway, cy + 36.0), 3.0);
+                    cv.begin();
+                    cv.ellipse(at, 2.2, 1.2, &tie, 0.1);
+                }
+                Extra::TopKnot => {
+                    let at = v(32.0, cy - 11.0);
+                    cv.begin();
+                    tail_lock(cv, h, at, v(32.0 + sway, cy + 16.0), 3.2);
+                    cv.begin();
+                    cv.ellipse(at, 2.6, 2.0, h, 0.1);
+                    cv.begin();
+                    cv.ellipse(at.add(v(0.0, 1.5)), 2.0, 0.9, &tie, 0.1);
                 }
                 _ => {}
             }
         }
         DIR_SIDE => {
-            let mc = v(31.0, hc.y - 1.0);
-            let cy = hc.y;
-            let front_tips: &[(f32, f32, f32)] = match style {
-                0 | 4 => &[(5.0, 0.0, 1.6), (8.5, 1.0, 1.5), (12.0, -1.0, 1.3)],
-                5 => &[(5.0, 1.5, 0.7), (9.0, 1.5, 0.7), (12.5, 1.0, 0.7)],
-                7 => &[(5.0, 3.5, 1.2), (9.0, 2.5, 1.3), (12.5, 0.0, 1.4)],
-                _ => &[(5.0, 2.0, 1.5), (9.0, 0.5, 1.6), (12.5, 1.5, 1.4)],
-            };
+            let mc = v(31.0, cy - 1.0);
+            let front_tips = k.side_tips;
             let nape = cy + k.nape;
             // Long hair falls over the ear and the nape down to the jaw; only
             // shorter cuts show the ear.
@@ -2465,7 +2743,7 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                         }
                     } else if x >= 33 {
                         // Between the fringe and the side lock: the temple.
-                        if fy > cy - 1.0 {
+                        if fy > cy - 1.0 || (ex == Extra::Slick && fy > cy - 7.0) {
                             continue;
                         }
                     } else if fy > if long { cy + 13.0 } else { nape - ((x as f32 - 22.0) / 11.0).clamp(0.0, 1.0) * 3.0 } {
@@ -2474,7 +2752,13 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                         continue;
                     }
                     let rim = nx * nx + ny * ny > 0.8 && ny > -0.2;
-                    cv.fill(x, y, h[if rim { 2 } else { 3 }]);
+                    let col = match ex {
+                        Extra::Bald if fy < cy - 3.0 || x > 29 => continue,
+                        Extra::Bald => h[if rim { 2 } else { 3 }],
+                        Extra::Undercut if fy > cy - 5.0 && x < 33 => clipped[if rim { 1 } else { 2 }],
+                        _ => h[if rim { 2 } else { 3 }],
+                    };
+                    cv.fill(x, y, col);
                 }
             }
             // The ear sits on the hair just behind the jaw hinge, from the
@@ -2496,27 +2780,63 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             let (ll, lw) = k.lock;
             if ll > 5.0 {
                 // In profile the lock in front of the ear stops at the jaw.
-                lock_strip(cv, h, 31.5, cy - 1.0, cy + ll.min(12.0), (lw * 0.7).max(2.6), sway, 1.0);
+                lock_strip(cv, h, 31.5, cy - 1.0, cy + ll.min(12.0), (lw * 0.7).max(2.6), sway, 1.0, k.blunt);
             }
             for &(tx, _, _) in front_tips.iter().skip(1) {
                 let nb = fringe_bottom(front_tips, cy, (32.0 + tx - 2.0) as i32);
                 cv.line(v(32.0 + tx * 0.5, cy - 11.0), v(32.0 + tx - 2.0, nb), |t| if t < 0.1 { None } else if t > 0.8 { Some(h[1]) } else { Some(h[2]) });
             }
-            for dx in [-8.0f32, -3.0] {
-                cv.line(v(31.0 + dx * 0.4, cy - 12.0), v(31.0 + dx * 1.3, nape - 2.0), |t| if t < 0.15 { None } else { Some(h[2]) });
+            if ex != Extra::Bald {
+                let low = if ex == Extra::Undercut { cy - 6.0 } else { nape - 2.0 };
+                for dx in [-8.0f32, -3.0] {
+                    cv.line(v(31.0 + dx * 0.4, cy - 12.0), v(31.0 + dx * 1.3, low), |t| if t < 0.15 { None } else { Some(h[2]) });
+                }
+                highlight_ring(cv, h, shine, mc, rx, ry, &[]);
             }
-            highlight_ring(cv, h, shine, mc, rx, ry, &[]);
-            match style {
-                3 => {
+            match ex {
+                Extra::Bun => {
                     cv.begin();
                     cv.ellipse(v(28.0, cy - ry - 0.5), 5.5, 5.0, h, 0.05);
                 }
-                4 => {}
+                Extra::Drills => drill(cv, h, v(25.0, cy - 1.0), 24.0, 3.6, -1.2),
+                Extra::TwinBraids => braid(cv, h, &[v(27.5, cy + 8.0), v(29.5, cy + 16.0), v(31.0, cy + 24.0), v(31.5, cy + 30.0)], 2.4, 1.8, &tie, 1.0),
+                Extra::SideBraid => braid(cv, h, &[v(27.5, cy + 8.0), v(29.5, cy + 16.0), v(31.5, cy + 24.0), v(32.5, cy + 32.0)], 2.9, 2.0, &tie, 1.0),
+                Extra::HalfUp => {
+                    cv.begin();
+                    cv.ellipse(v(18.5, cy - 5.0), 1.6, 2.4, &tie, 0.1);
+                }
+                Extra::Messy => {
+                    cv.begin();
+                    for (x, len) in [(20.5f32, 4.0f32), (24.5, 3.5)] {
+                        tail_lock(cv, h, v(x + 1.0, nape - 3.0), v(x - 0.5, nape + len - 2.0), 2.0);
+                    }
+                    ahoge(cv, h, v(31.5, cy - 15.5), 1.0);
+                }
+                Extra::LowTie => {
+                    cv.begin();
+                    cv.ellipse(v(21.0, cy + 6.5), 1.3, 2.0, &tie, 0.1);
+                }
+                Extra::TopKnot => {
+                    cv.begin();
+                    cv.ellipse(v(21.0, cy - 10.5), 2.4, 2.4, h, 0.1);
+                    cv.begin();
+                    cv.ellipse(v(22.0, cy - 10.0), 0.9, 2.0, &tie, 0.1);
+                }
+                // Combed lines sweeping back over the crown.
+                Extra::Slick => {
+                    for (y0, y1) in [(-7.5f32, -12.5f32), (-6.0, -9.0)] {
+                        cv.line(v(42.0, cy + y0), v(22.0, cy + y1), |t| if t < 0.05 { None } else { Some(h[2]) });
+                    }
+                }
+                Extra::Bald => {
+                    cv.put(30, (cy - 11.0) as i32, c.skin[4]);
+                    cv.put(31, (cy - 11.0) as i32, c.skin[4]);
+                    cv.put(29, (cy - 10.0) as i32, c.skin[4]);
+                }
                 _ => {}
             }
         }
         _ => {
-            let cy = hc.y;
             let mc = v(32.0, cy - 1.0);
             let tips = k.tips;
             let face_w = 12.0;
@@ -2529,12 +2849,29 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     }
                     let fy = y as f32 + 0.5;
                     let dxa = (x as f32 + 0.5 - 32.0).abs();
-                    let limit = if dxa < face_w + 0.5 { fringe_bottom(tips, cy, x) } else { cy + 3.0 };
-                    if fy > limit {
-                        continue;
-                    }
                     let temple = dxa > face_w - 1.0 && fy > cy - 4.0;
-                    cv.fill(x, y, h[if temple { 2 } else { 3 }]);
+                    let col = match ex {
+                        // Only the fringe of hair around the sides.
+                        Extra::Bald if dxa > 10.5 && dxa < face_w + 1.0 && fy > cy - 5.0 && fy < cy + 3.0 => h[if dxa > face_w { 2 } else { 3 }],
+                        Extra::Bald => continue,
+                        // Clipped sides from the temples down, close to the skull.
+                        Extra::Undercut if dxa > 9.0 && fy > cy - 6.0 => {
+                            if fy > cy + 1.0 || dxa > face_w + 0.6 {
+                                continue;
+                            }
+                            clipped[if dxa > face_w - 0.6 { 1 } else { 2 }]
+                        }
+                        _ => {
+                            // Slicked-back sides lie flat above the ears.
+                            let side_end = if ex == Extra::Slick { cy - 5.0 } else { cy + 3.0 };
+                            let limit = if dxa < face_w + 0.5 { fringe_bottom(tips, cy, x) } else { side_end };
+                            if fy > limit {
+                                continue;
+                            }
+                            h[if temple { 2 } else { 3 }]
+                        }
+                    };
+                    cv.fill(x, y, col);
                 }
             }
             // Strand lines from the crown into each notch between clumps.
@@ -2543,12 +2880,13 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             let mut notches = Vec::new();
             for w in xs.windows(2) {
                 let nx = (w[0] + w[1]) * 0.5;
-                let px = (32.0 + nx).floor() as i32;
+                // Nudged toward the centre so notches on whole pixels mirror.
+                let px = (32.0 + nx - nx.signum() * 1e-3).floor() as i32;
                 let nb = fringe_bottom(tips, cy, px);
                 if nx.abs() >= 0.6 {
                     notches.push(px);
                 }
-                if nx.abs() < 0.6 {
+                if nx.abs() < 0.6 || ex == Extra::Slick {
                     // A single centre column can't be mirrored; the clumps
                     // either side already meet there.
                     continue;
@@ -2565,24 +2903,62 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     cv.put(x, y, h[2]);
                 }
             }
-            highlight_ring(cv, h, shine, mc, rx, ry, &notches);
+            if ex != Extra::Bald {
+                highlight_ring(cv, h, shine, mc, rx, ry, &notches);
+            }
             // Side locks framing the face.
             let (ll, lw) = k.lock;
-            for s in [-1.0f32, 1.0] {
-                let cxl = 32.0 + s * (rx - lw * 0.5);
-                lock_strip(cv, h, cxl, cy - 4.0, cy + ll, lw, sway, s);
+            if ll > 0.0 {
+                for s in [-1.0f32, 1.0] {
+                    let cxl = 32.0 + s * (rx - lw * 0.5);
+                    lock_strip(cv, h, cxl, cy - 4.0, cy + ll, lw, sway, s, k.blunt);
+                }
             }
-            match style {
-                3 => {
+            match ex {
+                Extra::Bun => {
                     cv.begin();
                     cv.ellipse(v(32.0, cy - ry - 1.0), 5.5, 5.0, h, 0.05);
                 }
-                4 => {}
-                6 => {
+                Extra::TwinTails => {
                     for s in [-1.0f32, 1.0] {
                         let base = v(32.0 + s * (rx + 0.5), cy - 4.0);
                         cv.begin();
-                        cv.ellipse(base.add(v(0.0, -1.0)), 2.4, 2.0, &r5(&ramp4(&pal::CLOTH[1])), 0.1);
+                        cv.ellipse(base.add(v(0.0, -1.0)), 2.4, 2.0, &tie, 0.1);
+                    }
+                }
+                Extra::Drills => {
+                    let first = cv.cur + 1;
+                    drill(cv, h, v(18.5, cy - 1.0), 24.0, 3.6, -1.5);
+                    cv.mirror_from(first);
+                }
+                // Over the shoulders and down the front.
+                Extra::TwinBraids => {
+                    let first = cv.cur + 1;
+                    let p = |x: f32, y: f32| v(32.0 - x, cy + y);
+                    braid(cv, h, &[p(11.5, 5.0), p(12.0, 13.0), p(11.0, 22.0), p(10.5, 30.0)], 2.4, 1.8, &tie, 1.0);
+                    cv.mirror_from(first);
+                }
+                // Over her right shoulder (screen left).
+                Extra::SideBraid => {
+                    braid(cv, h, &[v(20.5, cy + 5.0), v(20.5, cy + 13.0), v(22.5, cy + 22.0), v(24.0, cy + 32.0)], 2.9, 2.0, &tie, 1.0);
+                }
+                Extra::Messy => ahoge(cv, h, v(32.5, cy - 15.0), 1.0),
+                // The knot peeks over the crown.
+                Extra::TopKnot => {
+                    cv.begin();
+                    cv.ellipse(v(32.0, cy - ry - 0.5), 2.6, 2.2, h, 0.1);
+                }
+                // Combed lines back from the hairline.
+                Extra::Slick => {
+                    for o in [3.0f32, 7.0, 10.5] {
+                        for s in [-1.0f32, 1.0] {
+                            cv.line(v(32.0 + s * o, cy - 7.0), v(32.0 + s * o * 0.55, cy - 14.0), |t| if t < 0.1 { None } else { Some(h[2]) });
+                        }
+                    }
+                }
+                Extra::Bald => {
+                    for (x, y) in [(27, -11), (28, -11), (26, -10)] {
+                        cv.put(x, (cy + y as f32) as i32, c.skin[4]);
                     }
                 }
                 _ => {}
@@ -2594,7 +2970,7 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
 /// A side lock: straight strip with a pointed end, a strand line down the
 /// middle and a darker face-side edge. `s` is -1 for the left lock.
 #[allow(clippy::too_many_arguments)]
-fn lock_strip(cv: &mut Canvas, h: &R5, cx: f32, top: f32, end: f32, w: f32, sway: f32, s: f32) {
+fn lock_strip(cv: &mut Canvas, h: &R5, cx: f32, top: f32, end: f32, w: f32, sway: f32, s: f32, blunt: bool) {
     let len = (end - top).max(1.0);
     for y in top.floor() as i32..=end.ceil() as i32 {
         let fy = y as f32 + 0.5;
@@ -2602,9 +2978,10 @@ fn lock_strip(cv: &mut Canvas, h: &R5, cx: f32, top: f32, end: f32, w: f32, sway
             continue;
         }
         let t = (fy - top) / len;
-        let ww = if t > 0.6 { w * (1.0 - (t - 0.6) / 0.4 * 0.9) } else { w };
+        // Pointed tip, or cut straight across.
+        let ww = if t > 0.6 && !blunt { w * (1.0 - (t - 0.6) / 0.4 * 0.9) } else { w };
         // The point swings outward with the lag.
-        let c = cx + t * t * sway * 0.6 + if t > 0.6 { s * (t - 0.6) * 2.0 } else { 0.0 };
+        let c = cx + t * t * sway * 0.6 + if t > 0.6 && !blunt { s * (t - 0.6) * 2.0 } else { 0.0 };
         for x in (c - ww * 0.5 - 1.0) as i32..=(c + ww * 0.5 + 1.0) as i32 {
             let px = x as f32 + 0.5;
             let u = (px - c) / (ww * 0.5).max(0.3);
@@ -3279,7 +3656,7 @@ impl Look {
 
     /// Whether the front (or back) view should be mirror-symmetric.
     fn symmetric(&self, _dir: u8) -> bool {
-        matches!(self.hair_style, 1 | 3 | 5 | 6)
+        matches!(self.hair_style, 1 | 3 | 5 | 6 | 8 | 9 | 10 | 12 | 15)
             && matches!(self.hat, 0 | 2 | 3 | 4 | 5 | 8 | 10)
             && self.held == held::NONE
             // Tails peek out to one side; tailed races aren't mirror-exact.
@@ -3527,17 +3904,17 @@ mod motion {
 pub fn cast() -> Vec<(&'static str, Look)> {
     let base = Look { skin: 1, hair: 0, hair_style: 1, top: 0, bottom: 0, outfit: outfit::TUNIC, hat: 0, hat_color: 1, female: true, age: 1, beard: false, eyes: 0, mature: true, race: RACE_HUMAN, beast: 0, held: held::NONE, glasses: false, figure: 2, build: 1, height: 1, facial: 0 };
     vec![
-        ("Reincarnated Hero", Look { build: 1, female: false, hair: 0, hair_style: 0, outfit: outfit::COAT, top: 8, bottom: 8, eyes: 2, skin: 1, held: held::SWORD, height: 1, ..base }),
+        ("Reincarnated Hero", Look { build: 1, female: false, hair: 0, hair_style: 13, outfit: outfit::COAT, top: 8, bottom: 8, eyes: 2, skin: 1, held: held::SWORD, height: 1, ..base }),
         ("Guild Receptionist", Look { figure: 3, build: 1, hair: 1, hair_style: 1, outfit: outfit::GUILD, hat: 9, hat_color: 1, eyes: 1, skin: 1, held: held::BOOK, ..base }),
-        ("Elf Mage", Look { figure: 1, build: 0, race: RACE_ELF, hair: 5, hair_style: 1, outfit: outfit::ROBE, top: 2, eyes: 6, skin: 0, held: held::STAFF, ..base }),
+        ("Elf Mage", Look { figure: 1, build: 0, race: RACE_ELF, hair: 5, hair_style: 8, outfit: outfit::ROBE, top: 2, eyes: 6, skin: 0, held: held::STAFF, ..base }),
         ("Cat-girl Adventurer", Look { figure: 2, build: 2, race: RACE_BEAST, beast: 0, hair: 2, hair_style: 5, outfit: outfit::VEST, top: 7, bottom: 3, eyes: 5, skin: 2, held: held::SWORD, ..base }),
         ("Female Knight", Look { figure: 3, build: 2, hair: 3, hair_style: 2, outfit: outfit::ARMOR, hat_color: 0, bottom: 8, eyes: 0, skin: 1, held: held::SWORD, ..base }),
-        ("Healer", Look { figure: 3, build: 1, hair: 3, hair_style: 5, outfit: outfit::ROBE, top: 7, eyes: 0, skin: 0, held: held::STAFF, hat: 7, hat_color: 0, ..base }),
+        ("Healer", Look { figure: 3, build: 1, hair: 3, hair_style: 11, outfit: outfit::ROBE, top: 7, eyes: 0, skin: 0, held: held::STAFF, hat: 7, hat_color: 0, ..base }),
         ("Dwarf Smith", Look { facial: 6, build: 2, female: false, race: RACE_DWARF, hair: 4, hair_style: 0, outfit: outfit::SMITH, bottom: 8, beard: true, hat: 2, hat_color: 1, eyes: 2, skin: 3, held: held::HAMMER, ..base }),
         ("Demon Lord", Look { figure: 4, build: 2, race: RACE_DEMON, skin: 3, beast: 1, hair: 0, hair_style: 1, outfit: outfit::GOTHIC, top: 8, hat_color: 1, eyes: 4, height: 2, ..base }),
-        ("Barmaid", Look { figure: 4, build: 3, hair: 3, hair_style: 2, outfit: outfit::DIRNDL, top: 1, bottom: 2, hat: 10, eyes: 1, skin: 2, held: held::MUG, ..base }),
+        ("Barmaid", Look { figure: 4, build: 3, hair: 3, hair_style: 10, outfit: outfit::DIRNDL, top: 1, bottom: 2, hat: 10, eyes: 1, skin: 2, held: held::MUG, ..base }),
         ("Fox Merchant", Look { figure: 2, build: 2, race: RACE_BEAST, beast: 1, hair: 4, hair_style: 7, outfit: outfit::APRON, top: 5, bottom: 3, eyes: 5, skin: 1, held: held::BASKET, ..base }),
-        ("Village Elder", Look { facial: 6, build: 0, female: false, age: 2, hair: 5, hair_style: 0, outfit: outfit::ROBE, top: 3, beard: true, eyes: 2, skin: 3, held: held::STAFF, ..base }),
+        ("Village Elder", Look { facial: 6, build: 0, female: false, age: 2, hair: 5, hair_style: 18, outfit: outfit::ROBE, top: 3, beard: true, eyes: 2, skin: 3, held: held::STAFF, ..base }),
         ("Shopkeeper", Look { facial: 2, build: 3, female: false, hair: 1, hair_style: 0, outfit: outfit::APRON, top: 9, bottom: 3, hat: 5, hat_color: 6, glasses: true, eyes: 2, skin: 2, held: held::BASKET, ..base }),
     ]
 }
