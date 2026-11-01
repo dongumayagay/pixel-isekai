@@ -48,21 +48,111 @@ pub const RACE_DEMON: u8 = 4;
 pub const RACE_NAMES: [&str; 5] = ["Human", "Elf", "Dwarf", "Beastfolk", "Demon"];
 
 pub mod outfit {
-    pub const TUNIC: u8 = 0;
-    pub const DRESS: u8 = 1;
-    pub const ROBE: u8 = 2;
-    pub const APRON: u8 = 3;
-    pub const ARMOR: u8 = 4;
-    pub const CLOAK: u8 = 5;
-    pub const VEST: u8 = 6;
-    pub const DIRNDL: u8 = 7;
-    pub const GUILD: u8 = 8;
-    pub const SMITH: u8 = 9;
-    /// Floor-length gothic gown with a high standing collar and cape.
-    pub const GOTHIC: u8 = 10;
-    /// Long open coat over a light shirt (the adventurer protagonist).
-    pub const COAT: u8 = 11;
-    pub const COUNT: u8 = 12;
+    pub const PEASANT: u8 = 0;
+    pub const LABORER: u8 = 1;
+    pub const FISHER: u8 = 2;
+    pub const SMITH: u8 = 3;
+    pub const COOK: u8 = 4;
+    pub const MERCHANT: u8 = 5;
+    pub const INNKEEPER: u8 = 6;
+    pub const GUARD: u8 = 7;
+    pub const KNIGHT: u8 = 8;
+    pub const HERO: u8 = 9;
+    pub const ADVENTURER: u8 = 10;
+    pub const ROGUE: u8 = 11;
+    pub const RANGER: u8 = 12;
+    pub const MAGE: u8 = 13;
+    pub const SCHOLAR: u8 = 14;
+    pub const PRIEST: u8 = 15;
+    pub const MONK: u8 = 16;
+    pub const BARD: u8 = 17;
+    pub const MAID: u8 = 18;
+    pub const NOBLE: u8 = 19;
+    pub const GUILD: u8 = 20;
+    pub const DEMON: u8 = 21;
+    pub const COUNT: u8 = 22;
+
+    pub const NAMES: [&str; COUNT as usize] = [
+        "Peasant", "Labourer", "Fisher", "Smith", "Cook", "Merchant", "Innkeeper", "Guard", "Knight", "Hero", "Adventurer", "Rogue", "Ranger", "Mage", "Scholar", "Priest", "Monk", "Bard", "Maid / Butler", "Noble", "Guild clerk", "Demon lord",
+    ];
+
+    /// What the primary, secondary and accent dyes colour on each outfit
+    /// ("" = unused): (women, men).
+    pub fn slots(o: u8, female: bool) -> [&'static str; 3] {
+        match (o, female) {
+            (PEASANT, true) => ["Dress", "Apron", "Kerchief"],
+            (PEASANT, false) => ["Tunic", "Trousers", "Kerchief"],
+            (LABORER, _) => ["Jerkin", "Shirt", "Kerchief"],
+            (FISHER, true) => ["Oilskin cape", "Skirt", "Kerchief"],
+            (FISHER, false) => ["Oilskin cape", "Trousers", "Kerchief"],
+            (SMITH, _) => ["Apron", "Shirt", ""],
+            (COOK, _) => ["Coat", "Apron", "Kerchief"],
+            (MERCHANT, _) => ["Coat", "Shirt", "Sash"],
+            (INNKEEPER, true) => ["Bodice", "Skirt", "Lacing"],
+            (INNKEEPER, false) => ["Vest", "Trousers", "Kerchief"],
+            (GUARD, _) => ["Tabard", "Trousers", "Stripe"],
+            (KNIGHT, _) => ["Cape", "Skirt", "Trim"],
+            (HERO, _) => ["Coat", "Shirt", "Trim"],
+            (ADVENTURER, _) => ["Tunic", "Capelet", "Scarf"],
+            (ROGUE, _) => ["Top", "Scarf", "Belt"],
+            (RANGER, _) => ["Tunic", "Cloak", "Clasp"],
+            (MAGE, true) => ["Dress", "Cape", "Sash"],
+            (MAGE, false) => ["Robe", "Cape", "Sash"],
+            (SCHOLAR, _) => ["Gown", "Capelet", "Clasp"],
+            (PRIEST, _) => ["Robe", "Stole", "Sash"],
+            (MONK, _) => ["Gi", "Trousers", "Sash"],
+            (BARD, _) => ["Doublet", "Half-cape", "Clasp"],
+            (MAID, true) => ["Dress", "Apron", "Ribbon"],
+            (MAID, false) => ["Tailcoat", "Shirt", "Tie"],
+            (NOBLE, true) => ["Gown", "Sleeves", "Jewel"],
+            (NOBLE, false) => ["Frock coat", "Shirt", "Sash"],
+            (GUILD, _) => ["Vest", "Blouse", "Bow"],
+            _ => ["Gown", "Lining", "Jewel"],
+        }
+    }
+
+    /// The colours each outfit is best known by: (primary, secondary,
+    /// accent) cloth indices.
+    pub fn defaults(o: u8, female: bool) -> (u8, u8, u8) {
+        const BLUE: u8 = 0;
+        const RED: u8 = 1;
+        const GREEN: u8 = 2;
+        const BROWN: u8 = 3;
+        const GREY: u8 = 4;
+        const PURPLE: u8 = 5;
+        const OCHRE: u8 = 6;
+        const LINEN: u8 = 7;
+        const CHARCOAL: u8 = 8;
+        const TEAL: u8 = 9;
+        const WHITE: u8 = 10;
+        const BLACK: u8 = 11;
+        const PINK: u8 = 12;
+        const NAVY: u8 = 13;
+        match o {
+            PEASANT => if female { (GREEN, LINEN, RED) } else { (BROWN, CHARCOAL, RED) },
+            LABORER => (BROWN, LINEN, RED),
+            FISHER => (NAVY, GREY, RED),
+            SMITH => (BROWN, CHARCOAL, RED),
+            COOK => (WHITE, WHITE, RED),
+            MERCHANT => (RED, LINEN, OCHRE),
+            INNKEEPER => if female { (GREEN, BROWN, RED) } else { (BROWN, CHARCOAL, RED) },
+            GUARD => (BLUE, CHARCOAL, OCHRE),
+            KNIGHT => (RED, NAVY, OCHRE),
+            HERO => (BLACK, GREY, TEAL),
+            ADVENTURER => (GREEN, BROWN, RED),
+            ROGUE => (CHARCOAL, BLACK, OCHRE),
+            RANGER => (GREEN, BROWN, OCHRE),
+            MAGE => (PURPLE, BLACK, OCHRE),
+            SCHOLAR => (NAVY, LINEN, OCHRE),
+            PRIEST => (WHITE, BLUE, OCHRE),
+            MONK => (OCHRE, BROWN, RED),
+            BARD => (TEAL, PURPLE, OCHRE),
+            MAID => (BLACK, WHITE, RED),
+            NOBLE => if female { (PINK, WHITE, OCHRE) } else { (NAVY, WHITE, RED) },
+            GUILD => (NAVY, WHITE, RED),
+            _ => (BLACK, RED, PURPLE),
+        }
+    }
 }
 
 pub mod held {
@@ -87,13 +177,19 @@ pub struct Look {
     pub skin: u8,
     pub hair: u8,
     pub hair_style: u8,
-    pub top: u8,
-    pub bottom: u8,
+    /// Outfit dyes: the main garment, the second garment (or trim), and a
+    /// small accent (ribbons, sashes, gems, the hat). Which piece takes
+    /// which is up to each outfit.
+    #[serde(alias = "top")]
+    pub primary: u8,
+    #[serde(alias = "bottom")]
+    pub secondary: u8,
     pub outfit: u8,
     /// 0 none, 1 straw hat, 2 bandana, 3 helmet, 4 hood, 5 cap, 6 witch hat,
     /// 7 flower, 8 chef toque, 9 ribbon, 10 maid headband, 11 miner helmet
     pub hat: u8,
-    pub hat_color: u8,
+    #[serde(alias = "hat_color")]
+    pub accent: u8,
     pub female: bool,
     /// 0 child, 1 adult, 2 elder
     pub age: u8,
@@ -174,16 +270,19 @@ impl Look {
         let hair = if rng.chance(0.12) { 6 + rng.below(3) as u8 } else { rng.below(5) as u8 };
         let styles_f: &[u8] = &[1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 1, 5, 2];
         let styles_m: &[u8] = if age == 2 { &[0, 15, 18, 18, 14] } else { &[0, 4, 7, 13, 14, 15, 16, 17, 0, 13] };
+        // Townsfolk clothes in their usual colours, often re-dyed.
+        let o = if female { *rng.pick(&[outfit::PEASANT, outfit::PEASANT, outfit::INNKEEPER, outfit::MERCHANT, outfit::COOK]) } else { *rng.pick(&[outfit::PEASANT, outfit::LABORER, outfit::PEASANT, outfit::MERCHANT]) };
+        let (p, s, a) = outfit::defaults(o, female);
+        let dyes = [0u8, 1, 2, 3, 4, 5, 8, 9, 13];
         Look {
             skin: rng.below(pal::SKIN.len()) as u8,
             hair: if age == 2 { 5 } else { hair },
             hair_style: if female { *rng.pick(styles_f) } else { *rng.pick(styles_m) },
-            // Cloth that can't be mistaken for skin: no ochre, linen or rust.
-            top: *rng.pick(&[0u8, 2, 4, 5, 8, 9, 0, 2, 9]),
-            bottom: *rng.pick(&[0u8, 2, 3, 4, 5, 8, 9]),
-            outfit: if female && rng.chance(0.45) { outfit::DRESS } else if rng.chance(0.2) { outfit::VEST } else { outfit::TUNIC },
+            primary: if rng.chance(0.5) { p } else { *rng.pick(&dyes) },
+            secondary: s,
+            outfit: o,
             hat: 0,
-            hat_color: rng.below(pal::CLOTH.len()) as u8,
+            accent: if rng.chance(0.6) { a } else { *rng.pick(&dyes) },
             female,
             age,
             beard: !female && age >= 1 && rng.chance(if age == 2 { 0.6 } else { 0.2 }),
@@ -827,9 +926,11 @@ fn limbs(b: &Build, pose: Pose, dir: u8) -> Limbs {
 struct Colors {
     skin: R5,
     hair: R5,
-    top: R5,
-    bottom: R5,
-    hatc: R5,
+    primary: R5,
+    secondary: R5,
+    accent: R5,
+    white: R5,
+    drab: R5,
     metal: R5,
     leather: R5,
     linen: R5,
@@ -847,9 +948,11 @@ fn colors(look: &Look) -> Colors {
     Colors {
         skin: r5(&skin),
         hair: r5(&ramp4(&pal::HAIR[look.hair as usize % pal::HAIR.len()])),
-        top: r5(&ramp4(&pal::CLOTH[look.top as usize % pal::CLOTH.len()])),
-        bottom: r5(&ramp4(&pal::CLOTH[look.bottom as usize % pal::CLOTH.len()])),
-        hatc: r5(&ramp4(&pal::CLOTH[look.hat_color as usize % pal::CLOTH.len()])),
+        primary: r5(&ramp4(&pal::CLOTH[look.primary as usize % pal::CLOTH.len()])),
+        secondary: r5(&ramp4(&pal::CLOTH[look.secondary as usize % pal::CLOTH.len()])),
+        accent: r5(&ramp4(&pal::CLOTH[look.accent as usize % pal::CLOTH.len()])),
+        white: r5(&ramp4(&pal::CLOTH[10])),
+        drab: r5(&ramp4(&pal::CLOTH[8])),
         metal: [hex(0x2a2a3a), hex(pal::METAL[1]), hex(pal::METAL[2]), hex(pal::METAL[3]), hex(pal::METAL[4])],
         leather: [hex(0x2e1c1c), hex(0x4a2e24), hex(0x6a4430), hex(0x8c5e40), hex(0xae7c54)],
         linen: [hex(0x7a6c6a), hex(0xb0a49c), hex(0xd8cec2), hex(0xf2eadc), hex(0xfffaf2)],
@@ -876,7 +979,7 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     let c = colors(look);
     let n = (FW * FH) as usize;
     let mut cv = Canvas { img: &mut img, ids: vec![0; n], cur: 0, ramps: Vec::new(), rid: vec![255; n], ridx: vec![0; n], groups: vec![0; 256], side: 0, clip: None };
-    for r in [c.skin, c.hair, c.top, c.bottom, c.hatc, c.metal, c.leather, c.linen, c.shoe, c.stocking, c.navy, gold5()] {
+    for r in [c.skin, c.hair, c.primary, c.secondary, c.accent, c.white, c.drab, c.metal, c.leather, c.linen, c.shoe, c.stocking, c.navy, gold5()] {
         cv.register(&r);
     }
     let side = dir == DIR_SIDE;
@@ -885,8 +988,9 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     if !back {
         tail(&mut cv, look, dir, &b, &c);
     }
-    if matches!(look.outfit, outfit::CLOAK | outfit::GOTHIC) && !back {
-        cloak_back(&mut cv, &b, &c, side);
+    let cape = garb(look).cape();
+    if let (Some((_, lining)), false) = (cape, back) {
+        cloak_back(&mut cv, &b, &dye(&c, lining), side, true);
     }
     if !back {
         back_hair(&mut cv, look, dir, &b, &c);
@@ -921,7 +1025,7 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     elf_ears(&mut cv, look, dir, &b, &c, true);
     horns(&mut cv, look, dir, &b, &c);
     // From behind a cape covers the tail.
-    if back && !matches!(look.outfit, outfit::CLOAK | outfit::GOTHIC) {
+    if back && cape.is_none() {
         tail(&mut cv, look, dir, &b, &c);
     }
     hat(&mut cv, look, dir, &b, &c);
@@ -1099,20 +1203,359 @@ fn outline(img: &mut Img, sh: &Shades) {
     }
 }
 
-fn pants_ramp(look: &Look, c: &Colors) -> R5 {
+/// Where a garment piece takes its colour from: one of the look's three
+/// dyes, or a fixed material.
+#[derive(Clone, Copy, PartialEq)]
+enum Dye {
+    P,
+    S,
+    A,
+    Leather,
+    Linen,
+    White,
+    /// Dark work trousers.
+    Drab,
+    Metal,
+    Stocking,
+    Skin,
+    Gold,
+}
+
+fn dye(c: &Colors, d: Dye) -> R5 {
+    match d {
+        Dye::P => c.primary,
+        Dye::S => c.secondary,
+        Dye::A => c.accent,
+        Dye::Leather => c.leather,
+        Dye::Linen => c.linen,
+        Dye::White => c.white,
+        Dye::Drab => c.drab,
+        Dye::Metal => c.metal,
+        Dye::Stocking => c.stocking,
+        Dye::Skin => c.skin,
+        Dye::Gold => gold5(),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Sleeve {
+    Long,
+    /// Rolled to the elbow, bare forearms.
+    Rolled,
+    Bare,
+    /// Long with a puffed shoulder.
+    Puff,
+    /// Bell sleeves widening to the wrist (robes).
+    Wide,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Lower {
+    Pants,
+    /// Skirt from the waist: length as a fraction of the thigh, flare.
+    Skirt(f32, f32),
+    /// Floor-length robe or gown with this flare.
+    Gown(f32),
+}
+
+/// One layer over the body, drawn in list order.
+#[derive(Clone, Copy, PartialEq)]
+enum Piece {
+    Belt(Dye),
+    Sash(Dye),
+    /// Diagonal sash from the right shoulder to the left hip.
+    DiagSash(Dye),
+    /// Apron: with a bib from the chest, or from the waist; length below
+    /// the hips.
+    Apron(Dye, bool, f32),
+    /// Tabard with a band of the second dye.
+    Tabard(Dye, Dye),
+    /// Open vest panels (closed when the bool is set).
+    Vest(Dye, bool),
+    /// Long open coat: colour, what shows down the opening, length as a
+    /// fraction of the thigh (big values reach the ground), cutaway front.
+    Coat(Dye, Dye, f32, bool),
+    /// Laced bodice under the bust.
+    Corset(Dye),
+    Capelet(Dye),
+    /// Full cape behind: outside, and the lining seen from the front.
+    Cape(Dye, Dye),
+    /// Chemise yoke showing above a bodice, with a scooped neckline.
+    Yoke(Dye),
+    /// A short cape over one shoulder.
+    HalfCape(Dye),
+    Scarf(Dye),
+    Kerchief(Dye),
+    Stole(Dye),
+    Collar(Dye),
+    Bow(Dye),
+    Lacing(Dye),
+    Gem(Dye),
+    /// Wrap-front gi neckline.
+    Wrap,
+    Pouches,
+    Satchel,
+    Quiver,
+    /// Shoulder armour on both shoulders, or only the left one; trim dye.
+    Pauldrons(bool, Dye),
+    /// Armoured skirt of overlapping plates.
+    Faulds,
+    /// Leather chest guard over the tunic.
+    ChestGuard,
+    /// Centre ridge of a breastplate.
+    Ridge,
+}
+
+/// A whole outfit: body garment, sleeves, legs, lower garment, footwear and
+/// the layers over them.
+struct Garb {
+    shirt: Dye,
+    sleeve: (Sleeve, Dye),
+    legs: Dye,
+    lower: (Lower, Dye),
+    /// Boots: material and height above the ankle.
+    boots: Option<(Dye, f32)>,
+    /// Baggy trousers.
+    wide: bool,
+    /// Skin showing at an open collar.
+    neckline: bool,
+    pieces: Vec<Piece>,
+}
+
+fn garb(look: &Look) -> Garb {
+    use Dye::*;
+    use Piece::*;
+    let f = look.female;
+    let mut g = Garb { shirt: P, sleeve: (Sleeve::Long, P), legs: Drab, lower: (Lower::Pants, Drab), boots: None, wide: false, neckline: false, pieces: Vec::new() };
+    let skirt = |len: f32, flare: f32, d: Dye| (Lower::Skirt(len, flare), d);
     match look.outfit {
-        outfit::ARMOR => c.metal,
-        outfit::DIRNDL | outfit::GUILD => c.stocking,
-        outfit::DRESS | outfit::ROBE | outfit::GOTHIC => c.skin,
-        _ => c.bottom,
+        outfit::PEASANT => {
+            g.sleeve = (Sleeve::Rolled, P);
+            if f {
+                // Bodice dress, apron and a kerchief at the throat.
+                g.lower = skirt(1.15, 0.42, P);
+                g.legs = Skin;
+                g.neckline = true;
+                g.pieces = vec![Apron(S, false, 9.0), Kerchief(A)];
+            } else {
+                g.legs = S;
+                g.pieces = vec![Belt(Leather), Kerchief(A)];
+            }
+        }
+        outfit::LABORER => {
+            // Sleeveless jerkin over a shirt, sturdy boots.
+            g.sleeve = (Sleeve::Rolled, S);
+            g.boots = Some((Leather, 7.0));
+            g.pieces = vec![Lacing(Leather), Belt(Leather), Kerchief(A)];
+        }
+        outfit::FISHER => {
+            g.shirt = Linen;
+            g.sleeve = (Sleeve::Rolled, Linen);
+            g.boots = Some((Leather, 10.0));
+            if f {
+                g.lower = skirt(0.75, 0.4, S);
+                g.legs = Stocking;
+            } else {
+                g.legs = S;
+            }
+            g.pieces = vec![Capelet(P), Kerchief(A)];
+        }
+        outfit::SMITH => {
+            g.shirt = S;
+            g.sleeve = (Sleeve::Bare, Skin);
+            g.boots = Some((Leather, 7.0));
+            g.pieces = vec![Apron(P, true, 12.0)];
+        }
+        outfit::COOK => {
+            g.sleeve = (Sleeve::Rolled, P);
+            if f {
+                g.lower = skirt(1.3, 0.4, P);
+                g.legs = Stocking;
+            }
+            g.pieces = vec![Apron(S, true, 13.0), Kerchief(A)];
+        }
+        outfit::MERCHANT => {
+            g.shirt = S;
+            g.sleeve = (Sleeve::Long, P);
+            if f {
+                g.legs = Stocking;
+            }
+            g.boots = Some((Leather, 7.0));
+            g.pieces = vec![Coat(P, S, 0.9, false), Sash(A), Satchel, Pouches];
+        }
+        outfit::INNKEEPER => {
+            if f {
+                // Laced bodice over a chemise, full skirt and apron.
+                g.sleeve = (Sleeve::Puff, Linen);
+                g.lower = skirt(1.05, 0.52, S);
+                g.legs = Stocking;
+                g.pieces = vec![Yoke(Linen), Lacing(A), Apron(White, false, 7.0)];
+            } else {
+                g.shirt = Linen;
+                g.sleeve = (Sleeve::Rolled, Linen);
+                g.legs = S;
+                g.pieces = vec![Vest(P, false), Apron(White, false, 9.0), Kerchief(A)];
+            }
+        }
+        outfit::GUARD => {
+            // Heraldic tabard over mail.
+            g.shirt = Metal;
+            g.sleeve = (Sleeve::Long, Metal);
+            g.legs = S;
+            g.boots = Some((Leather, 8.0));
+            g.pieces = vec![Tabard(P, A), Belt(Leather)];
+        }
+        outfit::KNIGHT => {
+            g.shirt = Metal;
+            g.sleeve = (Sleeve::Long, Metal);
+            g.legs = Metal;
+            g.boots = Some((Metal, 9.0));
+            g.lower = skirt(0.5, 0.35, S);
+            g.pieces = vec![Ridge, Cape(P, P), Faulds, Pauldrons(true, A), Belt(Leather)];
+        }
+        outfit::HERO => {
+            // Long open coat over a light shirt, one pauldron.
+            g.shirt = S;
+            g.sleeve = (Sleeve::Long, P);
+            g.boots = Some((Leather, 8.0));
+            if f {
+                g.legs = Stocking;
+            }
+            g.pieces = vec![Coat(P, S, 0.75, false), Belt(Leather), Pauldrons(false, A), Gem(A)];
+        }
+        outfit::ADVENTURER => {
+            g.sleeve = (Sleeve::Rolled, P);
+            g.boots = Some((Leather, if f { 13.0 } else { 9.0 }));
+            if f {
+                g.lower = skirt(0.5, 0.45, Leather);
+                g.legs = Skin;
+            }
+            g.pieces = vec![ChestGuard, Belt(Leather), Pouches, Capelet(S), Scarf(A)];
+        }
+        outfit::ROGUE => {
+            g.boots = Some((Leather, 8.0));
+            if f {
+                g.lower = skirt(0.45, 0.4, P);
+                g.legs = Stocking;
+            }
+            g.pieces = vec![Belt(A), Pouches, Scarf(S)];
+        }
+        outfit::RANGER => {
+            g.boots = Some((Leather, 11.0));
+            g.pieces = vec![Cape(S, S), Belt(Leather), Quiver, Gem(A)];
+        }
+        outfit::MAGE => {
+            g.sleeve = (Sleeve::Wide, P);
+            if f {
+                // Short dress with thigh-highs.
+                g.lower = skirt(1.2, 0.5, P);
+                g.legs = Stocking;
+            } else {
+                g.lower = (Lower::Gown(0.24), P);
+                g.legs = Skin;
+            }
+            g.pieces = vec![Cape(S, S), Sash(A), Gem(A)];
+        }
+        outfit::SCHOLAR => {
+            g.lower = (Lower::Gown(0.18), P);
+            g.legs = Skin;
+            g.pieces = vec![Capelet(S), Satchel, Gem(A)];
+        }
+        outfit::PRIEST => {
+            g.sleeve = (Sleeve::Wide, P);
+            g.lower = (Lower::Gown(0.22), P);
+            g.legs = Skin;
+            g.pieces = vec![Stole(S), Sash(A), Gem(A)];
+        }
+        outfit::MONK => {
+            g.sleeve = (Sleeve::Rolled, P);
+            g.legs = S;
+            g.wide = true;
+            g.neckline = true;
+            g.pieces = vec![Wrap, Sash(A)];
+        }
+        outfit::BARD => {
+            g.sleeve = (Sleeve::Puff, P);
+            if f {
+                g.lower = skirt(1.2, 0.45, P);
+                g.legs = Stocking;
+            } else {
+                g.legs = Stocking;
+                g.boots = Some((Leather, 9.0));
+            }
+            g.pieces = vec![Belt(Leather), HalfCape(S), Gem(A)];
+        }
+        outfit::MAID => {
+            if f {
+                g.sleeve = (Sleeve::Puff, P);
+                g.lower = skirt(0.95, 0.55, P);
+                g.legs = Stocking;
+                g.pieces = vec![Apron(S, true, 6.0), Bow(A)];
+            } else {
+                // Butler: white shirt, black tailcoat, tie.
+                g.shirt = S;
+                g.legs = P;
+                g.pieces = vec![Coat(P, S, 0.8, true), Bow(A)];
+            }
+        }
+        outfit::NOBLE => {
+            if f {
+                // Bell gown, corset and puffed sleeves.
+                g.shirt = P;
+                g.sleeve = (Sleeve::Puff, S);
+                g.lower = (Lower::Gown(0.42), P);
+                g.legs = Skin;
+                g.neckline = true;
+                g.pieces = vec![Corset(P), Gem(A)];
+            } else {
+                g.shirt = S;
+                g.legs = S;
+                g.boots = Some((Leather, 11.0));
+                g.pieces = vec![Coat(P, S, 0.8, false), DiagSash(A), Bow(S)];
+            }
+        }
+        outfit::GUILD => {
+            // Blouse, closed vest, bow at the collar.
+            g.shirt = S;
+            g.sleeve = (Sleeve::Long, S);
+            if f {
+                g.lower = skirt(1.35, 0.3, P);
+                g.legs = Stocking;
+            } else {
+                g.legs = P;
+            }
+            g.pieces = vec![Vest(P, true), Bow(A)];
+        }
+        _ => {
+            // Demon lord: floor-length gown or coat, a high collar, a cape
+            // lined in the second dye.
+            g.lower = (Lower::Gown(0.36), P);
+            g.legs = Skin;
+            g.pieces = vec![Cape(P, S), Sash(Gold), Collar(S), Gem(A)];
+        }
+    }
+    g
+}
+
+impl Garb {
+    /// The cape's outside and lining, if the outfit has one.
+    fn cape(&self) -> Option<(Dye, Dye)> {
+        self.pieces.iter().find_map(|p| if let Piece::Cape(o, l) = p { Some((*o, *l)) } else { None })
+    }
+    /// Whether the outfit is mirror-symmetric from the front and back:
+    /// straps, one-shoulder pieces, scarf tails and wrap fronts aren't.
+    fn symmetric(&self) -> bool {
+        !self.pieces.iter().any(|p| matches!(p, Piece::Satchel | Piece::Quiver | Piece::HalfCape(_) | Piece::Wrap | Piece::Scarf(_) | Piece::DiagSash(_) | Piece::Pauldrons(false, _)))
     }
 }
 
 fn leg(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (hip, knee, ankle): (V2, V2, V2), far: bool, dir: u8) {
-    let ramp = pants_ramp(look, c);
+    let g = garb(look);
+    let ramp = dye(c, g.legs);
     let bias = if far { -0.16 } else { 0.0 };
-    let (tr, cr) = (b.thigh_r, b.calf_r);
-    let ankle_r = cr * 0.62;
+    let wide = if g.wide { 1.22 } else { 1.0 };
+    let (tr, cr) = (b.thigh_r * wide, b.calf_r * wide);
+    let ankle_r = b.calf_r * 0.62;
     let front = dir != DIR_SIDE;
     if front {
         let left = hip.x < b.cx;
@@ -1125,19 +1568,23 @@ fn leg(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (hip, knee, ankle): 
     cv.capsule(hip, mid, tr, tr * 0.94, &ramp, bias);
     cv.capsule(mid, knee, tr * 0.94, cr * 1.02, &ramp, bias);
     // Calf: swells on the outside just below the knee, then slims to a
-    // narrow ankle.
+    // narrow ankle (baggy trousers gather at the ankle).
     let out = if front { if hip.x < b.cx { -0.6 } else { 0.6 } } else { -0.6 };
     let calf_mid = v(knee.x + (ankle.x - knee.x) * 0.32 + out, knee.y + (ankle.y - knee.y) * 0.32);
     cv.capsule(knee, calf_mid, cr * 1.0, cr * 1.1, &ramp, bias);
     cv.capsule(calf_mid, ankle, cr * 1.1, ankle_r * 0.9, &ramp, bias);
     let side = dir == DIR_SIDE;
-    let boots = matches!(look.outfit, outfit::ARMOR | outfit::CLOAK | outfit::SMITH);
-    if boots {
+    if let Some((d, h)) = g.boots {
+        // Shaft up the shin: knee-high riders reach over the knee.
+        let top = ankle.add(v((knee.x - ankle.x) * (h / b.calf).min(1.3), -h));
         cv.begin();
-        cv.capsule(ankle.add(v(0.0, -6.5)), ankle, cr * 0.9, ankle_r + 0.6, &c.leather, bias);
+        cv.capsule(top, ankle, b.calf_r * 1.04, ankle_r + 0.6, &dye(c, d), bias);
     }
     cv.begin();
-    let shoe = if boots { c.leather } else { c.shoe };
+    let shoe = match g.boots {
+        Some((d, _)) => dye(c, d),
+        None => c.shoe,
+    };
     if side {
         cv.ellipse(ankle.add(v(2.4, 1.6)), 4.4, 2.2, &shoe, bias);
     } else {
@@ -1149,30 +1596,54 @@ fn leg(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (hip, knee, ankle): 
 
 #[allow(clippy::too_many_arguments)]
 fn arm(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (sh, el, wr): (V2, V2, V2), far: bool, dir: u8, pose: Pose) {
+    let g = garb(look);
     let r = b.arm_r;
-    let sleeve = match look.outfit {
-        outfit::ARMOR => c.metal,
-        outfit::DIRNDL | outfit::GUILD => c.linen,
-        outfit::SMITH => c.skin,
-        _ => c.top,
-    };
+    let (kind, d) = g.sleeve;
+    let sleeve = dye(c, d);
     let bias = if far { -0.18 } else { 0.0 };
-    let long_sleeve = !matches!(look.outfit, outfit::SMITH | outfit::DIRNDL);
     cv.begin();
-    cv.capsule(sh, el, r, r * 0.88, &sleeve, bias);
-    if long_sleeve {
-        cv.capsule(el, wr, r * 0.88, r * 0.8, &sleeve, bias);
-    } else {
-        cv.begin();
-        cv.capsule(el, wr, r * 0.86, r * 0.72, &c.skin, bias);
+    match kind {
+        Sleeve::Bare => {
+            cv.capsule(sh, el, r, r * 0.88, &c.skin, bias);
+            cv.capsule(el, wr, r * 0.86, r * 0.72, &c.skin, bias);
+        }
+        Sleeve::Rolled => {
+            cv.capsule(sh, el, r, r * 0.9, &sleeve, bias);
+            cv.begin();
+            cv.capsule(el, wr, r * 0.86, r * 0.72, &c.skin, bias);
+            // The rolled cuff just above the elbow.
+            cv.begin();
+            cv.capsule(el.add(v((sh.x - el.x) * 0.12, (sh.y - el.y) * 0.12)), el, r * 1.02, r * 0.98, &sleeve, bias + 0.06);
+        }
+        Sleeve::Wide => {
+            cv.capsule(sh, el, r, r * 0.95, &sleeve, bias);
+            cv.capsule(el, wr, r * 0.95, r * 1.45, &sleeve, bias);
+        }
+        Sleeve::Long | Sleeve::Puff => {
+            cv.capsule(sh, el, r, r * 0.88, &sleeve, bias);
+            cv.capsule(el, wr, r * 0.88, r * 0.8, &sleeve, bias);
+        }
     }
-    if matches!(look.outfit, outfit::DIRNDL | outfit::GUILD) {
+    if kind == Sleeve::Puff {
         cv.begin();
-        cv.ellipse(sh.add(v(0.0, 2.2)), r + 2.0, r + 1.8, &c.linen, bias);
+        cv.ellipse(sh.add(v(0.0, 2.2)), r + 2.0, r + 1.8, &sleeve, bias);
     }
-    if look.outfit == outfit::ARMOR {
-        cv.begin();
-        cv.ellipse(sh.add(v(0.0, 0.5)), r + 2.6, r + 1.8, &c.metal, bias + 0.05);
+    for p in &g.pieces {
+        if let Piece::Pauldrons(both, trim) = *p {
+            // A lone pauldron sits on the left shoulder: screen right from
+            // the front, screen left from behind, the far side in profile.
+            let mine = both || match dir {
+                DIR_DOWN => sh.x > b.cx,
+                DIR_UP => sh.x < b.cx,
+                _ => far,
+            };
+            if mine {
+                cv.begin();
+                cv.ellipse(sh.add(v(0.0, 1.6)), r + 2.4, r + 1.6, &dye(c, trim), bias);
+                cv.begin();
+                cv.ellipse(sh.add(v(0.0, 0.4)), r + 2.4, r + 1.6, &c.metal, bias + 0.05);
+            }
+        }
     }
     // Hands are drawn generously: small hands read as stumps at this size.
     let dirv = v(wr.x - el.x, wr.y - el.y);
@@ -1199,11 +1670,9 @@ fn arm(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (sh, el, wr): (V2, V
 fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     let side = dir == DIR_SIDE;
     let back = dir == DIR_UP;
-    let shirt = match look.outfit {
-        outfit::ARMOR => c.metal,
-        outfit::DIRNDL | outfit::GUILD => c.linen,
-        _ => c.top,
-    };
+    let front = dir == DIR_DOWN;
+    let g = garb(look);
+    let shirt = dye(c, g.shirt);
     let (sy, cy) = (b.shoulder_y, b.crotch_y);
     let fig = b.woman;
     // Profile: separate front and back edges give the body its S-curve —
@@ -1239,15 +1708,16 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     let (fk, bkk, kk) = (&front_keys, &back_keys, &keys);
     let lean = move |y: f32| -> f32 { if side { cx0 + 0.5 + (keyed(fk, y) + keyed(bkk, y)) * 0.5 } else { cx0 } };
     let width = move |y: f32| -> f32 { if side { (keyed(fk, y) - keyed(bkk, y)) * 0.5 } else { keyed(kk, y) } };
+    // Front and back edges of the body in profile.
+    let fwd = move |y: f32| lean(y) + width(y);
+    let aft = move |y: f32| lean(y) - width(y);
     // Neck: its own part so the chin and collar line it.
     cv.begin();
     let nw = if look.female { 3.4 } else { 4.2 };
     cv.profile(sy - 6.0, sy + 1.5, |_| b.cx + if side { 0.5 } else { 0.0 }, |_| nw, &c.skin, -0.06);
-    let lower = match look.outfit {
-        outfit::DRESS | outfit::ROBE | outfit::GOTHIC => c.skin,
-        outfit::DIRNDL | outfit::GUILD => c.stocking,
-        _ => pants_ramp(look, c),
-    };
+    let (lower_kind, lower_dye) = g.lower;
+    let skirted = lower_kind != Lower::Pants;
+    let lower = dye(c, g.legs);
     cv.begin();
     // Pelvis: hip curve, then a V into the crotch so the thighs carry the
     // silhouette instead of a flat box edge.
@@ -1258,8 +1728,7 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     cv.cur = 0;
     cv.profile(b.waist_y, cy + 1.5, lean, |y| if side { width(y) } else { keyed(&pelvis, y) }, &lower, 0.0);
     cv.cur = part;
-    if fig && back && !matches!(look.outfit, outfit::DRESS | outfit::ROBE | outfit::DIRNDL | outfit::GUILD) {
-        // Seat: two soft rounds with a centre seam from the contour pass.
+    if fig && back && !skirted {
         // Seat: a soft rounding with a short crease, no outlined lobes.
         let part = cv.cur;
         cv.cur = 0;
@@ -1279,223 +1748,403 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     let by = (sy + 9.5 + (b.bust - 5.4).max(0.0) * 0.6).round() + b.jig;
     let cx = b.cx;
     // Neckline: a little skin under the collarbone for open-necked tops.
-    if !back && !side && matches!(look.outfit, outfit::DRESS | outfit::DIRNDL | outfit::SMITH | outfit::APRON) {
+    if front && g.neckline {
         for y in sy as i32..(sy + if fig { 5.0 } else { 3.0 }) as i32 {
             let half = (4.5 - (y as f32 - sy) * 0.6).max(1.0);
             hspan(cv, half, y, if y == sy as i32 { c.skin[3] } else { c.skin[2] });
         }
     }
     if b.bust > 0.0 {
-        // Armour gets a shaped breastplate rather than a flat chest.
-        let bust_ramp = if matches!(look.outfit, outfit::DIRNDL | outfit::GUILD) { c.linen } else { shirt };
         if side {
-            bust_side(cv, b, by, &bust_ramp, |y| lean(y) + width(y));
+            bust_side(cv, b, by, &shirt, fwd);
         } else {
-            bust(cv, b, dir, by, &bust_ramp);
+            bust(cv, b, dir, by, &shirt);
         }
     }
-    match look.outfit {
-        outfit::DRESS => {
+    let sway = b.sway;
+    // Skirts and gowns from the waist.
+    match lower_kind {
+        Lower::Skirt(len, flare) => {
             let top = b.waist_y + 1.0;
-            let len = b.thigh + 4.0;
-            let sway = b.sway;
+            let len = b.thigh * len + 2.0;
+            let ramp = dye(c, lower_dye);
             cv.begin();
-            let (w0, k) = skirt_shape(side, b.waist_w + 1.2, 0.45);
+            let (w0, k) = skirt_shape(side, b.waist_w + 1.2, flare);
             let sc = if side { cx - 0.5 } else { cx };
-            cv.profile(top, top + len, |y| sc + (y - top) / len * sway * 0.8, |y| w0 + (y - top) * k, &c.top, -0.02);
-            hem_folds(cv, top, top + len, sc, w0, k, &c.top, sway);
-            sash(cv, b, &c.linen, lean, width);
+            cv.profile(top, top + len, |y| sc + (y - top) / len * sway * 0.8, |y| w0 + (y - top) * k, &ramp, -0.02);
+            hem_folds(cv, top, top + len, sc, w0, k, &ramp, sway);
         }
-        outfit::DIRNDL | outfit::GUILD => {
-            let bod = if look.outfit == outfit::DIRNDL { c.top } else { c.navy };
-            cv.begin();
-            // Bodice under the bust: a corset from the ribs to the waist.
-            let bt = if fig { by + b.bust * 0.55 } else { sy + 6.0 };
-            cv.profile(bt, b.waist_y + 3.0, lean, |y| width(y) - 0.3, &bod, 0.0);
-            if !fig && !back {
-                cv.profile(sy + 4.0, bt + 0.5, lean, |y| width(y) - 1.6, &bod, 0.0);
-            }
-            if !back && !side {
-                // Lacing.
-                for k in 0..3 {
-                    let y = bt as i32 + 2 + k * 3;
-                    cv.put(cx as i32 - 2, y, c.linen[3]);
-                    cv.put(cx as i32 + 1, y, c.linen[3]);
-                    cv.put(cx as i32 - 1, y + 1, c.linen[2]);
-                    cv.put(cx as i32, y + 1, c.linen[2]);
-                }
-            }
-            let skirt = if look.outfit == outfit::DIRNDL { c.bottom } else { c.navy };
-            let top = b.waist_y + 2.0;
-            let len = b.thigh + 2.5;
-            let sway = b.sway;
-            cv.begin();
-            let (w0, k) = skirt_shape(side, b.waist_w + 1.8, 0.52);
-            let sc = if side { cx - 0.5 } else { cx };
-            cv.profile(top, top + len, |y| sc + (y - top) / len * sway * 0.8, |y| w0 + (y - top) * k, &skirt, 0.0);
-            hem_folds(cv, top, top + len, sc, w0, k, &skirt, sway);
-            if !back {
-                if look.outfit == outfit::DIRNDL {
-                    let aw = if side { 3.0 } else { 5.0 };
-                    let ax = if side { cx + 3.5 } else { cx };
-                    cv.begin();
-                    cv.profile(top - 0.5, top + len - 2.5, |_| ax, |y| aw + (y - top) * 0.12, &c.linen, 0.05);
-                } else {
-                    let red = [hex(0x5a1420), hex(0x8a2232), hex(0xb83a4a), hex(0xe0606e), hex(0xf8909a)];
-                    let ty = sy + 2.0;
-                    cv.begin();
-                    if side {
-                        cv.ellipse(v(cx + 5.0, ty + 1.0), 2.0, 1.7, &red, 0.0);
-                    } else {
-                        cv.ellipse(v(cx - 2.6, ty + 1.0), 2.4, 1.8, &red, 0.0);
-                        cv.ellipse(v(cx + 2.6, ty + 1.0), 2.4, 1.8, &red, 0.0);
-                        cv.ellipse(v(cx, ty + 1.2), 1.2, 1.2, &red, -0.1);
-                        cv.capsule(v(cx - 1.0, ty + 2.4), v(cx - 2.0, ty + 7.0), 1.0, 0.8, &red, 0.0);
-                        cv.capsule(v(cx + 1.0, ty + 2.4), v(cx + 2.0, ty + 7.0), 1.0, 0.8, &red, 0.0);
-                        cv.ellipse(v(cx + b.chest_w - 3.0, b.waist_y - 3.0), 1.6, 1.6, &gold5(), 0.0);
-                    }
-                }
-            }
-        }
-        outfit::ROBE => {
-            let top = b.waist_y - 2.0;
-            let bottom = b.ground - 1.5;
-            let len = bottom - top;
-            let sway = b.sway;
-            cv.begin();
-            let (w0, k) = skirt_shape(side, b.waist_w + 1.6, 0.24);
-            cv.profile(top, bottom, |y| cx + (y - top) / len * sway * 0.7, |y| w0 + (y - top) * k, &c.top, 0.0);
-            hem_folds(cv, top, bottom, cx, w0, k, &c.top, sway);
-            if !side && !back {
-                let gold = gold5();
-                for y in (sy + 1.0) as i32..bottom as i32 {
-                    hspan(cv, 1.0, y, gold[2]);
-                }
-                sash(cv, b, &gold, lean, width);
-                // Mantle over the shoulders.
-                cv.begin();
-                cv.profile(sy - 0.5, sy + 7.0, |_| cx, |y| b.shoulder_w + 2.0 - (y - sy) * 0.15, &c.top, 0.08);
-                cv.ellipse(v(cx, sy + 3.0), 1.6, 1.6, &gold, 0.1);
-            }
-        }
-        outfit::APRON | outfit::SMITH if !back => {
-            let ap = if look.outfit == outfit::SMITH { c.leather } else { c.linen };
-            let (ax, aw) = if side { (cx + 3.5, 2.6) } else { (cx, b.chest_w - 3.0) };
-            cv.begin();
-            let at = if fig && !side { by - 1.0 } else { sy + 5.0 };
-            cv.profile(at, b.hip_y + 8.0, |_| ax, |_| aw, &ap, 0.06);
-            if !side {
-                // Straps up to the shoulders.
-                let strap = (cx - aw + 1.0).floor() as i32;
-                for k in 0..(at - sy) as i32 {
-                    cv.put(strap, sy as i32 + k, ap[2]);
-                    cv.put(FW - 1 - strap, sy as i32 + k, ap[2]);
-                }
-                let py = (b.waist_y + 4.0) as i32;
-                for k in 0..4 {
-                    hspan(cv, 3.0, py + k, if k == 0 { ap[1] } else { ap[2] });
-                }
-            }
-        }
-        outfit::ARMOR => {
-            if !back && !side {
-                // Tabard: for women it starts under the breastplate.
-                let tt = if b.bust > 0.0 { by + b.bust * 0.7 } else { sy + 5.0 };
-                cv.begin();
-                cv.profile(tt, b.hip_y + 6.0, |_| cx, |_| 3.6, &c.hatc, 0.0);
-                cv.ellipse(v(cx, tt + 4.0), 1.6, 1.6, &gold5(), 0.0);
-            }
-            belt(cv, b, &c.leather, lean, width, dir == DIR_DOWN);
-        }
-        outfit::GOTHIC => {
-            // Floor-length gown: fitted bodice, skirt sweeping to the ground,
-            // gold hem, a red gem at the throat, a high standing collar.
+        Lower::Gown(flare) => {
             let top = b.waist_y - 1.0;
             let bottom = b.ground - 1.5;
             let len = bottom - top;
-            let sway = b.sway;
-            let (w0, k) = skirt_shape(side, b.waist_w + 1.0, 0.36);
+            let ramp = dye(c, lower_dye);
             cv.begin();
-            cv.profile(top, bottom, |y| cx + (y - top) / len * sway * 0.7, |y| w0 + (y - top) * k, &c.top, 0.0);
-            hem_folds(cv, top, bottom, cx, w0, k, &c.top, sway);
-            let gold = gold5();
-            let hy = bottom as i32 - 1;
-            let hw = w0 + (bottom - 1.0 - top) * k;
-            if !side {
-                hspan(cv, hw - 0.5, hy, gold[2]);
-                hspan(cv, hw - 0.5, hy - 1, gold[1]);
-            }
-            sash(cv, b, &gold, lean, width);
-            let red = [hex(0x3a0a14), hex(0x6a1020), hex(0xa01c30), hex(0xd8404a), hex(0xff9a90)];
-            cv.begin();
-            if side {
-                cv.capsule(v(cx - 3.5, sy + 1.0), v(cx - 5.5, sy - 7.0), 1.8, 2.4, &c.top, 0.0);
-            } else {
-                for s in [-1.0f32, 1.0] {
-                    cv.capsule(v(cx + s * 5.0, sy + 1.0), v(cx + s * 8.0, sy - 7.0), 1.8, 2.6, &c.top, 0.0);
-                    cv.capsule(v(cx + s * 4.6, sy + 0.5), v(cx + s * 7.0, sy - 5.5), 0.8, 1.2, &c.hatc, 0.0);
-                }
-            }
-            if !back {
-                cv.begin();
-                let gx = if side { cx + 4.0 } else { cx };
-                cv.ellipse(v(gx, sy + 2.5), 1.6, 1.7, &red, 0.1);
-            }
+            let (w0, k) = skirt_shape(side, b.waist_w + 1.4, flare);
+            cv.profile(top, bottom, |y| cx + (y - top) / len * sway * 0.7, |y| w0 + (y - top) * k, &ramp, 0.0);
+            hem_folds(cv, top, bottom, cx, w0, k, &ramp, sway);
         }
-        outfit::COAT => {
-            // Long open coat over a light shirt: panels to the knee, the
-            // shirt and belt showing down the front opening.
-            let bottom = b.crotch_y + b.thigh * 0.75;
-            let sway = b.sway;
-            cv.begin();
-            cv.profile(sy, b.waist_y + 1.0, lean, |y| width(y) + 0.8, &c.top, 0.0);
-            let top = b.waist_y;
-            let len = bottom - top;
-            let (w0, k) = if side { (5.8, 0.18) } else { (b.waist_w + 2.4, 0.22) };
-            let sc = if side { cx - 1.0 } else { cx };
-            cv.profile(top, bottom, |y| sc + (y - top) / len * sway * 0.9, |y| w0 + (y - top) * k, &c.top, 0.0);
-            hem_folds(cv, top, bottom, sc, w0, k, &c.top, sway);
-            if !back && !side {
-                // Front opening: shirt above the belt, legs below it.
-                for y in sy as i32..bottom as i32 {
-                    let fy = y as f32 + 0.5;
-                    let half = if fy < b.waist_y + 2.0 { 2.0 + (fy - sy) * 0.05 } else { 2.5 + (fy - b.waist_y) * 0.18 };
-                    let col = if fy < b.waist_y + 2.0 { c.linen[if fy < sy + 2.0 { 2 } else { 3 }] } else { pants_ramp(look, c)[2] };
-                    hspan(cv, half, y, col);
-                }
-                // Lapels.
-                for y in sy as i32..(sy + 7.0) as i32 {
-                    let off = 2.0 + (y as f32 - sy) * 0.5;
-                    cv.put((cx - off - 1.0).floor() as i32, y, c.top[1]);
-                    cv.put(FW - 1 - (cx - off - 1.0).floor() as i32, y, c.top[1]);
-                }
-            }
-            if back {
-                for y in (b.waist_y + 3.0) as i32..bottom as i32 {
-                    cv.put(31, y, c.top[1]);
-                    cv.put(32, y, c.top[1]);
-                }
-            }
-            belt(cv, b, &c.leather, lean, |y| if side { width(y) } else { 3.0 }, dir == DIR_DOWN);
-        }
-        outfit::VEST if !back => {
-            let w = b.chest_w * 0.42;
-            cv.begin();
-            if side {
-                cv.profile(sy + 0.5, b.hip_y, |_| cx + 2.0, |_| 3.6, &c.leather, 0.0);
-            } else {
-                cv.profile(sy + 0.5, b.hip_y, |_| cx - b.chest_w + w, |_| w, &c.leather, 0.0);
-                cv.begin();
-                cv.profile(sy + 0.5, b.hip_y, |_| cx + b.chest_w - w, |_| w, &c.leather, 0.0);
-            }
-        }
-        _ => {}
+        Lower::Pants => {}
     }
-    if matches!(look.outfit, outfit::TUNIC | outfit::VEST | outfit::APRON | outfit::CLOAK | outfit::SMITH) {
-        belt(cv, b, &c.leather, lean, width, dir == DIR_DOWN);
+    for &p in &g.pieces {
+        match p {
+            Piece::Belt(d) => belt(cv, b, &dye(c, d), lean, width, front),
+            Piece::Sash(d) => sash(cv, b, &dye(c, d), lean, width),
+            Piece::DiagSash(d) if !side => {
+                let s = if back { -1.0 } else { 1.0 };
+                cv.begin();
+                cv.capsule(v(cx - s * (b.shoulder_w - 2.5), sy + 1.5), v(cx + s * (b.waist_w - 0.5), b.waist_y + 2.0), 1.5, 1.5, &dye(c, d), 0.05);
+            }
+            Piece::Apron(d, bib, len) => {
+                let ap = dye(c, d);
+                let bottom = b.hip_y + len;
+                if back {
+                    // Only the bow at the small of the back.
+                    cv.begin();
+                    for s in [-1.0f32, 1.0] {
+                        cv.ellipse(v(cx + s * 2.2, b.waist_y + 2.0), 2.0, 1.4, &ap, 0.05);
+                    }
+                    continue;
+                }
+                let at = if bib { if fig && !side { by - 1.0 } else { sy + 4.0 } } else { b.waist_y + 1.0 };
+                let (ax, aw) = if side { (fwd(b.waist_y) - 1.6, 2.2) } else if bib { (cx, b.chest_w - 3.0) } else { (cx, b.waist_w + 0.5) };
+                cv.begin();
+                cv.profile(at, bottom, |_| ax, |y| if side { aw } else { aw + (y - at).max(0.0) * 0.06 }, &ap, 0.06);
+                if front && bib {
+                    // Straps up to the shoulders.
+                    let strap = (cx - aw + 1.0).floor() as i32;
+                    for k in 0..(at - sy) as i32 {
+                        cv.put(strap, sy as i32 + k, ap[2]);
+                        cv.put(FW - 1 - strap, sy as i32 + k, ap[2]);
+                    }
+                }
+                if front {
+                    // Tie line at the waist.
+                    hspan(cv, aw - 0.5, (b.waist_y + 2.0) as i32, ap[2]);
+                }
+            }
+            Piece::Tabard(d, band) => {
+                let tb = dye(c, d);
+                let top = if b.bust > 0.0 && front { by + b.bust * 0.6 } else { sy + 1.0 };
+                let bottom = b.hip_y + if look.female { 9.0 } else { 7.0 };
+                cv.begin();
+                if side {
+                    for e in [fwd(b.waist_y) - 1.2, aft(b.waist_y) + 1.2] {
+                        cv.profile(sy + 2.0, bottom, |_| e, |_| 1.4, &tb, 0.0);
+                    }
+                } else {
+                    cv.profile(top, bottom, |_| cx, |y| 4.0 + (y - top) * 0.03, &tb, 0.0);
+                    let bd = dye(c, band);
+                    for k in 0..2 {
+                        hspan(cv, 4.0, (b.waist_y + 6.0) as i32 + k, bd[2 + k as usize % 2]);
+                    }
+                }
+            }
+            Piece::Vest(d, closed) => {
+                let vd = dye(c, d);
+                cv.begin();
+                if side {
+                    cv.profile(sy + 0.5, b.hip_y, |y| lean(y) - 0.3, |y| width(y) - 0.2, &vd, 0.0);
+                    cv.begin();
+                    cv.profile(sy + 0.5, b.hip_y, |y| fwd(y) - 1.5, |_| 1.0, &shirt, 0.0);
+                } else if back || closed {
+                    let top = if closed && front { sy + 4.0 } else { sy + 0.5 };
+                    cv.profile(top, b.hip_y, lean, |y| width(y) - 0.2, &vd, 0.0);
+                    if closed && front {
+                        // Blouse in the V of the collar.
+                        for y in (sy + 4.0) as i32..(sy + 8.0) as i32 {
+                            hspan(cv, (8.0 - (y as f32 - sy)).max(1.0) * 0.6, y, shirt[3]);
+                        }
+                    }
+                } else {
+                    let w = b.chest_w * 0.42;
+                    cv.profile(sy + 0.5, b.hip_y, |_| cx - b.chest_w + w, |_| w, &vd, 0.0);
+                    cv.begin();
+                    cv.profile(sy + 0.5, b.hip_y, |_| cx + b.chest_w - w, |_| w, &vd, 0.0);
+                }
+            }
+            Piece::Coat(d, inner, len, cutaway) => {
+                let ct = dye(c, d);
+                let bottom = (b.crotch_y + b.thigh * len).min(b.ground - 1.5);
+                cv.begin();
+                cv.profile(sy, b.waist_y + 1.0, lean, |y| width(y) + 0.8, &ct, 0.0);
+                let top = b.waist_y;
+                let span = bottom - top;
+                let (w0, k) = if side { (5.8, 0.18) } else { (b.waist_w + 2.4, 0.22) };
+                let sc = if side { cx - 1.0 } else { cx };
+                cv.profile(top, bottom, |y| sc + (y - top) / span * sway * 0.9, |y| w0 + (y - top) * k, &ct, 0.0);
+                hem_folds(cv, top, bottom, sc, w0, k, &ct, sway);
+                if front {
+                    // Front opening: the shirt above the waist, the legs (or
+                    // the dress) below it; a cutaway opens wide at once.
+                    let inn = dye(c, inner);
+                    let legs = if skirted { dye(c, lower_dye) } else { lower };
+                    for y in sy as i32..bottom as i32 {
+                        let fy = y as f32 + 0.5;
+                        let below = fy >= b.waist_y + 2.0;
+                        let half = if !below { 2.0 + (fy - sy) * 0.05 } else if cutaway { 4.5 + (fy - b.waist_y) * 0.5 } else { 2.5 + (fy - b.waist_y) * 0.18 };
+                        let col = if !below { inn[if fy < sy + 2.0 { 2 } else { 3 }] } else { legs[2] };
+                        hspan(cv, half.min(w0 + (fy - top).max(0.0) * k - 0.5), y, col);
+                    }
+                    // Lapels.
+                    for y in sy as i32..(sy + 7.0) as i32 {
+                        let off = 2.0 + (y as f32 - sy) * 0.5;
+                        cv.put((cx - off - 1.0).floor() as i32, y, ct[1]);
+                        cv.put(FW - 1 - (cx - off - 1.0).floor() as i32, y, ct[1]);
+                    }
+                }
+                if back {
+                    for y in (b.waist_y + 3.0) as i32..bottom as i32 {
+                        cv.put(31, y, ct[1]);
+                        cv.put(32, y, ct[1]);
+                    }
+                }
+            }
+            Piece::Corset(d) => {
+                let cd = dye(c, d);
+                let top = if fig && !back { by + b.bust * 0.55 } else { sy + 6.0 };
+                cv.begin();
+                cv.profile(top, b.waist_y + 3.0, lean, |y| width(y) - 0.3, &cd, 0.0);
+            }
+            Piece::Capelet(d) => {
+                let cp = dye(c, d);
+                cv.begin();
+                if side {
+                    cv.profile(sy - 0.5, sy + 7.0, |y| lean(y) - 0.5, |y| width(y) + 1.6 + (y - sy) * 0.1, &cp, 0.05);
+                } else {
+                    cv.profile(sy - 0.5, sy + 8.0, |_| cx, |y| b.shoulder_w + 2.6 + (y - sy) * 0.12, &cp, 0.05);
+                }
+            }
+            Piece::HalfCape(d) => {
+                let cp = dye(c, d);
+                cv.begin();
+                if side {
+                    cv.profile(sy - 0.5, sy + 6.0, |y| lean(y) - 0.5, |y| width(y) + 1.4, &cp, 0.05);
+                } else {
+                    // Over the left shoulder (screen right in front).
+                    let s = if back { -1.0 } else { 1.0 };
+                    let (top, bottom) = (sy - 0.5, b.waist_y + 5.0);
+                    let c0 = cx + s * (b.shoulder_w + 0.5);
+                    // Draped over the shoulder and arm, rounding off at the hem.
+                    cv.profile(top, bottom, |y| c0 + s * (y - top) * 0.04, |y| {
+                        let t = (y - top) / (bottom - top);
+                        4.4 * (1.0 - t.powi(4)).sqrt().max(0.3)
+                    }, &cp, 0.05);
+                }
+            }
+            Piece::Scarf(d) => {
+                let sc = dye(c, d);
+                cv.begin();
+                let ncx = b.cx + if side { 0.5 } else { 0.0 };
+                cv.profile(sy - 3.0, sy + 1.0, |_| ncx, |_| nw + 2.2, &sc, 0.05);
+                cv.begin();
+                if side {
+                    let a0 = v(ncx - nw - 0.5, sy - 0.5);
+                    cv.capsule(a0, a0.add(v(-2.5 - sway * 2.0, 8.0)), 1.6, 1.2, &sc, 0.0);
+                } else if back {
+                    cv.capsule(v(cx - 1.0, sy), v(cx - 1.5 + sway, sy + 9.0), 1.5, 1.2, &sc, 0.0);
+                } else {
+                    cv.capsule(v(cx + 3.0, sy), v(cx + 4.0, sy + 9.0), 1.5, 1.2, &sc, 0.0);
+                }
+            }
+            Piece::Kerchief(d) => {
+                let kc = dye(c, d);
+                if front {
+                    for (k, w) in [3.0f32, 2.0, 1.0].into_iter().enumerate() {
+                        hspan(cv, w, sy as i32 + k as i32, kc[if k == 0 { 3 } else { 2 }]);
+                    }
+                } else if side {
+                    let x = fwd(sy) as i32 - 1;
+                    for k in 0..3 {
+                        cv.put(x - k / 2, sy as i32 + k, kc[2]);
+                    }
+                } else {
+                    hspan(cv, nw, sy as i32 - 1, kc[2]);
+                }
+            }
+            Piece::Stole(d) => {
+                let st = dye(c, d);
+                let bottom = b.hip_y + 8.0;
+                cv.begin();
+                if side {
+                    cv.profile(sy, bottom, |y| fwd(y.min(b.waist_y)) - 1.4, |_| 0.9, &st, 0.0);
+                } else if front {
+                    for s in [-1.0f32, 1.0] {
+                        cv.profile(sy - 0.5, bottom, |_| cx + s * 3.2, |_| 1.1, &st, 0.0);
+                    }
+                }
+            }
+            Piece::Collar(lining) => {
+                // High standing collar, lined in the second dye.
+                let out = dye(c, g.shirt);
+                cv.begin();
+                if side {
+                    cv.capsule(v(cx - 3.5, sy + 1.0), v(cx - 5.5, sy - 7.0), 1.8, 2.4, &out, 0.0);
+                } else {
+                    for s in [-1.0f32, 1.0] {
+                        cv.capsule(v(cx + s * 5.0, sy + 1.0), v(cx + s * 8.0, sy - 7.0), 1.8, 2.6, &out, 0.0);
+                        if front {
+                            cv.capsule(v(cx + s * 4.6, sy + 0.5), v(cx + s * 7.0, sy - 5.5), 0.8, 1.2, &dye(c, lining), 0.0);
+                        }
+                    }
+                }
+            }
+            Piece::Bow(d) if !back => {
+                let bw = dye(c, d);
+                let ty = sy + 2.0;
+                cv.begin();
+                if side {
+                    cv.ellipse(v(fwd(ty) - 0.5, ty + 1.0), 1.8, 1.6, &bw, 0.0);
+                } else {
+                    cv.ellipse(v(cx - 2.4, ty + 1.0), 2.2, 1.7, &bw, 0.0);
+                    cv.ellipse(v(cx + 2.4, ty + 1.0), 2.2, 1.7, &bw, 0.0);
+                    cv.ellipse(v(cx, ty + 1.2), 1.1, 1.1, &bw, -0.1);
+                }
+            }
+            Piece::Lacing(d) if front => {
+                let ld = dye(c, d);
+                let top = if fig { by + b.bust * 0.55 } else { sy + 3.0 };
+                let n = ((b.waist_y + 1.0 - top) / 3.0).max(1.0) as i32;
+                for k in 0..n {
+                    let y = top as i32 + 1 + k * 3;
+                    cv.put(cx as i32 - 2, y, ld[3]);
+                    cv.put(cx as i32 + 1, y, ld[3]);
+                    cv.put(cx as i32 - 1, y + 1, ld[2]);
+                    cv.put(cx as i32, y + 1, ld[2]);
+                }
+            }
+            Piece::Gem(d) if !back => {
+                let gm = dye(c, d);
+                cv.begin();
+                let gx = if side { fwd(sy + 2.5) - 1.0 } else { cx };
+                cv.ellipse(v(gx, sy + 2.5), 1.5, 1.6, &gm, 0.15);
+            }
+            Piece::Wrap => {
+                // Left over right: an asymmetric lapel line from the collar.
+                if front {
+                    cv.line(v(cx - 4.5, sy), v(cx + 2.5, b.waist_y), |_| Some(shirt[1]));
+                } else if side {
+                    cv.line(v(fwd(sy) - 1.0, sy), v(fwd(b.waist_y) - 0.5, b.waist_y), |_| Some(shirt[1]));
+                }
+            }
+            Piece::Pouches => {
+                let y = b.waist_y + 4.5;
+                cv.begin();
+                if side {
+                    cv.ellipse(v(aft(y) + 1.0, y), 1.8, 2.0, &c.leather, 0.05);
+                } else {
+                    for s in [-1.0f32, 1.0] {
+                        cv.ellipse(v(cx + s * (b.waist_w - 0.5), y), 1.8, 2.0, &c.leather, 0.05);
+                    }
+                }
+            }
+            Piece::Satchel => {
+                // Strap over the right shoulder, bag on the left hip.
+                cv.begin();
+                if side {
+                    cv.ellipse(v(aft(b.hip_y), b.hip_y), 2.6, 3.0, &c.leather, 0.05);
+                } else {
+                    let s = if back { -1.0 } else { 1.0 };
+                    cv.line(v(cx - s * (b.shoulder_w - 2.0), sy + 0.5), v(cx + s * (b.hip_w + 0.5), b.hip_y - 1.0), |_| Some(c.leather[1]));
+                    cv.begin();
+                    cv.ellipse(v(cx + s * (b.hip_w + 1.0), b.hip_y + 1.0), 2.8, 2.6, &c.leather, 0.05);
+                }
+            }
+            Piece::Quiver => {
+                let fletch = [hex(0x6a5a50), hex(0xa89888), hex(0xe0d4c4), hex(0xf8f0e4), hex(0xffffff)];
+                if back {
+                    if g.cape().is_none() {
+                        quiver_back(cv, b, c);
+                    }
+                } else if side {
+                    cv.begin();
+                    cv.capsule(v(aft(sy) - 1.0, sy - 3.0), v(aft(b.waist_y) + 0.5, b.waist_y), 2.2, 2.0, &c.leather, 0.05);
+                    cv.begin();
+                    cv.ellipse(v(aft(sy) - 1.5, sy - 5.0), 1.2, 1.4, &fletch, 0.1);
+                } else {
+                    cv.line(v(cx + b.shoulder_w - 2.5, sy + 0.5), v(cx - b.waist_w + 0.5, b.waist_y + 1.0), |_| Some(c.leather[1]));
+                }
+            }
+            Piece::Faulds => {
+                for k in 0..3 {
+                    let top = b.waist_y + 1.0 + k as f32 * 3.2;
+                    cv.begin();
+                    if side {
+                        cv.profile(top, top + 3.5, |y| lean(y.min(cy)), |y| width(y.min(cy)) + 0.8 + k as f32 * 0.4, &c.metal, 0.0);
+                    } else {
+                        cv.profile(top, top + 3.5, |_| cx, |_| b.hip_w + 0.6 + k as f32 * 0.7, &c.metal, 0.0);
+                    }
+                }
+            }
+            Piece::ChestGuard => {
+                let top = if fig && !back { by - b.bust * 0.3 } else { sy + 3.0 };
+                cv.begin();
+                if side {
+                    cv.profile(top, b.waist_y, |y| lean(y) + 0.3, |y| width(y) - 0.2, &c.leather, 0.0);
+                } else {
+                    cv.profile(top, b.waist_y, lean, |y| width(y) - 0.8, &c.leather, 0.0);
+                }
+                if fig && !back && b.bust > 0.0 {
+                    if side {
+                        bust_side(cv, b, by, &c.leather, fwd);
+                    } else {
+                        bust(cv, b, dir, by, &c.leather);
+                    }
+                }
+            }
+            Piece::Yoke(d) => {
+                let yk = dye(c, d);
+                if front {
+                    // Chemise across the top of the bodice, then the scooped
+                    // neckline inside it.
+                    for y in sy as i32..(sy + if fig { 5.0 } else { 3.5 }) as i32 {
+                        let fy = y as f32 + 0.5;
+                        hspan(cv, (width(fy) - 1.2).max(1.0), y, yk[if y == sy as i32 { 2 } else { 3 }]);
+                        let half = (4.0 - (fy - sy) * 0.7).max(0.0);
+                        if half >= 1.0 {
+                            hspan(cv, half, y, c.skin[if y == sy as i32 { 3 } else { 2 }]);
+                        }
+                    }
+                } else if back {
+                    for y in sy as i32..(sy + 2.0) as i32 {
+                        hspan(cv, (width(y as f32 + 0.5) - 1.2).max(1.0), y, yk[3]);
+                    }
+                } else {
+                    for y in sy as i32..(sy + 3.0) as i32 {
+                        let fy = y as f32 + 0.5;
+                        for x in (aft(fy) + 1.0) as i32..fwd(fy) as i32 {
+                            cv.put(x, y, yk[3]);
+                        }
+                    }
+                }
+            }
+            Piece::Ridge if front => {
+                for y in (sy + 2.0) as i32..(b.waist_y + 2.0) as i32 {
+                    hspan(cv, 0.5, y, c.metal[3]);
+                }
+            }
+            _ => {}
+        }
     }
-    if matches!(look.outfit, outfit::CLOAK | outfit::GOTHIC) && back {
-        cloak_back(cv, b, c, false);
+    if back {
+        if let Some((outside, _)) = g.cape() {
+            cloak_back(cv, b, &dye(c, outside), false, false);
+            // A quiver is slung over the cloak.
+            if g.pieces.contains(&Piece::Quiver) {
+                quiver_back(cv, b, c);
+            }
+        }
+    }
+}
+
+fn quiver_back(cv: &mut Canvas, b: &Build, c: &Colors) {
+    let (cx, sy) = (b.cx, b.shoulder_y);
+    let fletch = [hex(0x6a5a50), hex(0xa89888), hex(0xe0d4c4), hex(0xf8f0e4), hex(0xffffff)];
+    cv.begin();
+    cv.capsule(v(cx - 4.5, sy - 2.0), v(cx + 4.0, b.waist_y + 1.0), 2.4, 2.2, &c.leather, 0.05);
+    cv.begin();
+    for k in 0..3 {
+        cv.ellipse(v(cx - 6.0 + k as f32 * 1.5, sy - 4.5 + k as f32 * 0.5), 0.9, 1.4, &fletch, 0.1);
     }
 }
 
@@ -1633,14 +2282,16 @@ fn hem_folds(cv: &mut Canvas, top: f32, bottom: f32, cx: f32, w0: f32, k: f32, r
     }
 }
 
-fn cloak_back(cv: &mut Canvas, b: &Build, c: &Colors, side: bool) {
+/// Cape: over the back in the back view; behind the body in front and
+/// profile views (`behind`), where only its lining shows past the arms.
+fn cloak_back(cv: &mut Canvas, b: &Build, ramp: &R5, side: bool, behind: bool) {
     let top = b.shoulder_y - 0.5;
     let bottom = b.ground - 7.0;
     let cx = if side { b.cx - 3.5 } else { b.cx };
     let lag = b.sway;
     let sw = b.shoulder_w;
     cv.begin();
-    cv.profile(top, bottom, |y| cx - (y - top) / (bottom - top) * lag * 1.5, |y| if side { 5.5 + (y - top) * 0.14 } else { sw + 2.0 + (y - top) * 0.2 }, &c.hatc, -0.1);
+    cv.profile(top, bottom, |y| cx - (y - top) / (bottom - top) * lag * 1.5, |y| if side { 5.5 + (y - top) * 0.14 } else if behind { sw + 1.0 + (y - top) * 0.1 } else { sw + 2.0 + (y - top) * 0.2 }, ramp, -0.1);
 }
 
 fn held_item(cv: &mut Canvas, look: &Look, hand: V2, dir: u8, raised: bool, c: &Colors) {
@@ -3409,7 +4060,7 @@ fn hat(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     let (rx, ry) = b.head_r;
     let side = dir == DIR_SIDE;
     let top = hc.y - ry;
-    let hcol = &c.hatc;
+    let hcol = &c.accent;
     cv.begin();
     match look.hat {
         1 => {
@@ -3530,7 +4181,7 @@ fn hat(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             cv.ellipse(v(hc.x, top + 3.0), 1.7, 1.7, &[hex(0x2a1050), hex(0x3a1a6a), hex(0x6a3ac0), hex(0xa070f0), hex(0xe8d8ff)], 0.1);
         }
         7 => {
-            let f = pal::FLOWERS[look.hat_color as usize % pal::FLOWERS.len()];
+            let f = pal::FLOWERS[look.accent as usize % pal::FLOWERS.len()];
             let pet = [mix(hex(f[0]), pal::INK, 0.3), hex(f[0]), hex(f[1]), hex(f[2]), mix(hex(f[2]), hex(0xffffff), 0.4)];
             let fc = v(hc.x + if side { -3.5 } else { rx * 0.62 }, top + 4.0);
             for (dx, dy) in [(-2.1, 0.0), (2.1, 0.0), (0.0, -2.1), (0.0, 2.1)] {
@@ -3656,7 +4307,7 @@ impl Look {
             && self.held == held::NONE
             // Tails peek out to one side; tailed races aren't mirror-exact.
             && matches!(self.race, RACE_HUMAN | RACE_ELF)
-            && self.outfit != outfit::GUILD
+            && garb(self).symmetric()
 
     }
 }
@@ -3897,19 +4548,19 @@ mod motion {
 /// The hand-tuned core cast: the faces a typical isekai story is built on.
 /// Each is curated for quality first; procedural villagers come later.
 pub fn cast() -> Vec<(&'static str, Look)> {
-    let base = Look { skin: 1, hair: 0, hair_style: 1, top: 0, bottom: 0, outfit: outfit::TUNIC, hat: 0, hat_color: 1, female: true, age: 1, beard: false, eyes: 0, mature: true, race: RACE_HUMAN, beast: 0, held: held::NONE, glasses: false, figure: 2, build: 1, height: 1, facial: 0 };
+    let base = Look { skin: 1, hair: 0, hair_style: 1, primary: 0, secondary: 0, outfit: outfit::PEASANT, hat: 0, accent: 1, female: true, age: 1, beard: false, eyes: 0, mature: true, race: RACE_HUMAN, beast: 0, held: held::NONE, glasses: false, figure: 2, build: 1, height: 1, facial: 0 };
     vec![
-        ("Reincarnated Hero", Look { build: 1, female: false, hair: 0, hair_style: 13, outfit: outfit::COAT, top: 8, bottom: 8, eyes: 2, skin: 1, held: held::SWORD, height: 1, ..base }),
-        ("Guild Receptionist", Look { figure: 3, build: 1, hair: 1, hair_style: 1, outfit: outfit::GUILD, hat: 9, hat_color: 1, eyes: 1, skin: 1, held: held::BOOK, ..base }),
-        ("Elf Mage", Look { figure: 1, build: 0, race: RACE_ELF, hair: 5, hair_style: 8, outfit: outfit::ROBE, top: 2, eyes: 6, skin: 0, held: held::STAFF, ..base }),
-        ("Cat-girl Adventurer", Look { figure: 2, build: 2, race: RACE_BEAST, beast: 0, hair: 2, hair_style: 5, outfit: outfit::VEST, top: 7, bottom: 3, eyes: 5, skin: 2, held: held::SWORD, ..base }),
-        ("Female Knight", Look { figure: 3, build: 2, hair: 3, hair_style: 2, outfit: outfit::ARMOR, hat_color: 0, bottom: 8, eyes: 0, skin: 1, held: held::SWORD, ..base }),
-        ("Healer", Look { figure: 3, build: 1, hair: 3, hair_style: 11, outfit: outfit::ROBE, top: 7, eyes: 0, skin: 0, held: held::STAFF, hat: 7, hat_color: 0, ..base }),
-        ("Dwarf Smith", Look { facial: 6, build: 2, female: false, race: RACE_DWARF, hair: 4, hair_style: 0, outfit: outfit::SMITH, bottom: 8, beard: true, hat: 2, hat_color: 1, eyes: 2, skin: 3, held: held::HAMMER, ..base }),
-        ("Demon Lord", Look { figure: 4, build: 2, race: RACE_DEMON, skin: 3, beast: 1, hair: 0, hair_style: 1, outfit: outfit::GOTHIC, top: 8, hat_color: 1, eyes: 4, height: 2, ..base }),
-        ("Barmaid", Look { figure: 4, build: 3, hair: 3, hair_style: 10, outfit: outfit::DIRNDL, top: 1, bottom: 2, hat: 10, eyes: 1, skin: 2, held: held::MUG, ..base }),
-        ("Fox Merchant", Look { figure: 2, build: 2, race: RACE_BEAST, beast: 1, hair: 4, hair_style: 7, outfit: outfit::APRON, top: 5, bottom: 3, eyes: 5, skin: 1, held: held::BASKET, ..base }),
-        ("Village Elder", Look { facial: 6, build: 0, female: false, age: 2, hair: 5, hair_style: 18, outfit: outfit::ROBE, top: 3, beard: true, eyes: 2, skin: 3, held: held::STAFF, ..base }),
-        ("Shopkeeper", Look { facial: 2, build: 3, female: false, hair: 1, hair_style: 0, outfit: outfit::APRON, top: 9, bottom: 3, hat: 5, hat_color: 6, glasses: true, eyes: 2, skin: 2, held: held::BASKET, ..base }),
+        ("Reincarnated Hero", Look { build: 1, female: false, hair: 0, hair_style: 13, outfit: outfit::HERO, primary: 11, secondary: 4, accent: 9, eyes: 2, skin: 1, held: held::SWORD, height: 1, ..base }),
+        ("Guild Receptionist", Look { figure: 3, build: 1, hair: 1, hair_style: 1, outfit: outfit::GUILD, primary: 13, secondary: 10, accent: 1, hat: 9, eyes: 1, skin: 1, held: held::BOOK, ..base }),
+        ("Elf Mage", Look { figure: 1, build: 0, race: RACE_ELF, hair: 5, hair_style: 8, outfit: outfit::MAGE, primary: 2, secondary: 10, accent: 6, eyes: 6, skin: 0, held: held::STAFF, ..base }),
+        ("Cat-girl Adventurer", Look { figure: 2, build: 2, race: RACE_BEAST, beast: 0, hair: 2, hair_style: 5, outfit: outfit::ADVENTURER, primary: 7, secondary: 3, accent: 1, eyes: 5, skin: 2, held: held::SWORD, ..base }),
+        ("Female Knight", Look { figure: 3, build: 2, hair: 3, hair_style: 2, outfit: outfit::KNIGHT, primary: 1, secondary: 13, accent: 6, eyes: 0, skin: 1, held: held::SWORD, ..base }),
+        ("Healer", Look { figure: 3, build: 1, hair: 3, hair_style: 11, outfit: outfit::PRIEST, primary: 10, secondary: 1, accent: 6, eyes: 0, skin: 0, held: held::STAFF, hat: 7, ..base }),
+        ("Dwarf Smith", Look { facial: 6, build: 2, female: false, race: RACE_DWARF, hair: 4, hair_style: 0, outfit: outfit::SMITH, primary: 3, secondary: 8, accent: 1, beard: true, hat: 2, eyes: 2, skin: 3, held: held::HAMMER, ..base }),
+        ("Demon Lord", Look { figure: 4, build: 2, race: RACE_DEMON, skin: 3, beast: 1, hair: 0, hair_style: 1, outfit: outfit::DEMON, primary: 11, secondary: 1, accent: 5, eyes: 4, height: 2, ..base }),
+        ("Barmaid", Look { figure: 4, build: 3, hair: 3, hair_style: 10, outfit: outfit::INNKEEPER, primary: 1, secondary: 2, accent: 6, hat: 10, eyes: 1, skin: 2, held: held::MUG, ..base }),
+        ("Fox Merchant", Look { figure: 2, build: 2, race: RACE_BEAST, beast: 1, hair: 4, hair_style: 7, outfit: outfit::MERCHANT, primary: 5, secondary: 7, accent: 6, eyes: 5, skin: 1, held: held::BASKET, ..base }),
+        ("Village Elder", Look { facial: 6, build: 0, female: false, age: 2, hair: 5, hair_style: 18, outfit: outfit::SCHOLAR, primary: 2, secondary: 7, accent: 6, beard: true, eyes: 2, skin: 3, held: held::STAFF, ..base }),
+        ("Shopkeeper", Look { facial: 2, build: 3, female: false, hair: 1, hair_style: 0, outfit: outfit::INNKEEPER, primary: 9, secondary: 3, accent: 6, hat: 5, glasses: true, eyes: 2, skin: 2, held: held::BASKET, ..base }),
     ]
 }

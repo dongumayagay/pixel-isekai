@@ -7,18 +7,17 @@ import init, { creator_info, render_frame, random_look, lint_look, cast_list, pr
 import wasmUrl from './pkg/sim_bg.wasm?url';
 
 interface Look {
-  skin: number; hair: number; hair_style: number; top: number; bottom: number; outfit: number;
-  hat: number; hat_color: number; female: boolean; age: number; beard: boolean; eyes: number;
+  skin: number; hair: number; hair_style: number; primary: number; secondary: number; outfit: number;
+  hat: number; accent: number; female: boolean; age: number; beard: boolean; eyes: number;
   mature: boolean; race: number; beast: number; held: number; glasses: boolean;
   figure: number; build: number; height: number; facial: number;
 }
 interface Info {
   fw: number; fh: number; pivot: [number, number]; framesPerDir: number; sheetFrames: number;
-  races: string[]; hairStyles: string[]; figures: string[]; heights: string[]; facial: string[]; buildsF: string[]; buildsM: string[];
+  races: string[]; hairStyles: string[]; outfits: string[]; outfitSlots: [string[], string[]][]; outfitDefaults: [number[], number[]][]; figures: string[]; heights: string[]; facial: string[]; buildsF: string[]; buildsM: string[];
   swatch: { skin: number[]; demon: number[]; hair: number[]; cloth: number[]; eyes: number[] };
 }
 
-const OUTFITS = ['Tunic', 'Dress', 'Robe', 'Apron', 'Armor', 'Cloak', 'Vest', 'Dirndl', 'Guild', 'Smith', 'Gothic gown', 'Long coat'];
 const HATS = ['None', 'Straw hat', 'Bandana', 'Helmet', 'Hood', 'Cap', 'Witch hat', 'Flower', 'Chef', 'Ribbon', 'Maid band', 'Miner helmet'];
 const HELD = ['None', 'Staff', 'Hammer', 'Mug', 'Book', 'Sword', 'Basket', 'Axe', 'Pickaxe', 'Hoe', 'Fishing rod', 'Spear', 'Ladle'];
 const BEASTS = ['Cat', 'Fox', 'Wolf', 'Rabbit'];
@@ -147,10 +146,10 @@ function renderControls() {
     <h3>Hair style</h3><div class="row" id="c-style"></div>
     <h3>Hair colour</h3><div class="row" id="c-hair"></div>
     <h3>Outfit</h3><div class="row" id="c-outfit"></div>
-    <h3>Top colour</h3><div class="row" id="c-top"></div>
-    <h3>Bottom colour</h3><div class="row" id="c-bottom"></div>
+    <div id="c-p-wrap"><h3 id="c-p-label"></h3><div class="row" id="c-p"></div></div>
+    <div id="c-s-wrap"><h3 id="c-s-label"></h3><div class="row" id="c-s"></div></div>
     <h3>Headwear</h3><div class="row" id="c-hat"></div>
-    <h3>Headwear colour</h3><div class="row" id="c-hatc"></div>
+    <div id="c-a-wrap"><h3 id="c-a-label"></h3><div class="row" id="c-a"></div></div>
     <h3>Holding</h3><div class="row" id="c-held"></div>
     <div id="c-facial-wrap"><h3>Facial hair</h3><div class="row" id="c-facial"></div></div>
     <h3>Extras</h3><div class="row" id="c-extra"></div>`;
@@ -166,11 +165,24 @@ function renderControls() {
   swatches($('#c-eyes'), info.swatch.eyes, (i) => look.eyes === i, (i) => set({ eyes: i }));
   buttons($('#c-style'), info.hairStyles, (s) => s, (i) => look.hair_style === i, (i) => set({ hair_style: i }));
   swatches($('#c-hair'), info.swatch.hair, (i) => look.hair === i, (i) => set({ hair: i }));
-  buttons($('#c-outfit'), OUTFITS, (s) => s, (i) => look.outfit === i, (i) => set({ outfit: i }));
-  swatches($('#c-top'), info.swatch.cloth, (i) => look.top === i, (i) => set({ top: i }));
-  swatches($('#c-bottom'), info.swatch.cloth, (i) => look.bottom === i, (i) => set({ bottom: i }));
+  // Picking an outfit dresses it in its best-known colours.
+  buttons($('#c-outfit'), info.outfits, (s) => s, (i) => look.outfit === i, (i) => {
+    const [p, s, a] = info.outfitDefaults[i][look.female ? 0 : 1];
+    set({ outfit: i, primary: p, secondary: s, accent: a });
+  });
+  // Each colour row is named after the piece it dyes on this outfit; the
+  // accent also colours the headwear.
+  const [pl, sl, al] = info.outfitSlots[look.outfit][look.female ? 0 : 1];
+  const slot = (key: 'p' | 's' | 'a', label: string, get: () => number, put: (i: number) => void) => {
+    $(`#c-${key}-wrap`).style.display = label ? '' : 'none';
+    $(`#c-${key}-label`).textContent = label;
+    swatches($(`#c-${key}`), info.swatch.cloth, (i) => get() === i, put);
+  };
+  slot('p', pl ? `${pl} (primary)` : '', () => look.primary, (i) => set({ primary: i }));
+  slot('s', sl ? `${sl} (secondary)` : '', () => look.secondary, (i) => set({ secondary: i }));
   buttons($('#c-hat'), HATS, (s) => s, (i) => look.hat === i, (i) => set({ hat: i }));
-  swatches($('#c-hatc'), info.swatch.cloth, (i) => look.hat_color === i, (i) => set({ hat_color: i }));
+  const accent = [al, look.hat ? 'headwear' : ''].filter(Boolean).join(' & ');
+  slot('a', accent ? `${accent[0].toUpperCase()}${accent.slice(1)} (accent)` : '', () => look.accent, (i) => set({ accent: i }));
   buttons($('#c-held'), HELD, (s) => s, (i) => look.held === i, (i) => set({ held: i }));
   $('#c-facial-wrap').style.display = !look.female && look.age > 0 ? '' : 'none';
   // Legacy beard flag shows as a full beard (long on dwarves).
@@ -332,7 +344,7 @@ function buildGallery() {
     c.height = info.fh * 2;
     card.appendChild(c);
     const s = document.createElement('small');
-    s.textContent = `${info.races[l.race]} · ${OUTFITS[l.outfit]}`;
+    s.textContent = `${info.races[l.race]} · ${info.outfits[l.outfit]}`;
     card.appendChild(s);
     card.onclick = () => {
       set(l);
@@ -413,7 +425,16 @@ async function boot() {
   tabs();
   const fromHash = (() => {
     try {
-      return location.hash.length > 1 ? (JSON.parse(decodeURIComponent(location.hash.slice(1))) as Look) : null;
+      if (location.hash.length <= 1) return null;
+      // Links from before the dyes were renamed carry top/bottom/hat_color.
+      const raw = JSON.parse(decodeURIComponent(location.hash.slice(1))) as Record<string, number | boolean>;
+      for (const [old, now] of [['top', 'primary'], ['bottom', 'secondary'], ['hat_color', 'accent']]) {
+        if (old in raw) {
+          raw[now] ??= raw[old];
+          delete raw[old];
+        }
+      }
+      return raw as unknown as Look;
     } catch {
       return null;
     }

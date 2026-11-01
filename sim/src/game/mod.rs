@@ -19,7 +19,7 @@ use society::Event;
 use sprites::{prop_pivot, SpriteBank};
 use villager::{Emote, Goal, Villager};
 
-use crate::art::people::Look;
+use crate::art::people::{outfit, Look};
 use crate::rng::Rng;
 use crate::world::bake::{Baker, CHUNK_PX};
 use crate::world::path::PathFinder;
@@ -120,10 +120,8 @@ impl Game {
         let mut look = Look::random(&mut rng.fork(77), false, 1);
         look.hair = 0;
         look.hair_style = 13;
-        look.outfit = 5;
-        look.hat_color = 0;
-        look.top = 7;
-        look.bottom = 8;
+        look.outfit = outfit::HERO;
+        (look.primary, look.secondary, look.accent) = outfit::defaults(outfit::HERO, false);
         look.eyes = 0;
         look.beard = false;
         let sheet = sprites.add_sheet(&look);

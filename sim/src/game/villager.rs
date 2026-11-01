@@ -78,111 +78,98 @@ impl Job {
         if look.hat != 7 && look.hat != 9 {
             look.hat = 0;
         }
+        // The outfit in its best-known colours, the main garment sometimes
+        // in one of a few alternatives.
+        let wear = |look: &mut Look, rng: &mut Rng, o: u8, alt: &[u8]| {
+            let (p, s, a) = outfit::defaults(o, look.female);
+            look.outfit = o;
+            look.primary = if alt.is_empty() || rng.chance(0.5) { p } else { *rng.pick(alt) };
+            look.secondary = s;
+            look.accent = a;
+        };
         match self {
             Job::Farmer => {
+                wear(look, rng, outfit::PEASANT, &[2, 3, 0]);
                 look.hat = if rng.chance(0.8) { 1 } else { 0 };
-                look.outfit = if look.female { outfit::DRESS } else { *rng.pick(&[outfit::VEST, outfit::TUNIC]) };
-                look.top = *rng.pick(&[2, 3, 0]);
-                look.bottom = *rng.pick(&[3, 0]);
                 look.held = if rng.chance(0.7) { held::HOE } else { held::BASKET };
             }
             Job::Woodcutter => {
-                look.outfit = outfit::TUNIC;
-                look.top = 1;
-                look.bottom = 3;
+                wear(look, rng, outfit::LABORER, &[1, 2]);
                 if rng.chance(0.4) {
                     look.hat = 2;
-                    look.hat_color = 2;
                 }
                 look.held = held::AXE;
             }
             Job::Miner => {
-                look.outfit = outfit::TUNIC;
+                wear(look, rng, outfit::LABORER, &[8, 4]);
                 look.hat = 11;
-                look.top = 8;
-                look.bottom = 3;
                 look.held = held::PICKAXE;
             }
             Job::Fisher => {
-                look.outfit = *rng.pick(&[outfit::TUNIC, outfit::VEST]);
+                wear(look, rng, outfit::FISHER, &[9, 0]);
                 look.hat = 1;
-                look.top = *rng.pick(&[9, 0]);
-                look.bottom = *rng.pick(&[3, 8]);
                 look.held = held::ROD;
             }
             Job::Smith => {
-                look.outfit = outfit::SMITH;
-                look.bottom = 8;
+                wear(look, rng, outfit::SMITH, &[]);
                 look.held = held::HAMMER;
                 if rng.chance(0.5) {
                     look.hat = 2;
-                    look.hat_color = 1;
                 }
             }
             Job::Merchant => {
-                look.outfit = outfit::APRON;
-                look.hat = 5;
-                look.hat_color = 6;
+                wear(look, rng, outfit::MERCHANT, &[5, 13, 2]);
                 look.glasses = rng.chance(0.4);
                 look.held = held::BASKET;
             }
             Job::Innkeeper => {
+                wear(look, rng, outfit::INNKEEPER, &[1, 0, 2]);
                 if look.female {
-                    look.outfit = outfit::DIRNDL;
-                    look.top = *rng.pick(&[1, 0, 2]);
-                    look.bottom = *rng.pick(&[2, 0, 6]);
                     look.hat = 10;
-                } else {
-                    look.outfit = outfit::APRON;
                 }
                 look.held = held::MUG;
             }
             Job::Guard => {
-                look.outfit = outfit::ARMOR;
+                wear(look, rng, outfit::GUARD, &[1, 2]);
                 look.hat = if look.female && rng.chance(0.5) { 0 } else { 3 };
-                look.hat_color = 1;
                 look.held = held::SPEAR;
             }
             Job::Priest => {
-                look.outfit = outfit::ROBE;
-                look.top = 7;
+                wear(look, rng, outfit::PRIEST, &[]);
                 look.held = held::BOOK;
                 if rng.chance(0.5) {
                     look.hat = 4;
-                    look.hat_color = 7;
                 }
             }
             Job::Adventurer => {
-                look.outfit = if look.female && rng.chance(0.4) { outfit::VEST } else { outfit::CLOAK };
-                look.hat_color = *rng.pick(&[1, 2, 5, 9]);
-                look.held = held::SWORD;
-                if rng.chance(0.25) {
+                let o = *rng.pick(&[outfit::ADVENTURER, outfit::ADVENTURER, outfit::RANGER, outfit::ROGUE, outfit::HERO]);
+                wear(look, rng, o, &[0, 1, 2, 3]);
+                look.held = if o == outfit::RANGER { held::NONE } else { held::SWORD };
+                if o == outfit::ROGUE && rng.chance(0.5) {
                     look.hat = 4;
                 }
             }
             Job::Healer => {
-                look.outfit = outfit::ROBE;
-                look.top = 7;
+                // White robe with a red stole.
+                wear(look, rng, outfit::PRIEST, &[]);
+                look.secondary = 1;
                 look.held = held::STAFF;
                 if rng.chance(0.4) {
                     look.hat = 4;
-                    look.hat_color = 7;
                 }
             }
             Job::Scholar => {
-                look.outfit = outfit::VEST;
+                wear(look, rng, outfit::SCHOLAR, &[3, 2]);
                 look.glasses = true;
                 look.held = held::BOOK;
             }
             Job::Mage => {
-                look.outfit = outfit::ROBE;
-                look.top = *rng.pick(&[5, 0, 8]);
+                wear(look, rng, outfit::MAGE, &[5, 0, 1, 13]);
                 look.hat = 6;
-                look.hat_color = look.top;
                 look.held = held::STAFF;
             }
             Job::Cook => {
-                look.outfit = outfit::APRON;
+                wear(look, rng, outfit::COOK, &[]);
                 look.hat = 8;
                 look.held = held::LADLE;
             }

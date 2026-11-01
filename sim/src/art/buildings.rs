@@ -8,6 +8,10 @@ use crate::palette::{self as pal, hex, ramp_at, Ramp, Rgb};
 use crate::rng::{hash2, Rng};
 use crate::world::villages::BuildingKind;
 
+/// Awnings and banners draw from the original ten cloth dyes (the later
+/// white, black, pink and navy are for outfits).
+const AWNING_CLOTHS: usize = 10;
+
 /// Visual metadata the renderer needs for lights and smoke, in pixels
 /// relative to the sprite pivot (bottom-left of the footprint).
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -465,7 +469,7 @@ pub fn house(kind: BuildingKind, culture: u8, seed: u32, fw: i32, fh: i32, lit: 
         }
     }
     if kind == BuildingKind::Store {
-        let aw = pal::CLOTH[r.below(pal::CLOTH.len())];
+        let aw = pal::CLOTH[r.below(AWNING_CLOTHS)];
         for y in 0..10 {
             for x in dx - 8..dx + dw + 8 {
                 let stripe = ((x - dx + 8) / 6) % 2 == 0;
@@ -924,7 +928,7 @@ pub fn small_prop(kind: &str, variant: u8) -> (Img, (i32, i32)) {
         }
         "tent" => {
             let mut img = Img::new(72, 56);
-            let cloth = pal::CLOTH[(variant as usize) % pal::CLOTH.len()];
+            let cloth = pal::CLOTH[(variant as usize) % AWNING_CLOTHS];
             for k in 0..44 {
                 let half = 3 + k * 31 / 43;
                 for x in 36 - half..36 + half {
@@ -958,7 +962,7 @@ pub fn small_prop(kind: &str, variant: u8) -> (Img, (i32, i32)) {
         }
         "stall" => {
             let mut img = Img::new(80, 68);
-            let awn = pal::CLOTH[(variant as usize) % pal::CLOTH.len()];
+            let awn = pal::CLOTH[(variant as usize) % AWNING_CLOTHS];
             img.rect(6, 40, 68, 24, ramp_at(pal::WOOD, 3));
             for y in (44..64).step_by(5) {
                 img.hline(6, 73, y, ramp_at(pal::WOOD, 2));
