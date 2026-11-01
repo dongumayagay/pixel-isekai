@@ -439,6 +439,19 @@ impl Canvas<'_> {
         self.img.get(x, y)
     }
 
+    /// Step a pixel one shade darker if it was painted from `ramp`.
+    fn darken_on(&mut self, x: i32, y: i32, ramp: &R5) {
+        if !self.img.inside(x, y) {
+            return;
+        }
+        let i = (y * self.img.w + x) as usize;
+        let r = self.rid[i] as usize;
+        if r < self.ramps.len() && self.ramps[r] == *ramp && self.ridx[i] > 1 {
+            let c = ramp[self.ridx[i] as usize - 1];
+            self.put(x, y, c);
+        }
+    }
+
     /// Whether the current part painted this pixel.
     fn owns(&self, x: i32, y: i32) -> bool {
         self.img.inside(x, y) && self.ids[(y * self.img.w + x) as usize] == self.cur
@@ -658,10 +671,8 @@ fn pose_for(f: u16) -> Pose {
     use std::f32::consts::TAU;
     let base = Pose { walk: None, breathe: 0.0, work: 0, blink: false, cycle: 0, frame: f };
     match f {
-        0..=3 => {
-            let ph = f as f32 / IDLE_FRAMES as f32;
-            Pose { breathe: (1.0 - (TAU * ph).cos()) * 0.5, ..base }
-        }
+        // In for two frames, out for two: a held breath, not a twitch.
+        0..=3 => Pose { breathe: if f >= 2 { 1.0 } else { 0.0 }, ..base },
         4..=9 => {
             let ph = (f - WALK_FIRST) as f32 / WALK_FRAMES as f32;
             Pose { walk: Some(TAU * ph + 0.5), cycle: 1, ..base }
@@ -694,8 +705,8 @@ const JIGGLE_IDLE: [[Jig; 4]; 5] = [
     [(0, 0); 4],
     [(0, 0); 4],
     [(0, 0), (0, 0), (1, 0), (0, 0)],
-    [(0, 0), (0, 0), (1, 1), (-1, -1)],
-    [(0, 0), (0, 0), (1, 1), (-1, -1)],
+    [(-1, -1), (0, 0), (1, 1), (0, 0)],
+    [(-1, -1), (0, 0), (1, 1), (0, 0)],
 ];
 
 fn jiggle(figure: u8, pose: &Pose, frame: u16) -> Jig {
@@ -749,6 +760,8 @@ struct Build {
     /// Sideways swing of hair, skirts and capes: side view only. Seen from
     /// the front or back, soft parts bounce vertically instead.
     sway: f32,
+    /// Authored walk bob before the feet are planted.
+    bob: f32,
 }
 
 fn build(look: &Look, pose: Pose, plant: f32) -> Build {
@@ -772,10 +785,11 @@ fn build(look: &Look, pose: Pose, plant: f32) -> Build {
     let thigh = 14.0 * leg_k;
     let calf = 13.5 * leg_k;
     let ground = 116.0;
+    // Work poses keep the feet planted; only soft parts lag.
     let (bob, lag) = match pose.walk {
         Some(ph) => (-(ph.sin().abs()) * 1.5, -ph.cos() * 1.4),
-        None if pose.work == 1 => (-0.6, -0.9),
-        None if pose.work == 2 => (0.8, 1.1),
+        None if pose.work == 1 => (0.0, -0.9),
+        None if pose.work == 2 => (0.0, 1.1),
         None => (0.0, 0.0),
     };
     // Whole-pixel motion: fractional bobbing makes every frame re-rasterise
@@ -833,6 +847,7 @@ fn build(look: &Look, pose: Pose, plant: f32) -> Build {
         jsq: if bust > 0.0 { jsq as f32 } else { 0.0 },
         jhl: if bust > 0.0 { jhl as f32 } else { 0.0 },
         sway: 0.0,
+        bob,
     }
 }
 
@@ -876,9 +891,13 @@ fn limbs(b: &Build, pose: Pose, dir: u8) -> Limbs {
             let _ = (swing, lift);
             (knee, ankle)
         } else {
-            // Knees drawn slightly together: the soft anime stance.
-            let knee = hip.add(v(-sgn * 1.2, b.thigh - lift * 1.3));
-            let ankle = knee.add(v(-sgn * 0.3, b.calf - lift * 2.6));
+            // Knees drawn slightly together: the soft anime stance. Feet are
+            // placed from the ground up, so a dip of the hips bends the legs
+            // instead of sinking the feet.
+            let ankle_y = b.ground - 3.0 - lift * 3.9;
+            let reach = ankle_y - hip.y + lift * 3.9;
+            let knee = v(hip.x - sgn * 1.2, hip.y + reach * b.thigh / (b.thigh + b.calf) - lift * 1.3);
+            let ankle = v(knee.x - sgn * 0.3, ankle_y);
             (knee, ankle)
         }
     };
@@ -896,8 +915,15 @@ fn limbs(b: &Build, pose: Pose, dir: u8) -> Limbs {
     let arm = |sh: V2, swing: f32, out: f32| -> (V2, V2) {
         match pose.work {
             1 => {
-                let el = sh.add(v(out * 2.5 + if side { 2.5 } else { 0.0 }, -b.upper_arm * 0.85));
-                let wr = el.add(v(out * 1.0 + if side { 2.5 } else { 0.0 }, -b.forearm * 0.8));
+                // Wind-up: in profile the hands go up beside the back of the
+                // head, clear of the face.
+                if side {
+                    let el = sh.add(v(-0.5, -b.upper_arm * 0.95));
+                    let wr = el.add(v(-1.5, -b.forearm * 0.9));
+                    return (el, wr);
+                }
+                let el = sh.add(v(out * 2.5, -b.upper_arm * 0.85));
+                let wr = el.add(v(out * 1.0, -b.forearm * 0.8));
                 (el, wr)
             }
             2 => {
@@ -906,8 +932,10 @@ fn limbs(b: &Build, pose: Pose, dir: u8) -> Limbs {
                     let wr = el.add(V2::polar(b.forearm, 1.25));
                     (el, wr)
                 } else {
-                    let el = sh.add(v(out * 1.5, b.upper_arm * 0.85));
-                    let wr = el.add(v(-out * 3.5, b.forearm * 0.55));
+                    // Follow-through: arms swept down and out past the hips,
+                    // the tool at the low point beside the body.
+                    let el = sh.add(v(out * 3.6, b.upper_arm * 0.92));
+                    let wr = el.add(v(out * 1.8, b.forearm * 0.88));
                     (el, wr)
                 }
             }
@@ -917,9 +945,11 @@ fn limbs(b: &Build, pose: Pose, dir: u8) -> Limbs {
                     let wr = el.add(V2::polar(b.forearm, swing * 0.45 + 0.25 * swing.abs() + 0.12));
                     (el, wr)
                 } else {
-                    // A relaxed A-pose: elbows and hands clear the hips.
-                    let el = sh.add(v(out * 4.2, b.upper_arm - 0.6 - swing.abs() * 0.8));
-                    let wr = el.add(v(out * 2.6, b.forearm - swing.max(0.0) * 1.8));
+                    // A relaxed A-pose: elbows and hands clear the hips. In a
+                    // walk the forward arm foreshortens (hand rises and tucks
+                    // in) and the trailing arm hangs straighter.
+                    let el = sh.add(v(out * 4.2, b.upper_arm - 0.6 - swing.abs() * 1.2));
+                    let wr = el.add(v(out * (2.6 - swing.max(0.0) * 1.2), b.forearm - swing.max(0.0) * 3.2));
                     (el, wr)
                 }
             }
@@ -981,7 +1011,14 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     let b0 = build(look, pose, 0.0);
     let l0 = limbs(&b0, pose, dir);
     let low = l0.ankle_l.y.max(l0.ankle_r.y);
-    let plant = if pose.walk.is_some() { b0.ground - 3.0 - low } else { 0.0 };
+    // In profile the legs' angles set the bob; from the front or back the
+    // standing leg is straight, so the hips dip a pixel at each contact and
+    // the legs take it up.
+    let plant = match pose.walk {
+        Some(ph) if dir != DIR_SIDE => -b0.bob + (1.0 - ph.sin().abs()) * 1.2,
+        Some(_) => b0.ground - 3.0 - low,
+        None => 0.0,
+    };
     let mut b = build(look, pose, plant);
     b.sway = if dir == DIR_SIDE { b.lag } else { 0.0 };
     let l = limbs(&b, pose, dir);
@@ -1015,13 +1052,21 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     } else {
         // Arms hang just behind the body: the torso, bust and hips overlap
         // them, which also tucks the shoulder joint under the deltoid.
-        arm(&mut cv, look, &b, &c, (l.sh_l, l.el_l, l.wr_l), false, dir, pose);
-        arm(&mut cv, look, &b, &c, (l.sh_r, l.el_r, l.wr_r), false, dir, pose);
+        // Arms raised to work come up in front of the hair (drawn later).
+        if pose.work != 1 {
+            arm(&mut cv, look, &b, &c, (l.sh_l, l.el_l, l.wr_l), false, dir, pose);
+            arm(&mut cv, look, &b, &c, (l.sh_r, l.el_r, l.wr_r), false, dir, pose);
+        }
         leg(&mut cv, look, &b, &c, left, false, dir);
         leg(&mut cv, look, &b, &c, right, false, dir);
     }
     torso(&mut cv, look, dir, &b, &c);
-    if side {
+    let late_arms = |cv: &mut Canvas| {
+        arm(cv, look, &b, &c, (l.sh_l, l.el_l, l.wr_l), false, dir, pose);
+        arm(cv, look, &b, &c, (l.sh_r, l.el_r, l.wr_r), false, dir, pose);
+    };
+    // Raised arms come up in front of the head and hair (drawn later).
+    if side && pose.work != 1 {
         arm(&mut cv, look, &b, &c, (l.sh_r, l.el_r, l.wr_r), false, dir, pose);
     }
     head(&mut cv, look, dir, &b, &c);
@@ -1031,6 +1076,11 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     elf_ears(&mut cv, look, dir, &b, &c, false);
     beast_ears(&mut cv, look, dir, &b, &c);
     hair_front(&mut cv, look, dir, &b, &c);
+    if !side && pose.work == 1 {
+        late_arms(&mut cv);
+    } else if side && pose.work == 1 {
+        arm(&mut cv, look, &b, &c, (l.sh_r, l.el_r, l.wr_r), false, dir, pose);
+    }
     elf_ears(&mut cv, look, dir, &b, &c, true);
     horns(&mut cv, look, dir, &b, &c);
     // From behind a cape covers the tail.
@@ -1573,7 +1623,8 @@ impl Garb {
 fn leg(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (hip, knee, ankle): (V2, V2, V2), far: bool, dir: u8) {
     let g = garb(look);
     let ramp = dye(c, g.legs);
-    let bias = if far { -0.16 } else { 0.0 };
+    // The far leg sits clearly in shadow so the stride reads as alternating.
+    let bias = if far { -0.32 } else { 0.0 };
     let wide = if g.wide { 1.22 } else { 1.0 };
     let (tr, cr) = (b.thigh_r * wide, b.calf_r * wide);
     let ankle_r = b.calf_r * 0.62;
@@ -1597,7 +1648,10 @@ fn leg(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (hip, knee, ankle): 
     let side = dir == DIR_SIDE;
     if let Some((d, h)) = g.boots {
         // Shaft up the shin: knee-high riders reach over the knee.
-        let top = ankle.add(v((knee.x - ankle.x) * (h / b.calf).min(1.3), -h));
+        // Up the actual shin, so a raised, foreshortened leg keeps its boot
+        // below the knee.
+        let k = (h / b.calf).min(1.25);
+        let top = v(ankle.x + (knee.x - ankle.x) * k, ankle.y + (knee.y - ankle.y) * k);
         cv.begin();
         cv.capsule(top, ankle, b.calf_r * 1.04, ankle_r + 0.6, &dye(c, d), bias);
     }
@@ -1682,7 +1736,13 @@ fn arm(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (sh, el, wr): (V2, V
             cv.put(hx, hy + 1, c.skin[1]);
         }
     }
-    let holding = !far && (dir == DIR_SIDE || wr.x > b.cx);
+    // The same hand in every view: screen right from the front, screen
+    // left from behind, the near hand in profile.
+    let holding = !far && match dir {
+        DIR_DOWN => wr.x > b.cx,
+        DIR_UP => wr.x < b.cx,
+        _ => true,
+    };
     if holding && look.held != held::NONE {
         cv.begin();
         held_item(cv, look, hand, dir, pose.work == 1, c);
@@ -1736,10 +1796,14 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     // Neck: its own part so the chin and collar line it.
     cv.begin();
     let nw = if look.female { 3.4 } else { 4.2 };
-    cv.profile(sy - 6.0, sy + 1.5, |_| b.cx + if side { 0.5 } else { 0.0 }, |_| nw, &c.skin, -0.06);
+    // From behind the nape sits in the hair's shadow.
+    cv.profile(sy - 6.0, sy + 1.5, |_| b.cx + if side { 0.5 } else { 0.0 }, |_| nw, &c.skin, if back { -0.3 } else { -0.06 });
     let (lower_kind, lower_dye) = g.lower;
     let skirted = lower_kind != Lower::Pants;
     let lower = dye(c, g.legs);
+    // Bare legs under a short skirt get shorts underneath, never bare skin.
+    let short_skirt = matches!(lower_kind, Lower::Skirt(len, _) if len < 0.7);
+    let seat = if short_skirt && g.legs == Dye::Skin { c.drab } else { lower };
     cv.begin();
     // Pelvis: hip curve, then a V into the crotch so the thighs carry the
     // silhouette instead of a flat box edge.
@@ -1748,7 +1812,7 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     // where it meets them; only the inner-leg line runs down from the crotch.
     let part = cv.cur;
     cv.cur = 0;
-    cv.profile(b.waist_y, cy + 1.5, lean, |y| if side { width(y) } else { keyed(&pelvis, y) }, &lower, 0.0);
+    cv.profile(b.waist_y, cy + 1.5, lean, |y| if side { width(y) } else { keyed(&pelvis, y) }, &seat, 0.0);
     cv.cur = part;
     if fig && back && !skirted {
         // Seat: a soft rounding with a short crease, no outlined lobes.
@@ -1776,13 +1840,6 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             hspan(cv, half, y, if y == sy as i32 { c.skin[3] } else { c.skin[2] });
         }
     }
-    if b.bust > 0.0 {
-        if side {
-            bust_side(cv, b, by, &shirt, fwd);
-        } else {
-            bust(cv, b, dir, by, &shirt);
-        }
-    }
     let sway = b.sway;
     // Skirts and gowns from the waist.
     match lower_kind {
@@ -1795,6 +1852,12 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             let sc = if side { cx - 0.5 } else { cx };
             cv.profile(top, top + len, |y| sc + (y - top) / len * sway * 0.8, |y| w0 + (y - top) * k, &ramp, -0.02);
             hem_folds(cv, top, top + len, sc, w0, k, &ramp, sway);
+            // The skirt shades the legs just under its hem.
+            let hy = (top + len).ceil() as i32 + 1;
+            let (hc, hw) = (sc + sway * 0.8, w0 + len * k);
+            for x in (hc - hw) as i32..=(hc + hw) as i32 {
+                cv.darken_on(x, hy, &lower);
+            }
         }
         Lower::Gown(flare) => {
             let top = b.waist_y - 1.0;
@@ -1808,346 +1871,372 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
         }
         Lower::Pants => {}
     }
-    for &p in &g.pieces {
-        match p {
-            Piece::Belt(d) => belt(cv, b, &dye(c, d), lean, width, front),
-            Piece::Sash(d) => sash(cv, b, &dye(c, d), lean, width),
-            Piece::DiagSash(d) if !side => {
-                let s = if back { -1.0 } else { 1.0 };
-                cv.begin();
-                cv.capsule(v(cx - s * (b.shoulder_w - 2.5), sy + 1.5), v(cx + s * (b.waist_w - 0.5), b.waist_y + 2.0), 1.5, 1.5, &dye(c, d), 0.05);
+    // Chest garments go on first; the bust is then shaped in whatever is
+    // outermost over it, so a coat or vest wraps the curve instead of a
+    // shirt-coloured disc sitting on top. Everything else layers after.
+    let chest = |p: &Piece| matches!(p, Piece::Coat(..) | Piece::Vest(_, true) | Piece::Corset(_) | Piece::ChestGuard);
+    let bust_ramp = g.pieces.iter().rev().find_map(|p| match *p {
+        Piece::Coat(d, ..) | Piece::Vest(d, true) => Some(dye(c, d)),
+        Piece::ChestGuard => Some(c.leather),
+        _ => None,
+    }).unwrap_or(shirt);
+    let ordered: Vec<Piece> = g.pieces.iter().copied().filter(|p| chest(p)).collect();
+    let rest: Vec<Piece> = g.pieces.iter().copied().filter(|p| !chest(p)).collect();
+    for (pass, list) in [(0, ordered), (1, rest)] {
+        if pass == 1 && b.bust > 0.0 {
+            if side {
+                bust_side(cv, b, by, &bust_ramp, fwd);
+            } else {
+                bust(cv, b, dir, by, &bust_ramp);
+                // An open coat still shows the shirt down the middle.
+                if let (true, Some(Piece::Coat(_, inner, ..))) = (front, g.pieces.iter().find(|p| matches!(p, Piece::Coat(..)))) {
+                    let inn = dye(c, *inner);
+                    for y in (by - b.bust) as i32..(by + b.bust) as i32 {
+                        hspan(cv, 1.5, y, inn[3]);
+                    }
+                }
             }
-            Piece::Apron(d, bib, len) => {
-                let ap = dye(c, d);
-                let bottom = b.hip_y + len;
-                if back {
-                    // Only the bow at the small of the back.
+        }
+        for p in list {
+            match p {
+                Piece::Belt(d) => belt(cv, b, &dye(c, d), lean, width, front),
+                Piece::Sash(d) => sash(cv, b, &dye(c, d), lean, width),
+                Piece::DiagSash(d) if !side => {
+                    let s = if back { -1.0 } else { 1.0 };
                     cv.begin();
-                    for s in [-1.0f32, 1.0] {
-                        cv.ellipse(v(cx + s * 2.2, b.waist_y + 2.0), 2.0, 1.4, &ap, 0.05);
-                    }
-                    continue;
+                    cv.capsule(v(cx - s * (b.shoulder_w - 2.5), sy + 1.5), v(cx + s * (b.waist_w - 0.5), b.waist_y + 2.0), 1.5, 1.5, &dye(c, d), 0.05);
                 }
-                let at = if bib { if fig && !side { by - 1.0 } else { sy + 4.0 } } else { b.waist_y + 1.0 };
-                let (ax, aw) = if side { (fwd(b.waist_y) - 1.6, 2.2) } else if bib { (cx, b.chest_w - 3.0) } else { (cx, b.waist_w + 0.5) };
-                cv.begin();
-                cv.profile(at, bottom, |_| ax, |y| if side { aw } else { aw + (y - at).max(0.0) * 0.06 }, &ap, 0.06);
-                if front && bib {
-                    // Straps up to the shoulders.
-                    let strap = (cx - aw + 1.0).floor() as i32;
-                    for k in 0..(at - sy) as i32 {
-                        cv.put(strap, sy as i32 + k, ap[2]);
-                        cv.put(FW - 1 - strap, sy as i32 + k, ap[2]);
+                Piece::Apron(d, bib, len) => {
+                    let ap = dye(c, d);
+                    let bottom = b.hip_y + len;
+                    if back {
+                        // From behind only the ties show: strings round the
+                        // waist, a knot, two loops and two tails.
+                        let y = b.waist_y + 2.5;
+                        hspan(cv, width(y) - 0.4, y as i32, ap[2]);
+                        cv.begin();
+                        for s in [-1.0f32, 1.0] {
+                            cv.ellipse(v(cx + s * 2.0, y - 0.5), 1.8, 1.2, &ap, 0.05);
+                            cv.capsule(v(cx + s * 0.8, y + 0.5), v(cx + s * 1.8, y + 5.0), 0.8, 0.6, &ap, 0.0);
+                        }
+                        cv.begin();
+                        cv.ellipse(v(cx, y), 1.0, 1.0, &ap, -0.15);
+                        continue;
                     }
-                }
-                if front {
-                    // Tie line at the waist.
-                    hspan(cv, aw - 0.5, (b.waist_y + 2.0) as i32, ap[2]);
-                }
-            }
-            Piece::Tabard(d, band) => {
-                let tb = dye(c, d);
-                let top = if b.bust > 0.0 && front { by + b.bust * 0.6 } else { sy + 1.0 };
-                let bottom = b.hip_y + if look.female { 9.0 } else { 7.0 };
-                cv.begin();
-                if side {
-                    for e in [fwd(b.waist_y) - 1.2, aft(b.waist_y) + 1.2] {
-                        cv.profile(sy + 2.0, bottom, |_| e, |_| 1.4, &tb, 0.0);
-                    }
-                } else {
-                    cv.profile(top, bottom, |_| cx, |y| 4.0 + (y - top) * 0.03, &tb, 0.0);
-                    let bd = dye(c, band);
-                    for k in 0..2 {
-                        hspan(cv, 4.0, (b.waist_y + 6.0) as i32 + k, bd[2 + k as usize % 2]);
-                    }
-                }
-            }
-            Piece::Vest(d, closed) => {
-                let vd = dye(c, d);
-                cv.begin();
-                if side {
-                    cv.profile(sy + 0.5, b.hip_y, |y| lean(y) - 0.3, |y| width(y) - 0.2, &vd, 0.0);
+                    let at = if bib { if fig && !side { by - 1.0 } else { sy + 4.0 } } else { b.waist_y + 1.0 };
+                    let (ax, aw) = if side { (fwd(b.waist_y) - 1.6, 2.2) } else if bib { (cx, b.chest_w - 3.0) } else { (cx, b.waist_w + 0.5) };
                     cv.begin();
-                    cv.profile(sy + 0.5, b.hip_y, |y| fwd(y) - 1.5, |_| 1.0, &shirt, 0.0);
-                } else if back || closed {
-                    let top = if closed && front { sy + 4.0 } else { sy + 0.5 };
-                    cv.profile(top, b.hip_y, lean, |y| width(y) - 0.2, &vd, 0.0);
-                    if closed && front {
-                        // Blouse in the V of the collar.
-                        for y in (sy + 4.0) as i32..(sy + 8.0) as i32 {
-                            hspan(cv, (8.0 - (y as f32 - sy)).max(1.0) * 0.6, y, shirt[3]);
+                    cv.profile(at, bottom, |_| ax, |y| if side { aw } else { aw + (y - at).max(0.0) * 0.06 }, &ap, 0.06);
+                    if front && bib {
+                        // Straps up to the shoulders.
+                        let strap = (cx - aw + 1.0).floor() as i32;
+                        for k in 0..(at - sy) as i32 {
+                            cv.put(strap, sy as i32 + k, ap[2]);
+                            cv.put(FW - 1 - strap, sy as i32 + k, ap[2]);
                         }
                     }
-                } else {
-                    let w = b.chest_w * 0.42;
-                    cv.profile(sy + 0.5, b.hip_y, |_| cx - b.chest_w + w, |_| w, &vd, 0.0);
+                    if front {
+                        // Tie line at the waist.
+                        hspan(cv, aw - 0.5, (b.waist_y + 2.0) as i32, ap[2]);
+                    }
+                }
+                Piece::Tabard(d, band) => {
+                    let tb = dye(c, d);
+                    let top = if b.bust > 0.0 && front { by + b.bust * 0.6 } else { sy + 1.0 };
+                    let bottom = b.hip_y + if look.female { 9.0 } else { 7.0 };
                     cv.begin();
-                    cv.profile(sy + 0.5, b.hip_y, |_| cx + b.chest_w - w, |_| w, &vd, 0.0);
-                }
-            }
-            Piece::Coat(d, inner, len, cutaway) => {
-                let ct = dye(c, d);
-                let bottom = (b.crotch_y + b.thigh * len).min(b.ground - 1.5);
-                cv.begin();
-                cv.profile(sy, b.waist_y + 1.0, lean, |y| width(y) + 0.8, &ct, 0.0);
-                let top = b.waist_y;
-                let span = bottom - top;
-                let (w0, k) = if side { (5.8, 0.18) } else { (b.waist_w + 2.4, 0.22) };
-                let sc = if side { cx - 1.0 } else { cx };
-                cv.profile(top, bottom, |y| sc + (y - top) / span * sway * 0.9, |y| w0 + (y - top) * k, &ct, 0.0);
-                hem_folds(cv, top, bottom, sc, w0, k, &ct, sway);
-                if front {
-                    // Front opening: the shirt above the waist, the legs (or
-                    // the dress) below it; a cutaway opens wide at once.
-                    let inn = dye(c, inner);
-                    let legs = if skirted { dye(c, lower_dye) } else { lower };
-                    for y in sy as i32..bottom as i32 {
-                        let fy = y as f32 + 0.5;
-                        let below = fy >= b.waist_y + 2.0;
-                        let half = if !below { 2.0 + (fy - sy) * 0.05 } else if cutaway { 4.5 + (fy - b.waist_y) * 0.5 } else { 2.5 + (fy - b.waist_y) * 0.18 };
-                        let col = if !below { inn[if fy < sy + 2.0 { 2 } else { 3 }] } else { legs[2] };
-                        hspan(cv, half.min(w0 + (fy - top).max(0.0) * k - 0.5), y, col);
-                    }
-                    // Lapels.
-                    for y in sy as i32..(sy + 7.0) as i32 {
-                        let off = 2.0 + (y as f32 - sy) * 0.5;
-                        cv.put((cx - off - 1.0).floor() as i32, y, ct[1]);
-                        cv.put(FW - 1 - (cx - off - 1.0).floor() as i32, y, ct[1]);
+                    if side {
+                        for e in [fwd(b.waist_y) - 1.2, aft(b.waist_y) + 1.2] {
+                            cv.profile(sy + 2.0, bottom, |_| e, |_| 1.4, &tb, 0.0);
+                        }
+                    } else {
+                        cv.profile(top, bottom, |_| cx, |y| 4.0 + (y - top) * 0.03, &tb, 0.0);
+                        let bd = dye(c, band);
+                        for k in 0..2 {
+                            hspan(cv, 4.0, (b.waist_y + 6.0) as i32 + k, bd[2 + k as usize % 2]);
+                        }
                     }
                 }
-                if back {
-                    for y in (b.waist_y + 3.0) as i32..bottom as i32 {
-                        cv.put(31, y, ct[1]);
-                        cv.put(32, y, ct[1]);
+                Piece::Vest(d, closed) => {
+                    let vd = dye(c, d);
+                    cv.begin();
+                    if side {
+                        cv.profile(sy + 0.5, b.hip_y, |y| lean(y) - 0.3, |y| width(y) - 0.2, &vd, 0.0);
+                        cv.begin();
+                        cv.profile(sy + 0.5, b.hip_y, |y| fwd(y) - 1.5, |_| 1.0, &shirt, 0.0);
+                    } else if back || closed {
+                        let top = if closed && front { sy + 4.0 } else { sy + 0.5 };
+                        cv.profile(top, b.hip_y, lean, |y| width(y) - 0.2, &vd, 0.0);
+                        if closed && front {
+                            // Blouse in the V of the collar.
+                            for y in (sy + 4.0) as i32..(sy + 8.0) as i32 {
+                                hspan(cv, (8.0 - (y as f32 - sy)).max(1.0) * 0.6, y, shirt[3]);
+                            }
+                        }
+                    } else {
+                        let w = b.chest_w * 0.42;
+                        cv.profile(sy + 0.5, b.hip_y, |_| cx - b.chest_w + w, |_| w, &vd, 0.0);
+                        cv.begin();
+                        cv.profile(sy + 0.5, b.hip_y, |_| cx + b.chest_w - w, |_| w, &vd, 0.0);
                     }
                 }
-            }
-            Piece::Corset(d) => {
-                let cd = dye(c, d);
-                let top = if fig && !back { by + b.bust * 0.55 } else { sy + 6.0 };
-                cv.begin();
-                cv.profile(top, b.waist_y + 3.0, lean, |y| width(y) - 0.3, &cd, 0.0);
-            }
-            Piece::Capelet(d) => {
-                let cp = dye(c, d);
-                cv.begin();
-                if side {
-                    cv.profile(sy - 0.5, sy + 7.0, |y| lean(y) - 0.5, |y| width(y) + 1.6 + (y - sy) * 0.1, &cp, 0.05);
-                } else {
-                    cv.profile(sy - 0.5, sy + 8.0, |_| cx, |y| b.shoulder_w + 2.6 + (y - sy) * 0.12, &cp, 0.05);
-                }
-            }
-            Piece::HalfCape(d) => {
-                let cp = dye(c, d);
-                cv.begin();
-                if side {
-                    cv.profile(sy - 0.5, sy + 6.0, |y| lean(y) - 0.5, |y| width(y) + 1.4, &cp, 0.05);
-                } else {
-                    // Over the left shoulder (screen right in front).
-                    let s = if back { -1.0 } else { 1.0 };
-                    let (top, bottom) = (sy - 0.5, b.waist_y + 5.0);
-                    let c0 = cx + s * (b.shoulder_w + 0.5);
-                    // Draped over the shoulder and arm, rounding off at the hem.
-                    cv.profile(top, bottom, |y| c0 + s * (y - top) * 0.04, |y| {
-                        let t = (y - top) / (bottom - top);
-                        4.4 * (1.0 - t.powi(4)).sqrt().max(0.3)
-                    }, &cp, 0.05);
-                }
-            }
-            Piece::Scarf(d) => {
-                let sc = dye(c, d);
-                cv.begin();
-                let ncx = b.cx + if side { 0.5 } else { 0.0 };
-                cv.profile(sy - 3.0, sy + 1.0, |_| ncx, |_| nw + 2.2, &sc, 0.05);
-                cv.begin();
-                if side {
-                    let a0 = v(ncx - nw - 0.5, sy - 0.5);
-                    cv.capsule(a0, a0.add(v(-2.5 - sway * 2.0, 8.0)), 1.6, 1.2, &sc, 0.0);
-                } else if back {
-                    cv.capsule(v(cx - 1.0, sy), v(cx - 1.5 + sway, sy + 9.0), 1.5, 1.2, &sc, 0.0);
-                } else {
-                    cv.capsule(v(cx + 3.0, sy), v(cx + 4.0, sy + 9.0), 1.5, 1.2, &sc, 0.0);
-                }
-            }
-            Piece::Kerchief(d) => {
-                let kc = dye(c, d);
-                if front {
-                    for (k, w) in [3.0f32, 2.0, 1.0].into_iter().enumerate() {
-                        hspan(cv, w, sy as i32 + k as i32, kc[if k == 0 { 3 } else { 2 }]);
+                Piece::Coat(d, inner, len, cutaway) => {
+                    let ct = dye(c, d);
+                    let bottom = (b.crotch_y + b.thigh * len).min(b.ground - 1.5);
+                    cv.begin();
+                    cv.profile(sy, b.waist_y + 1.0, lean, |y| width(y) + 0.8, &ct, 0.0);
+                    let top = b.waist_y;
+                    let span = bottom - top;
+                    let (w0, k) = if side { (5.8, 0.18) } else { (b.waist_w + 2.4, 0.22) };
+                    let sc = if side { cx - 1.0 } else { cx };
+                    cv.profile(top, bottom, |y| sc + (y - top) / span * sway * 0.9, |y| w0 + (y - top) * k, &ct, 0.0);
+                    hem_folds(cv, top, bottom, sc, w0, k, &ct, sway);
+                    if front {
+                        // Front opening: the shirt above the waist, the legs (or
+                        // the dress) below it; a cutaway opens wide at once.
+                        let inn = dye(c, inner);
+                        let legs = if skirted { dye(c, lower_dye) } else { lower };
+                        for y in sy as i32..bottom as i32 {
+                            let fy = y as f32 + 0.5;
+                            let below = fy >= b.waist_y + 2.0;
+                            let half = if !below { 2.0 + (fy - sy) * 0.05 } else if cutaway { 4.5 + (fy - b.waist_y) * 0.5 } else { 2.5 + (fy - b.waist_y) * 0.18 };
+                            let col = if !below { inn[if fy < sy + 2.0 { 2 } else { 3 }] } else { legs[2] };
+                            hspan(cv, half.min(w0 + (fy - top).max(0.0) * k - 0.5), y, col);
+                        }
+                        // Lapels.
+                        for y in sy as i32..(sy + 7.0) as i32 {
+                            let off = 2.0 + (y as f32 - sy) * 0.5;
+                            cv.put((cx - off - 1.0).floor() as i32, y, ct[1]);
+                            cv.put(FW - 1 - (cx - off - 1.0).floor() as i32, y, ct[1]);
+                        }
                     }
-                } else if side {
-                    let x = fwd(sy) as i32 - 1;
+                    if back {
+                        for y in (b.waist_y + 3.0) as i32..bottom as i32 {
+                            cv.put(31, y, ct[1]);
+                            cv.put(32, y, ct[1]);
+                        }
+                    }
+                }
+                Piece::Corset(d) => {
+                    let cd = dye(c, d);
+                    let top = if fig && !back { by + b.bust * 0.55 } else { sy + 6.0 };
+                    cv.begin();
+                    cv.profile(top, b.waist_y + 3.0, lean, |y| width(y) - 0.3, &cd, 0.0);
+                }
+                Piece::Capelet(d) => {
+                    let cp = dye(c, d);
+                    cv.begin();
+                    if side {
+                        cv.profile(sy - 0.5, sy + 7.0, |y| lean(y) - 0.5, |y| width(y) + 1.6 + (y - sy) * 0.1, &cp, 0.05);
+                    } else {
+                        cv.profile(sy - 0.5, sy + 8.0, |_| cx, |y| b.shoulder_w + 2.6 + (y - sy) * 0.12, &cp, 0.05);
+                    }
+                }
+                Piece::HalfCape(d) => {
+                    let cp = dye(c, d);
+                    cv.begin();
+                    if side {
+                        cv.profile(sy - 0.5, sy + 6.0, |y| lean(y) - 0.5, |y| width(y) + 1.4, &cp, 0.05);
+                    } else {
+                        // Over the left shoulder (screen right in front).
+                        let s = if back { -1.0 } else { 1.0 };
+                        let (top, bottom) = (sy - 0.5, b.waist_y + 5.0);
+                        let c0 = cx + s * (b.shoulder_w + 0.5);
+                        // Draped over the shoulder and arm, rounding off at the hem.
+                        cv.profile(top, bottom, |y| c0 + s * (y - top) * 0.04, |y| {
+                            let t = (y - top) / (bottom - top);
+                            4.4 * (1.0 - t.powi(4)).sqrt().max(0.3)
+                        }, &cp, 0.05);
+                    }
+                }
+                Piece::Scarf(d) => {
+                    let sc = dye(c, d);
+                    cv.begin();
+                    let ncx = b.cx + if side { 0.5 } else { 0.0 };
+                    cv.profile(sy - 3.0, sy + 1.0, |_| ncx, |_| nw + 2.2, &sc, 0.05);
+                    cv.begin();
+                    if side {
+                        let a0 = v(ncx - nw - 0.5, sy - 0.5);
+                        cv.capsule(a0, a0.add(v(-2.5 - sway * 2.0, 8.0)), 1.6, 1.2, &sc, 0.0);
+                    } else if back {
+                        cv.capsule(v(cx - 1.0, sy), v(cx - 1.5 + sway, sy + 9.0), 1.5, 1.2, &sc, 0.0);
+                    } else {
+                        cv.capsule(v(cx + 3.0, sy), v(cx + 4.0, sy + 9.0), 1.5, 1.2, &sc, 0.0);
+                    }
+                }
+                Piece::Kerchief(d) => {
+                    let kc = dye(c, d);
+                    if front {
+                        for (k, w) in [3.0f32, 2.0, 1.0].into_iter().enumerate() {
+                            hspan(cv, w, sy as i32 + k as i32, kc[if k == 0 { 3 } else { 2 }]);
+                        }
+                    } else if side {
+                        let x = fwd(sy) as i32 - 1;
+                        for k in 0..3 {
+                            cv.put(x - k / 2, sy as i32 + k, kc[2]);
+                        }
+                    } else {
+                        hspan(cv, nw, sy as i32 - 1, kc[2]);
+                    }
+                }
+                Piece::Stole(d) => {
+                    let st = dye(c, d);
+                    let bottom = b.hip_y + 8.0;
+                    cv.begin();
+                    if side {
+                        cv.profile(sy, bottom, |y| fwd(y.min(b.waist_y)) - 1.4, |_| 0.9, &st, 0.0);
+                    } else if front {
+                        for s in [-1.0f32, 1.0] {
+                            cv.profile(sy - 0.5, bottom, |_| cx + s * 3.2, |_| 1.1, &st, 0.0);
+                        }
+                    }
+                }
+                Piece::Collar(lining) => {
+                    // High standing collar, lined in the second dye.
+                    let out = dye(c, g.shirt);
+                    cv.begin();
+                    if side {
+                        cv.capsule(v(cx - 3.5, sy + 1.0), v(cx - 5.5, sy - 7.0), 1.8, 2.4, &out, 0.0);
+                    } else {
+                        for s in [-1.0f32, 1.0] {
+                            cv.capsule(v(cx + s * 5.0, sy + 1.0), v(cx + s * 8.0, sy - 7.0), 1.8, 2.6, &out, 0.0);
+                            if front {
+                                cv.capsule(v(cx + s * 4.6, sy + 0.5), v(cx + s * 7.0, sy - 5.5), 0.8, 1.2, &dye(c, lining), 0.0);
+                            }
+                        }
+                    }
+                }
+                Piece::Bow(d) if !back => {
+                    let bw = dye(c, d);
+                    let ty = sy + 2.0;
+                    cv.begin();
+                    if side {
+                        cv.ellipse(v(fwd(ty) - 0.5, ty + 1.0), 1.8, 1.6, &bw, 0.0);
+                    } else {
+                        cv.ellipse(v(cx - 2.4, ty + 1.0), 2.2, 1.7, &bw, 0.0);
+                        cv.ellipse(v(cx + 2.4, ty + 1.0), 2.2, 1.7, &bw, 0.0);
+                        cv.ellipse(v(cx, ty + 1.2), 1.1, 1.1, &bw, -0.1);
+                    }
+                }
+                Piece::Lacing(d) if front => {
+                    let ld = dye(c, d);
+                    let top = if fig { by + b.bust * 0.55 } else { sy + 3.0 };
+                    let n = ((b.waist_y + 1.0 - top) / 3.0).max(1.0) as i32;
+                    for k in 0..n {
+                        let y = top as i32 + 1 + k * 3;
+                        cv.put(cx as i32 - 2, y, ld[3]);
+                        cv.put(cx as i32 + 1, y, ld[3]);
+                        cv.put(cx as i32 - 1, y + 1, ld[2]);
+                        cv.put(cx as i32, y + 1, ld[2]);
+                    }
+                }
+                Piece::Gem(d) if !back => {
+                    let gm = dye(c, d);
+                    cv.begin();
+                    let gx = if side { fwd(sy + 2.5) - 1.0 } else { cx };
+                    cv.ellipse(v(gx, sy + 2.5), 1.5, 1.6, &gm, 0.15);
+                }
+                Piece::Wrap => {
+                    // Left over right: an asymmetric lapel line from the collar.
+                    if front {
+                        cv.line(v(cx - 4.5, sy), v(cx + 2.5, b.waist_y), |_| Some(shirt[1]));
+                    } else if side {
+                        cv.line(v(fwd(sy) - 1.0, sy), v(fwd(b.waist_y) - 0.5, b.waist_y), |_| Some(shirt[1]));
+                    }
+                }
+                Piece::Pouches => {
+                    let y = b.waist_y + 4.5;
+                    cv.begin();
+                    if side {
+                        cv.ellipse(v(aft(y) + 1.0, y), 1.8, 2.0, &c.leather, 0.05);
+                    } else {
+                        for s in [-1.0f32, 1.0] {
+                            cv.ellipse(v(cx + s * (b.waist_w - 0.5), y), 1.8, 2.0, &c.leather, 0.05);
+                        }
+                    }
+                }
+                Piece::Satchel => {
+                    // Strap over the right shoulder, bag on the left hip.
+                    cv.begin();
+                    if side {
+                        cv.ellipse(v(aft(b.hip_y), b.hip_y), 2.6, 3.0, &c.leather, 0.05);
+                    } else {
+                        let s = if back { -1.0 } else { 1.0 };
+                        cv.line(v(cx - s * (b.shoulder_w - 2.0), sy + 0.5), v(cx + s * (b.hip_w + 0.5), b.hip_y - 1.0), |_| Some(c.leather[1]));
+                        cv.begin();
+                        cv.ellipse(v(cx + s * (b.hip_w + 1.0), b.hip_y + 1.0), 2.8, 2.6, &c.leather, 0.05);
+                    }
+                }
+                Piece::Quiver => {
+                    let fletch = [hex(0x6a5a50), hex(0xa89888), hex(0xe0d4c4), hex(0xf8f0e4), hex(0xffffff)];
+                    if back {
+                        if g.cape().is_none() {
+                            quiver_back(cv, b, c);
+                        }
+                    } else if side {
+                        cv.begin();
+                        cv.capsule(v(aft(sy) - 1.0, sy - 3.0), v(aft(b.waist_y) + 0.5, b.waist_y), 2.2, 2.0, &c.leather, 0.05);
+                        cv.begin();
+                        cv.ellipse(v(aft(sy) - 1.5, sy - 5.0), 1.2, 1.4, &fletch, 0.1);
+                    } else {
+                        cv.line(v(cx + b.shoulder_w - 2.5, sy + 0.5), v(cx - b.waist_w + 0.5, b.waist_y + 1.0), |_| Some(c.leather[1]));
+                    }
+                }
+                Piece::Faulds => {
                     for k in 0..3 {
-                        cv.put(x - k / 2, sy as i32 + k, kc[2]);
-                    }
-                } else {
-                    hspan(cv, nw, sy as i32 - 1, kc[2]);
-                }
-            }
-            Piece::Stole(d) => {
-                let st = dye(c, d);
-                let bottom = b.hip_y + 8.0;
-                cv.begin();
-                if side {
-                    cv.profile(sy, bottom, |y| fwd(y.min(b.waist_y)) - 1.4, |_| 0.9, &st, 0.0);
-                } else if front {
-                    for s in [-1.0f32, 1.0] {
-                        cv.profile(sy - 0.5, bottom, |_| cx + s * 3.2, |_| 1.1, &st, 0.0);
-                    }
-                }
-            }
-            Piece::Collar(lining) => {
-                // High standing collar, lined in the second dye.
-                let out = dye(c, g.shirt);
-                cv.begin();
-                if side {
-                    cv.capsule(v(cx - 3.5, sy + 1.0), v(cx - 5.5, sy - 7.0), 1.8, 2.4, &out, 0.0);
-                } else {
-                    for s in [-1.0f32, 1.0] {
-                        cv.capsule(v(cx + s * 5.0, sy + 1.0), v(cx + s * 8.0, sy - 7.0), 1.8, 2.6, &out, 0.0);
-                        if front {
-                            cv.capsule(v(cx + s * 4.6, sy + 0.5), v(cx + s * 7.0, sy - 5.5), 0.8, 1.2, &dye(c, lining), 0.0);
+                        let top = b.waist_y + 1.0 + k as f32 * 3.2;
+                        cv.begin();
+                        if side {
+                            cv.profile(top, top + 3.5, |y| lean(y.min(cy)), |y| width(y.min(cy)) + 0.8 + k as f32 * 0.4, &c.metal, 0.0);
+                        } else {
+                            cv.profile(top, top + 3.5, |_| cx, |_| b.hip_w + 0.6 + k as f32 * 0.7, &c.metal, 0.0);
                         }
                     }
                 }
-            }
-            Piece::Bow(d) if !back => {
-                let bw = dye(c, d);
-                let ty = sy + 2.0;
-                cv.begin();
-                if side {
-                    cv.ellipse(v(fwd(ty) - 0.5, ty + 1.0), 1.8, 1.6, &bw, 0.0);
-                } else {
-                    cv.ellipse(v(cx - 2.4, ty + 1.0), 2.2, 1.7, &bw, 0.0);
-                    cv.ellipse(v(cx + 2.4, ty + 1.0), 2.2, 1.7, &bw, 0.0);
-                    cv.ellipse(v(cx, ty + 1.2), 1.1, 1.1, &bw, -0.1);
-                }
-            }
-            Piece::Lacing(d) if front => {
-                let ld = dye(c, d);
-                let top = if fig { by + b.bust * 0.55 } else { sy + 3.0 };
-                let n = ((b.waist_y + 1.0 - top) / 3.0).max(1.0) as i32;
-                for k in 0..n {
-                    let y = top as i32 + 1 + k * 3;
-                    cv.put(cx as i32 - 2, y, ld[3]);
-                    cv.put(cx as i32 + 1, y, ld[3]);
-                    cv.put(cx as i32 - 1, y + 1, ld[2]);
-                    cv.put(cx as i32, y + 1, ld[2]);
-                }
-            }
-            Piece::Gem(d) if !back => {
-                let gm = dye(c, d);
-                cv.begin();
-                let gx = if side { fwd(sy + 2.5) - 1.0 } else { cx };
-                cv.ellipse(v(gx, sy + 2.5), 1.5, 1.6, &gm, 0.15);
-            }
-            Piece::Wrap => {
-                // Left over right: an asymmetric lapel line from the collar.
-                if front {
-                    cv.line(v(cx - 4.5, sy), v(cx + 2.5, b.waist_y), |_| Some(shirt[1]));
-                } else if side {
-                    cv.line(v(fwd(sy) - 1.0, sy), v(fwd(b.waist_y) - 0.5, b.waist_y), |_| Some(shirt[1]));
-                }
-            }
-            Piece::Pouches => {
-                let y = b.waist_y + 4.5;
-                cv.begin();
-                if side {
-                    cv.ellipse(v(aft(y) + 1.0, y), 1.8, 2.0, &c.leather, 0.05);
-                } else {
-                    for s in [-1.0f32, 1.0] {
-                        cv.ellipse(v(cx + s * (b.waist_w - 0.5), y), 1.8, 2.0, &c.leather, 0.05);
-                    }
-                }
-            }
-            Piece::Satchel => {
-                // Strap over the right shoulder, bag on the left hip.
-                cv.begin();
-                if side {
-                    cv.ellipse(v(aft(b.hip_y), b.hip_y), 2.6, 3.0, &c.leather, 0.05);
-                } else {
-                    let s = if back { -1.0 } else { 1.0 };
-                    cv.line(v(cx - s * (b.shoulder_w - 2.0), sy + 0.5), v(cx + s * (b.hip_w + 0.5), b.hip_y - 1.0), |_| Some(c.leather[1]));
-                    cv.begin();
-                    cv.ellipse(v(cx + s * (b.hip_w + 1.0), b.hip_y + 1.0), 2.8, 2.6, &c.leather, 0.05);
-                }
-            }
-            Piece::Quiver => {
-                let fletch = [hex(0x6a5a50), hex(0xa89888), hex(0xe0d4c4), hex(0xf8f0e4), hex(0xffffff)];
-                if back {
-                    if g.cape().is_none() {
-                        quiver_back(cv, b, c);
-                    }
-                } else if side {
-                    cv.begin();
-                    cv.capsule(v(aft(sy) - 1.0, sy - 3.0), v(aft(b.waist_y) + 0.5, b.waist_y), 2.2, 2.0, &c.leather, 0.05);
-                    cv.begin();
-                    cv.ellipse(v(aft(sy) - 1.5, sy - 5.0), 1.2, 1.4, &fletch, 0.1);
-                } else {
-                    cv.line(v(cx + b.shoulder_w - 2.5, sy + 0.5), v(cx - b.waist_w + 0.5, b.waist_y + 1.0), |_| Some(c.leather[1]));
-                }
-            }
-            Piece::Faulds => {
-                for k in 0..3 {
-                    let top = b.waist_y + 1.0 + k as f32 * 3.2;
+                Piece::ChestGuard => {
+                    let top = if fig && !back { by - b.bust * 0.3 } else { sy + 3.0 };
                     cv.begin();
                     if side {
-                        cv.profile(top, top + 3.5, |y| lean(y.min(cy)), |y| width(y.min(cy)) + 0.8 + k as f32 * 0.4, &c.metal, 0.0);
+                        cv.profile(top, b.waist_y, |y| lean(y) + 0.3, |y| width(y) - 0.2, &c.leather, 0.0);
                     } else {
-                        cv.profile(top, top + 3.5, |_| cx, |_| b.hip_w + 0.6 + k as f32 * 0.7, &c.metal, 0.0);
+                        cv.profile(top, b.waist_y, lean, |y| width(y) - 0.8, &c.leather, 0.0);
                     }
                 }
-            }
-            Piece::ChestGuard => {
-                let top = if fig && !back { by - b.bust * 0.3 } else { sy + 3.0 };
-                cv.begin();
-                if side {
-                    cv.profile(top, b.waist_y, |y| lean(y) + 0.3, |y| width(y) - 0.2, &c.leather, 0.0);
-                } else {
-                    cv.profile(top, b.waist_y, lean, |y| width(y) - 0.8, &c.leather, 0.0);
-                }
-                if fig && !back && b.bust > 0.0 {
-                    if side {
-                        bust_side(cv, b, by, &c.leather, fwd);
-                    } else {
-                        bust(cv, b, dir, by, &c.leather);
-                    }
-                }
-            }
-            Piece::Yoke(d) => {
-                let yk = dye(c, d);
-                if front {
-                    // Chemise across the top of the bodice, then the scooped
-                    // neckline inside it.
-                    for y in sy as i32..(sy + if fig { 5.0 } else { 3.5 }) as i32 {
-                        let fy = y as f32 + 0.5;
-                        hspan(cv, (width(fy) - 1.2).max(1.0), y, yk[if y == sy as i32 { 2 } else { 3 }]);
-                        let half = (4.0 - (fy - sy) * 0.7).max(0.0);
-                        if half >= 1.0 {
-                            hspan(cv, half, y, c.skin[if y == sy as i32 { 3 } else { 2 }]);
+                Piece::Yoke(d) => {
+                    let yk = dye(c, d);
+                    if front {
+                        // Chemise across the top of the bodice, then the scooped
+                        // neckline inside it.
+                        for y in sy as i32..(sy + if fig { 5.0 } else { 3.5 }) as i32 {
+                            let fy = y as f32 + 0.5;
+                            hspan(cv, (width(fy) - 1.2).max(1.0), y, yk[if y == sy as i32 { 2 } else { 3 }]);
+                            let half = (4.0 - (fy - sy) * 0.7).max(0.0);
+                            if half >= 1.0 {
+                                hspan(cv, half, y, c.skin[if y == sy as i32 { 3 } else { 2 }]);
+                            }
                         }
-                    }
-                } else if back {
-                    for y in sy as i32..(sy + 2.0) as i32 {
-                        hspan(cv, (width(y as f32 + 0.5) - 1.2).max(1.0), y, yk[3]);
-                    }
-                } else {
-                    for y in sy as i32..(sy + 3.0) as i32 {
-                        let fy = y as f32 + 0.5;
-                        for x in (aft(fy) + 1.0) as i32..fwd(fy) as i32 {
-                            cv.put(x, y, yk[3]);
+                    } else if back {
+                        for y in sy as i32..(sy + 2.0) as i32 {
+                            hspan(cv, (width(y as f32 + 0.5) - 1.2).max(1.0), y, yk[3]);
+                        }
+                    } else {
+                        for y in sy as i32..(sy + 3.0) as i32 {
+                            let fy = y as f32 + 0.5;
+                            for x in (aft(fy) + 1.0) as i32..fwd(fy) as i32 {
+                                cv.put(x, y, yk[3]);
+                            }
                         }
                     }
                 }
-            }
-            Piece::Bikini(d, ties) => swim_top(cv, b, c, dir, by, &dye(c, d), &dye(c, ties), fwd),
-            Piece::Trunks(d, band) => swim_trunks(cv, b, c, dir, &dye(c, d), &dye(c, band), aft, fwd),
-            Piece::Ridge if front => {
-                for y in (sy + 2.0) as i32..(b.waist_y + 2.0) as i32 {
-                    hspan(cv, 0.5, y, c.metal[3]);
+                Piece::Bikini(d, ties) => swim_top(cv, b, c, dir, by, &dye(c, d), &dye(c, ties), fwd),
+                Piece::Trunks(d, band) => swim_trunks(cv, b, c, dir, &dye(c, d), &dye(c, band), aft, fwd),
+                Piece::Ridge if front => {
+                    for y in (sy + 2.0) as i32..(b.waist_y + 2.0) as i32 {
+                        hspan(cv, 0.5, y, c.metal[3]);
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
     if back {
@@ -2211,8 +2300,11 @@ fn swim_top(cv: &mut Canvas, b: &Build, c: &Colors, dir: u8, by: f32, cloth: &R5
             cv.begin();
             let half = b.chest_w - 0.3;
             cover(cv, bottom - 2.0, bottom, |x, fy| ((x as f32 + 0.5 - 32.0).abs() <= half).then(|| cloth[if fy > bottom - 1.0 { 1 } else { 2 }]));
-            cv.line(v(cx - 3.0, sy - 1.0), v(cx - 1.0, bottom - 2.0), |_| Some(ties[2]));
-            cv.line(v(cx + 3.0, sy - 1.0), v(cx + 1.0, bottom - 2.0), |_| Some(ties[2]));
+            // The halter ties in a small bow at the nape.
+            cv.begin();
+            for s in [-1.0f32, 1.0] {
+                cv.ellipse(v(cx + s * 1.6, sy - 1.5), 1.3, 0.9, ties, 0.05);
+            }
         }
         _ => {
             let front = fwd(by);
@@ -2440,8 +2532,13 @@ fn held_item(cv: &mut Canvas, look: &Look, hand: V2, dir: u8, raised: bool, c: &
     let (x, y) = (hand.x, hand.y);
     match look.held {
         held::STAFF => {
-            let top = (if raised { y - 22.0 } else { y - 40.0 }).max(11.0);
-            cv.capsule(v(x, top), v(x, y + 14.0), 1.3, 1.3, &wood, 0.0);
+            // Taller than its bearer: the orb rides above the head. In
+            // profile it leans a little forward, clear of the face.
+            let top = (if raised { y - 26.0 } else { y - 56.0 }).max(9.0);
+            let lean = if dir == DIR_SIDE { 3.0 } else { 0.0 };
+            let x = (x + lean * 0.3).min(FW as f32 - 8.0 - lean);
+            cv.capsule(v(x + lean, top), v(x - lean * 0.4, (y + 14.0).min(FH as f32 - 4.0)), 1.3, 1.3, &wood, 0.0);
+            let x = x + lean;
             let gem = [hex(0x2a1050), hex(0x4a2490), hex(0x7a48d0), hex(0xb090f8), hex(0xf0e6ff)];
             cv.capsule(v(x - 3.0, top + 1.0), v(x, top - 2.5), 1.2, 1.0, &wood, 0.0);
             cv.capsule(v(x + 3.0, top + 1.0), v(x, top - 2.5), 1.2, 1.0, &wood, 0.0);
@@ -2648,6 +2745,10 @@ fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
         }
     }
 }
+
+/// Human ear from the front, left side (mirrored for the right): the rim
+/// outside, the shadowed bowl, joining the head on the right.
+const EAR_FRONT: [&str; 6] = [".LM", "LLM", "LDM", "LDM", ".LM", "..M"];
 
 /// Human ear in profile, facing right: the helix rim at the top and back,
 /// the shadowed bowl in the middle, the lobe at the bottom.
@@ -3126,8 +3227,10 @@ fn back_hair(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                 (front_x(t) - back_x(t)) * 0.5
             });
         } else {
+            // From the front only what shows past the body matters; ending
+            // above the knee keeps it from boxing in the legs.
             let top = cy - 2.0;
-            let len = k.back;
+            let len = k.back.min(b.crotch_y + 6.0 - top);
             hair_sheet(cv, h, top, top + len, false, (k.hem - 1.0).max(0.0), |_| 32.0, |y| sheet_w(rx, ((y - top) / len).clamp(0.0, 1.0)));
         }
     }
@@ -3415,7 +3518,8 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     }
                     let col = match ex {
                         // Only the horseshoe below the crown.
-                        Extra::Bald if fy < cy - 3.0 => continue,
+                        // A horseshoe at ear height; the crown stays bare.
+                        Extra::Bald if fy < cy - 1.0 || fy > cy + 7.0 => continue,
                         Extra::Bald => h[if nx.abs() > 0.8 { 2 } else { 3 }],
                         Extra::Undercut if fy > cy - 2.0 => clipped[if nx.abs() > 0.8 { 1 } else { 2 }],
                         _ => h[if nx.abs() > 0.86 || ny > 0.7 { 2 } else { 3 }],
@@ -3440,10 +3544,12 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             }
             match ex {
                 Extra::Ponytail => {
-                    let base = v(32.0, cy + 1.0);
+                    // Tied high at the back of the crown, as in profile.
+                    let base = v(32.0, cy - 7.0);
                     cv.begin();
-                    tail_lock(cv, h, base, base.add(v(sway, 24.0)), 4.2);
-                    cv.rect(30, cy as i32, 4, 2, hex(0xc83a4a));
+                    tail_lock(cv, h, base, base.add(v(sway, 30.0)), 4.2);
+                    cv.begin();
+                    cv.ellipse(base.add(v(0.0, -0.5)), 2.2, 1.6, &tie, 0.1);
                 }
                 Extra::Bun => {
                     cv.begin();
@@ -3474,16 +3580,21 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     braid(cv, h, &[v(40.5, cy + 6.0), v(43.5, cy + 17.0)], 2.9, 2.6, &tie, 1.0);
                 }
                 Extra::HalfUp => {
+                    // A ribbon bow: two loops, a knot and two tails falling
+                    // over the hair.
                     cv.begin();
                     for s in [-1.0f32, 1.0] {
-                        cv.ellipse(v(32.0 + s * 2.5, cy - 5.0), 2.3, 1.6, &tie, 0.1);
+                        cv.ellipse(v(32.0 + s * 2.6, cy - 5.5), 2.0, 1.3, &tie, 0.1);
+                        cv.capsule(v(32.0 + s * 0.6, cy - 4.5), v(32.0 + s * 1.8, cy + 1.0), 0.8, 0.6, &tie, 0.0);
                     }
-                    cv.ellipse(v(32.0, cy - 5.0), 1.1, 1.1, &tie, -0.1);
+                    cv.begin();
+                    cv.ellipse(v(32.0, cy - 5.0), 1.0, 1.1, &tie, -0.2);
                 }
                 Extra::Messy => {
                     cv.begin();
-                    for (dx, len) in [(-5.0f32, 4.0f32), (0.0, 5.0), (5.0, 4.0)] {
-                        tail_lock(cv, h, v(32.0 + dx, nape - 3.0), v(32.0 + dx * 1.2, nape + len - 2.0), 2.0);
+                    // Tufts overlapping across the nape, no skin between them.
+                    for (dx, len) in [(-3.5f32, 3.0f32), (0.0, 4.0), (3.5, 3.0)] {
+                        tail_lock(cv, h, v(32.0 + dx, nape - 4.0), v(32.0 + dx * 1.15, nape + len - 2.0), 2.7);
                     }
                     ahoge(cv, h, v(31.5, cy - 15.0), -1.0);
                 }
@@ -3639,7 +3750,8 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     let temple = dxa > face_w - 1.0 && fy > cy - 4.0;
                     let col = match ex {
                         // Only the fringe of hair around the sides.
-                        Extra::Bald if dxa > 10.5 && dxa < face_w + 1.0 && fy > cy - 5.0 && fy < cy + 3.0 => h[if dxa > face_w { 2 } else { 3 }],
+                        // A thin fringe hugging the sides of the skull.
+                        Extra::Bald if dxa > face_w - 0.6 && dxa < face_w + 1.0 && fy > cy - 4.0 && fy < cy + 3.5 => h[if dxa > face_w { 2 } else { 3 }],
                         Extra::Bald => continue,
                         // Clipped sides from the temples down, close to the skull.
                         Extra::Undercut if dxa > 9.0 && fy > cy - 6.0 => {
@@ -3692,6 +3804,19 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             }
             if ex != Extra::Bald {
                 highlight_ring(cv, h, shine, mc, rx, ry, &notches);
+            }
+            // Cuts that clear the sides of the head show the ears.
+            if matches!(ex, Extra::Bald | Extra::Slick | Extra::Undercut) && !matches!(look.race, RACE_ELF | RACE_BEAST) {
+                let sk = c.skin;
+                let pal = |ch: char| match ch {
+                    'L' => Some(sk[3]),
+                    'M' => Some(sk[2]),
+                    'D' => Some(sk[1]),
+                    _ => None,
+                };
+                cv.begin();
+                stamp_fill(cv, 17, cy.round() as i32 + 3, &EAR_FRONT, false, &pal);
+                stamp_fill(cv, 17, cy.round() as i32 + 3, &EAR_FRONT, true, &pal);
             }
             // Side locks framing the face.
             let (ll, lw) = k.lock;
@@ -4324,7 +4449,8 @@ fn hat(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
         7 => {
             let f = pal::FLOWERS[look.accent as usize % pal::FLOWERS.len()];
             let pet = [mix(hex(f[0]), pal::INK, 0.3), hex(f[0]), hex(f[1]), hex(f[2]), mix(hex(f[2]), hex(0xffffff), 0.4)];
-            let fc = v(hc.x + if side { -3.5 } else { rx * 0.62 }, top + 4.0);
+            // The same side of her head from behind: mirrored on screen.
+            let fc = v(hc.x + if side { -3.5 } else if dir == DIR_UP { -rx * 0.62 } else { rx * 0.62 }, top + 4.0);
             for (dx, dy) in [(-2.1, 0.0), (2.1, 0.0), (0.0, -2.1), (0.0, 2.1)] {
                 cv.ellipse(fc.add(v(dx, dy)), 1.7, 1.7, &pet, 0.0);
             }
@@ -4337,7 +4463,7 @@ fn hat(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             cv.ellipse(v(hc.x, top - 4.5), rx * 0.98, 7.5, &w, 0.08);
         }
         9 => {
-            let bc = v(hc.x + if side { -5.0 } else { rx * 0.58 }, top + 2.0);
+            let bc = v(hc.x + if side { -5.0 } else if dir == DIR_UP { -rx * 0.58 } else { rx * 0.58 }, top + 2.0);
             cv.ellipse(bc.add(v(-3.0, 0.0)), 2.9, 2.4, hcol, 0.05);
             cv.ellipse(bc.add(v(3.0, 0.0)), 2.9, 2.4, hcol, -0.05);
             cv.begin();
@@ -4693,7 +4819,7 @@ pub fn cast() -> Vec<(&'static str, Look)> {
     vec![
         ("Reincarnated Hero", Look { build: 1, female: false, hair: 0, hair_style: 13, outfit: outfit::HERO, primary: 11, secondary: 4, accent: 9, eyes: 2, skin: 1, held: held::SWORD, height: 1, ..base }),
         ("Guild Receptionist", Look { figure: 3, build: 1, hair: 1, hair_style: 1, outfit: outfit::GUILD, primary: 13, secondary: 10, accent: 1, hat: 9, eyes: 1, skin: 1, held: held::BOOK, ..base }),
-        ("Elf Mage", Look { figure: 1, build: 0, race: RACE_ELF, hair: 5, hair_style: 8, outfit: outfit::MAGE, primary: 2, secondary: 10, accent: 6, eyes: 6, skin: 0, held: held::STAFF, ..base }),
+        ("Elf Mage", Look { figure: 1, build: 0, race: RACE_ELF, hair: 5, hair_style: 8, outfit: outfit::MAGE, primary: 10, secondary: 2, accent: 6, eyes: 6, skin: 0, held: held::STAFF, ..base }),
         ("Cat-girl Adventurer", Look { figure: 2, build: 2, race: RACE_BEAST, beast: 0, hair: 2, hair_style: 5, outfit: outfit::ADVENTURER, primary: 7, secondary: 3, accent: 1, eyes: 5, skin: 2, held: held::SWORD, ..base }),
         ("Female Knight", Look { figure: 3, build: 2, hair: 3, hair_style: 2, outfit: outfit::KNIGHT, primary: 1, secondary: 13, accent: 6, eyes: 0, skin: 1, held: held::SWORD, ..base }),
         ("Healer", Look { figure: 3, build: 1, hair: 3, hair_style: 11, outfit: outfit::PRIEST, primary: 10, secondary: 1, accent: 6, eyes: 0, skin: 0, held: held::STAFF, hat: 7, ..base }),
