@@ -428,6 +428,20 @@ fn stamp_fill(cv: &mut Canvas, x0: i32, y0: i32, rows: &[&str], mirror: bool, pa
     }
 }
 
+/// A body-part stamp flipped horizontally in place (not across the frame's
+/// centre), for profile views where the piece must face forward.
+fn stamp_at(cv: &mut Canvas, x0: i32, y0: i32, rows: &[&str], flip: bool, pal: &impl Fn(char) -> Option<Rgb>) {
+    for (r, row) in rows.iter().enumerate() {
+        let w = row.len() as i32;
+        for (i, ch) in row.chars().enumerate() {
+            if let Some(c) = pal(ch) {
+                let x = if flip { x0 + w - 1 - i as i32 } else { x0 + i as i32 };
+                cv.fill(x, y0 + r as i32, c);
+            }
+        }
+    }
+}
+
 /// Draw an authored pixel stamp; `mirror` reflects it across the frame's
 /// centre line so paired features match exactly.
 fn stamp(cv: &mut Canvas, x0: i32, y0: i32, rows: &[&str], mirror: bool, pal: &impl Fn(char) -> Option<Rgb>) {
@@ -554,8 +568,8 @@ fn build(look: &Look, pose: Pose, plant: f32) -> Build {
         (1.0, 1.0, 1.0)
     };
     // Long legs: just under half the standing height for adults.
-    let thigh = 14.5 * leg_k;
-    let calf = 14.0 * leg_k;
+    let thigh = 14.0 * leg_k;
+    let calf = 13.5 * leg_k;
     let ground = 116.0;
     let (bob, lag) = match pose.walk {
         Some(ph) => (-(ph.sin().abs()) * 1.5, -ph.cos() * 1.4),
@@ -759,7 +773,9 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     let side = dir == DIR_SIDE;
     let back = dir == DIR_UP;
 
-    tail(&mut cv, look, dir, &b, &c);
+    if !back {
+        tail(&mut cv, look, dir, &b, &c);
+    }
     if look.outfit == outfit::CLOAK && !back {
         cloak_back(&mut cv, &b, &c, side);
     }
@@ -795,6 +811,9 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     hair_front(&mut cv, look, dir, &b, &c);
     elf_ears(&mut cv, look, dir, &b, &c, true);
     horns(&mut cv, look, dir, &b, &c);
+    if back {
+        tail(&mut cv, look, dir, &b, &c);
+    }
     hat(&mut cv, look, dir, &b, &c);
     let ids = std::mem::take(&mut cv.ids);
     let ramps = std::mem::take(&mut cv.ramps);
@@ -991,14 +1010,16 @@ fn leg(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (hip, knee, ankle): 
         cv.clip = Some(if left { (0, 31) } else { (32, FW - 1) });
     }
     cv.begin();
-    // Thigh: full through the upper half, then narrowing into the knee.
-    let mid = v(hip.x + (knee.x - hip.x) * 0.5, hip.y + (knee.y - hip.y) * 0.5);
-    cv.capsule(hip, mid, tr, tr * 0.88, &ramp, bias);
-    cv.capsule(mid, knee, tr * 0.88, cr * 0.95, &ramp, bias);
-    // Calf: swells just below the knee, then tapers to the ankle.
-    let calf_mid = v(knee.x + (ankle.x - knee.x) * 0.3, knee.y + (ankle.y - knee.y) * 0.3);
-    cv.capsule(knee, calf_mid, cr * 0.95, cr, &ramp, bias);
-    cv.capsule(calf_mid, ankle, cr, ankle_r, &ramp, bias);
+    // Thigh: soft and full most of the way, easing into the knee.
+    let mid = v(hip.x + (knee.x - hip.x) * 0.55, hip.y + (knee.y - hip.y) * 0.55);
+    cv.capsule(hip, mid, tr, tr * 0.94, &ramp, bias);
+    cv.capsule(mid, knee, tr * 0.94, cr * 1.02, &ramp, bias);
+    // Calf: swells on the outside just below the knee, then slims to a
+    // narrow ankle.
+    let out = if front { if hip.x < b.cx { -0.6 } else { 0.6 } } else { -0.6 };
+    let calf_mid = v(knee.x + (ankle.x - knee.x) * 0.32 + out, knee.y + (ankle.y - knee.y) * 0.32);
+    cv.capsule(knee, calf_mid, cr * 1.0, cr * 1.1, &ramp, bias);
+    cv.capsule(calf_mid, ankle, cr * 1.1, ankle_r * 0.9, &ramp, bias);
     let side = dir == DIR_SIDE;
     let boots = matches!(look.outfit, outfit::ARMOR | outfit::CLOAK | outfit::SMITH);
     if boots {
@@ -1075,9 +1096,24 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     };
     let (sy, cy) = (b.shoulder_y, b.crotch_y);
     let fig = b.woman;
+    // Profile: separate front and back edges give the body its S-curve —
+    // chest forward, the small of the back curving in, the seat curving
+    // out, belly and pelvis flat in front.
+    let hk = b.hip_w / 11.2;
+    let (front_keys, back_keys): (Vec<(f32, f32)>, Vec<(f32, f32)>) = if look.female {
+        (
+            vec![(sy - 0.5, 3.6), (sy + 4.0, 5.0), (sy + 10.0, 4.6), (b.waist_y, 3.8), (b.hip_y, 4.4), (cy + 1.0, 4.0)],
+            vec![(sy - 0.5, -3.8), (sy + 4.0, -5.2), (b.waist_y - 1.0, -3.4), (b.hip_y + 1.0, -3.4 - 3.6 * hk), (cy + 1.0, -4.6 * hk)],
+        )
+    } else {
+        let bk = b.chest_w / 11.5;
+        (
+            vec![(sy - 0.5, 4.2), (sy + 4.0, 6.4 * bk), (sy + 11.0, 6.0 * bk), (b.waist_y, 4.6 * b.waist_w / 9.0), (b.hip_y, 4.8), (cy + 1.0, 4.4)],
+            vec![(sy - 0.5, -4.4), (sy + 4.0, -6.0 * bk), (b.waist_y - 1.0, -4.4), (b.hip_y + 1.0, -5.4 * hk), (cy + 1.0, -4.8)],
+        )
+    };
     let keys: Vec<(f32, f32)> = if side {
-        let chest = if look.female { 5.6 } else { 6.6 };
-        vec![(sy - 0.5, 4.6), (sy + 3.0, chest), (b.waist_y, chest - 1.0), (b.hip_y, chest + if fig { 0.6 } else { 0.0 }), (cy + 1.0, chest - 0.2)]
+        Vec::new()
     } else {
         vec![
             (sy - 0.5, if look.female { 5.0 } else { 6.5 }),
@@ -1089,16 +1125,10 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             (cy + 1.0, b.hip_w - 0.4),
         ]
     };
-    let waist_y = b.waist_y;
     let cx0 = b.cx;
-    let lean = move |y: f32| -> f32 {
-        if side {
-            cx0 + 0.5 + if y < waist_y { 0.6 } else { -0.4 }
-        } else {
-            cx0
-        }
-    };
-    let width = |y: f32| keyed(&keys, y);
+    let (fk, bkk, kk) = (&front_keys, &back_keys, &keys);
+    let lean = move |y: f32| -> f32 { if side { cx0 + 0.5 + (keyed(fk, y) + keyed(bkk, y)) * 0.5 } else { cx0 } };
+    let width = move |y: f32| -> f32 { if side { (keyed(fk, y) - keyed(bkk, y)) * 0.5 } else { keyed(kk, y) } };
     // Neck: its own part so the chin and collar line it.
     cv.begin();
     let nw = if look.female { 3.4 } else { 4.2 };
@@ -1111,16 +1141,12 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     cv.begin();
     // Pelvis: hip curve, then a V into the crotch so the thighs carry the
     // silhouette instead of a flat box edge.
-    let pelvis: Vec<(f32, f32)> = if side {
-        keys.clone()
-    } else {
-        vec![(b.waist_y, b.waist_w), (b.hip_y - 1.0, b.hip_w), (cy - 2.0, b.hip_w - 1.2), (cy + 1.5, 2.5)]
-    };
+    let pelvis: Vec<(f32, f32)> = vec![(b.waist_y, b.waist_w), (b.hip_y - 1.0, b.hip_w), (cy - 2.0, b.hip_w - 1.2), (cy + 1.5, 2.5)];
     // Same cloth as the thighs: drawn without an id so no seam is traced
     // where it meets them; only the inner-leg line runs down from the crotch.
     let part = cv.cur;
     cv.cur = 0;
-    cv.profile(b.waist_y, cy + 1.5, lean, |y| keyed(&pelvis, y), &lower, 0.0);
+    cv.profile(b.waist_y, cy + 1.5, lean, |y| if side { width(y) } else { keyed(&pelvis, y) }, &lower, 0.0);
     cv.cur = part;
     if fig && back && !matches!(look.outfit, outfit::DRESS | outfit::ROBE | outfit::DIRNDL | outfit::GUILD) {
         // Seat: two soft rounds with a centre seam from the contour pass.
@@ -1136,14 +1162,7 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             cv.put(32, y, lower[1]);
         }
     }
-    if fig && side && !matches!(look.outfit, outfit::DRESS | outfit::ROBE) {
-        // Seat in profile: low on the pelvis and blended in (no outline).
-        let k = b.hip_w / 11.2;
-        let part = cv.cur;
-        cv.cur = 0;
-        cv.ellipse(v(b.cx - 2.0 * k, b.hip_y + 2.5), 5.2 * k, 5.4 * k, &lower, -0.02);
-        cv.cur = part;
-    }
+
     cv.begin();
     cv.profile(sy, b.waist_y + 3.5, lean, width, &shirt, 0.0);
     // Fuller busts sit a little lower.
@@ -1354,14 +1373,40 @@ fn bust(cv: &mut Canvas, b: &Build, dir: u8, by: f32, ramp: &R5) {
             cv.ellipse(v(b.cx + 4.6, by), r * 0.85, r * 0.92 * (1.0 + b.squash), ramp, 0.0);
         }
         DIR_DOWN => {
-            for s in [-1.0f32, 1.0] {
-                cv.side = if s < 0.0 { 1 } else { 2 };
-                cv.clip = Some(if s < 0.0 { (0, 31) } else { (32, FW - 1) });
-                cv.begin();
-                let (rx, ry) = (r * (1.0 - b.squash * 0.5), r * 0.9 * (1.0 + b.squash));
-                cv.ellipse(v(b.cx + s * r * 0.92, by), rx, ry, ramp, -0.03);
-                cv.side = 0;
-                cv.clip = None;
+            // One soft mass, not two outlined balls: lit on top with a small
+            // highlight, shaded underneath, a short cleavage line low in the
+            // middle. The top blends into the chest; the contour pass lines
+            // only the sides and underside.
+            let (rx, ry) = (r * (1.0 - b.squash * 0.5), r * 0.9 * (1.0 + b.squash));
+            cv.begin();
+            for y in (by - ry - 1.0).floor() as i32..=(by + ry + 1.0).ceil() as i32 {
+                for x in 0..FW {
+                    let px = x as f32 + 0.5;
+                    let s = if px < b.cx { -1.0 } else { 1.0 };
+                    let nx = (px - (b.cx + s * r * 0.92)) / rx;
+                    let ny = (y as f32 + 0.5 - by) / ry;
+                    if nx * nx + ny * ny > 1.0 + EPS {
+                        continue;
+                    }
+                    // nx measured outward from the cleavage on both sides.
+                    let nxo = nx * s;
+                    let i = if ny > 0.78 {
+                        1
+                    } else if ny > 0.4 {
+                        2
+                    } else if (ny + 0.52).abs() < 0.1 && nxo > -0.15 && nxo < 0.5 {
+                        4
+                    } else {
+                        3
+                    };
+                    cv.fill(x, y, ramp[i]);
+                }
+            }
+            let c0 = (by - ry * 0.1).round() as i32;
+            for y in c0..(by + ry * 0.75).round() as i32 {
+                let col = if y < c0 + 2 { ramp[2] } else { ramp[1] };
+                cv.put(31, y, col);
+                cv.put(32, y, col);
             }
         }
         _ => {}
@@ -1432,9 +1477,12 @@ fn held_item(cv: &mut Canvas, look: &Look, hand: V2, dir: u8, raised: bool, c: &
             cv.ellipse(v(x, top - 3.5), 3.0, 3.2, &gem, 0.1);
         }
         held::HAMMER => {
-            let (hx, hy) = if raised { (x, y - 14.0) } else { (x + 0.5, y + 1.0) };
-            cv.capsule(v(hx, hy), v(hx, hy + 13.0), 1.2, 1.2, &wood, 0.0);
-            cv.capsule(v(hx - 4.0, hy - 1.0), v(hx + 4.0, hy - 1.0), 2.6, 2.6, &c.metal, 0.05);
+            // Gripped near the end of the handle: head up when swinging,
+            // head down and resting otherwise.
+            let (grip, head) = if raised { (v(x, y + 2.0), v(x, y - 11.0)) } else { (v(x, y - 2.0), v((x + 1.0).min(FW as f32 - 9.0), (y + 9.0).min(FH as f32 - 6.0))) };
+            cv.capsule(grip, head, 1.2, 1.2, &wood, 0.0);
+            cv.begin();
+            cv.capsule(v(head.x - 4.0, head.y), v(head.x + 4.0, head.y), 2.6, 2.6, &c.metal, 0.05);
         }
         held::MUG if dir != DIR_UP => {
             let mug = [hex(0x5a3418), hex(0x8a5a2a), hex(0xb07a40), hex(0xd8a060), hex(0xf0c080)];
@@ -1548,6 +1596,12 @@ fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             }
         }
         _ => {
+            if dir == DIR_UP && look.race != RACE_ELF {
+                // Ears at the sides of the head, seen from behind.
+                for s in [-1.0f32, 1.0] {
+                    cv.ellipse(v(32.0 + s * 12.6, hc.y + 3.5), 1.9, 3.0, &c.skin, -0.05);
+                }
+            }
             for dy in -13..=14 {
                 // From behind there is no jaw: the skull under the hair,
                 // then only the neck.
@@ -1751,9 +1805,9 @@ fn cut(style: u8) -> Cut {
         // Long straight, hime-style.
         1 => Cut { tips: &[(-10.5, 4.5, 1.5), (-6.5, 0.5, 1.7), (-2.0, 4.0, 1.7), (2.0, 4.0, 1.7), (6.5, 0.5, 1.7), (10.5, 4.5, 1.5)], lock: (24.0, 4.0), back: 46.0, nape: 12.0 },
         // Ponytail.
-        2 => Cut { tips: &[(-10.5, 4.0, 1.5), (-6.5, 1.5, 1.6), (-2.0, 3.5, 1.7), (2.5, 2.5, 1.7), (6.5, 1.0, 1.6), (10.5, 3.5, 1.5)], lock: (12.0, 3.5), back: 0.0, nape: 9.0 },
+        2 => Cut { tips: &[(-10.5, 4.0, 1.5), (-6.5, 1.5, 1.6), (-2.0, 3.5, 1.7), (2.5, 2.5, 1.7), (6.5, 1.0, 1.6), (10.5, 3.5, 1.5)], lock: (12.0, 3.5), back: 0.0, nape: 6.0 },
         // Bun.
-        3 => Cut { tips: &[(-10.5, 3.5, 1.5), (-6.5, 1.0, 1.8), (-2.5, 3.0, 1.8), (2.5, 3.0, 1.8), (6.5, 1.0, 1.8), (10.5, 3.5, 1.5)], lock: (9.0, 3.0), back: 0.0, nape: 8.0 },
+        3 => Cut { tips: &[(-10.5, 3.5, 1.5), (-6.5, 1.0, 1.8), (-2.5, 3.0, 1.8), (2.5, 3.0, 1.8), (6.5, 1.0, 1.8), (10.5, 3.5, 1.5)], lock: (9.0, 3.0), back: 0.0, nape: 6.0 },
         // Spiky hero.
         4 => Cut { tips: &[(-11.0, 0.5, 1.3), (-7.0, 1.5, 1.5), (-3.0, 2.0, 1.6), (1.0, 1.0, 1.6), (5.0, 2.0, 1.5), (9.0, 0.5, 1.4), (12.0, -1.0, 1.3)], lock: (6.0, 3.5), back: 0.0, nape: 9.0 },
         // Bob with a blunt fringe.
@@ -1932,6 +1986,9 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     let (rx, ry) = mass_r(look);
     let shine = h[4];
     cv.begin();
+    if style == 4 {
+        spikes(cv, h, hc.y, dir);
+    }
     match dir {
         DIR_UP => {
             // Back of the head: the whole cap, nape, and the long sheet over
@@ -1942,8 +1999,10 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                 for x in (32.0 - rx - 1.0) as i32..=(32.0 + rx + 1.0) as i32 {
                     let nx = (x as f32 + 0.5 - mc.x) / rx;
                     let ny = (y as f32 + 0.5 - mc.y) / ry;
-                    let inside = if ny < 0.0 { nx * nx + ny * ny <= 1.0 } else { nx.abs() <= 1.0 - (ny * 0.25).max(0.0) * 0.4 };
-                    if !inside || y as f32 + 0.5 > nape - (nx.abs() * 3.0) {
+                    // Round skull all the way down, and a nape hairline that
+                    // dips in the middle and rises behind the ears.
+                    let nyk = if ny > 0.0 { ny * 0.8 } else { ny };
+                    if nx * nx + nyk * nyk > 1.0 + EPS || y as f32 + 0.5 > nape - nx * nx * 6.0 {
                         continue;
                     }
                     cv.fill(x, y, h[if nx.abs() > 0.86 || ny > 0.7 { 2 } else { 3 }]);
@@ -1994,7 +2053,10 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                 for x in (mc.x - rx - 1.0) as i32..=(mc.x + rx + 1.0) as i32 {
                     let nx = (x as f32 + 0.5 - mc.x) / rx;
                     let ny = (y as f32 + 0.5 - mc.y) / ry;
-                    if nx * nx + ny.min(0.0).powi(2) > 1.0 || (ny > 0.0 && nx * nx + ny * ny > 1.0 && x > 30) {
+                    // Round skull in profile too: the back of the head curves
+                    // down into the nape instead of ending in a square corner.
+                    let nyk = if ny > 0.0 { ny * 0.8 } else { ny };
+                    if nx * nx + nyk * nyk > 1.0 + EPS {
                         continue;
                     }
                     let fy = y as f32 + 0.5;
@@ -2002,12 +2064,14 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                         if fy > fringe_bottom(front_tips, cy, x) {
                             continue;
                         }
-                    } else if x >= 28 {
-                        // Over the ear the hair lifts to the temple.
-                        if fy > cy - 2.0 + (35 - x) as f32 * 0.2 && fy > cy - 1.0 {
+                    } else if x >= 33 {
+                        // Between the fringe and the side lock: the temple.
+                        if fy > cy - 1.0 {
                             continue;
                         }
-                    } else if fy > nape - (28 - x).max(0) as f32 * -0.2 {
+                    } else if fy > nape - ((x as f32 - 22.0) / 11.0).clamp(0.0, 1.0) * 3.0 {
+                        // Behind the side lock the head is all hair, down to
+                        // the nape; only the face shows in front of it.
                         continue;
                     }
                     let rim = nx * nx + ny * ny > 0.8 && ny > -0.2;
@@ -2033,7 +2097,7 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     cv.begin();
                     cv.ellipse(v(28.0, cy - ry - 0.5), 5.5, 5.0, h, 0.05);
                 }
-                4 => spikes(cv, h, hc.y, ry, true),
+                4 => {}
                 _ => {}
             }
         }
@@ -2099,7 +2163,7 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     cv.begin();
                     cv.ellipse(v(32.0, cy - ry - 1.0), 5.5, 5.0, h, 0.05);
                 }
-                4 => spikes(cv, h, cy, ry, false),
+                4 => {}
                 6 => {
                     for s in [-1.0f32, 1.0] {
                         let base = v(32.0 + s * (rx + 0.5), cy - 4.0);
@@ -2159,15 +2223,46 @@ fn highlight_ring(cv: &mut Canvas, h: &R5, shine: Rgb, mc: V2, rx: f32, ry: f32,
     }
 }
 
-fn spikes(cv: &mut Canvas, h: &R5, cy: f32, ry: f32, side: bool) {
-    cv.begin();
-    let n = if side { 4 } else { 5 };
-    for k in 0..n {
-        let x = if side { 22.0 + k as f32 * 4.0 } else { 22.0 + k as f32 * 5.0 };
-        let base = v(x, cy - ry + 2.0);
-        let lean = if side { -3.0 } else if k < 2 { -2.0 } else if k > 2 { 2.0 } else { 0.0 };
-        let tip = base.add(v(lean, -5.5));
-        tail_lock(cv, h, base, tip, 2.6);
+/// Spiky hair: tapered triangular clumps fanned along the crown, bases sunk
+/// into the hair mass (drawn first, so the cap covers them). Front and back
+/// views fan symmetrically; the profile sweeps them back.
+fn spikes(cv: &mut Canvas, h: &R5, cy: f32, dir: u8) {
+    let spike = |cv: &mut Canvas, base: V2, ang: f32, len: f32, hw: f32| {
+        // Axis points along `ang` (0 = straight up, + = toward +x).
+        let (ax, ay) = (ang.sin(), -ang.cos());
+        let r = len + hw + 1.0;
+        for y in (base.y - r).floor() as i32..=(base.y + r).ceil() as i32 {
+            for x in (base.x - r).floor() as i32..=(base.x + r).ceil() as i32 {
+                let (dx, dy) = (x as f32 + 0.5 - base.x, y as f32 + 0.5 - base.y);
+                let u = dx * ax + dy * ay;
+                let w = dx * -ay + dy * ax;
+                if u < -2.0 || u > len {
+                    continue;
+                }
+                let half = hw * (1.0 - u.max(0.0) / len);
+                if w.abs() > half + EPS {
+                    continue;
+                }
+                // Lit flank and shaded flank, mirrored with the spike angle.
+                let lit = if ang.abs() < 0.05 { w < 0.0 } else { (w < 0.0) == (ang < 0.0) };
+                cv.fill(x, y, h[if u > len * 0.75 { 3 } else if lit { 3 } else { 2 }]);
+            }
+        }
+    };
+    if dir == DIR_SIDE {
+        // Profile: swept back over the crown.
+        for (k, (x, ang, len)) in [(36.0f32, -0.35f32, 6.0f32), (31.0, -0.6, 7.5), (26.0, -0.85, 7.5), (21.5, -1.15, 6.0)].into_iter().enumerate() {
+            let y = cy - 12.5 + (k as f32 - 0.5).abs() * 1.2;
+            spike(cv, v(x, y), ang, len, 3.0);
+        }
+    } else {
+        for (dx, ang, len) in [(0.0f32, 0.0f32, 7.5f32), (5.5, 0.35, 7.0), (10.5, 0.75, 6.0)] {
+            let sides: &[f32] = if dx == 0.0 { &[1.0] } else { &[-1.0, 1.0] };
+            for &sgn in sides {
+                let y = cy - 13.5 + (dx / 10.5) * (dx / 10.5) * 5.0;
+                spike(cv, v(32.0 + sgn * dx, y), sgn * ang, len, 3.0);
+            }
+        }
     }
 }
 
@@ -2263,19 +2358,19 @@ const RABBIT_EAR: [&str; 17] = [
     "LLMMM",
     "MMMMM",
 ];
-/// Demon horn: rises from the hair and sweeps out to a sharp point, with
-/// growth ridges along its length.
+/// Demon horn: sweeps out from the head, then hooks upward to a sharp
+/// point (a crescent, concave side toward the head), with growth ridges.
 const HORN: [&str; 12] = [
-    "H.......",
-    "LH......",
-    ".LM.....",
-    ".LLM....",
-    "..RRM...",
-    "..LLMD..",
-    "...LMMD.",
-    "...RRRD.",
-    "....LMMD",
-    "....LLMD",
+    ".H......",
+    ".LH.....",
+    "LLM.....",
+    "LLMD....",
+    "RRRD....",
+    "LLMMD...",
+    ".LLMD...",
+    ".RRRRD..",
+    "..LLMMD.",
+    "...LLMMD",
     "....RRRD",
     ".....LMD",
 ];
@@ -2320,11 +2415,13 @@ fn beast_ears(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             cv.begin();
             match dir {
                 DIR_SIDE => {
-                    // Near ear over the crown, far ear peeking behind it.
-                    let x0 = 27 - w / 2;
-                    stamp_fill(cv, x0 - 4, base_y - hgt + 2, art, false, &|ch| pal(ch).map(|p| mix(p, h[1], 0.3)));
+                    // Profile: on top of the crown, leaning slightly forward;
+                    // the far ear peeks just behind the near one.
+                    let near = 33 - w / 2;
+                    let far = near - 5;
+                    stamp_at(cv, far, base_y - hgt + 2, art, true, &|ch| pal(ch).map(|p| mix(p, h[1], 0.3)));
                     cv.begin();
-                    stamp_fill(cv, x0, base_y - hgt + 1, art, false, &pal);
+                    stamp_at(cv, near, base_y - hgt + 1, art, true, &pal);
                 }
                 _ => {
                     let x0 = 32 - 9 - w / 2;
@@ -2356,7 +2453,8 @@ fn horns(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, _c: &Colors) {
             let base_y = cy - 11;
             cv.begin();
             match dir {
-                DIR_SIDE => stamp_fill(cv, 25, base_y - hgt + 1, &HORN, false, &pal),
+                // Profile: the horn sweeps forward over the brow.
+                DIR_SIDE => stamp_at(cv, 31, base_y - hgt + 1, &HORN, true, &pal),
                 _ => {
                     stamp_fill(cv, 32 - 6 - 8, base_y - hgt + 1, &HORN, false, &pal);
                     stamp_fill(cv, 32 - 6 - 8, base_y - hgt + 1, &HORN, true, &pal);
@@ -2402,51 +2500,102 @@ fn elf_ears(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, after_
     }
 }
 
+/// Smooth tapered curve through `pts` (radius r0 at the root to r1 at the
+/// end), shaded as a cylinder; segments share one part so joints are seamless.
+fn curve(cv: &mut Canvas, pts: &[V2], r0: f32, r1: f32, ramp: &R5) {
+    // Catmull-Rom through the control points, finely sampled, so the line
+    // bends smoothly instead of in visible angles.
+    let n = pts.len();
+    let at = |i: isize| pts[i.clamp(0, n as isize - 1) as usize];
+    let mut samples = Vec::new();
+    for i in 0..n - 1 {
+        let (p0, p1, p2, p3) = (at(i as isize - 1), at(i as isize), at(i as isize + 1), at(i as isize + 2));
+        for k in 0..8 {
+            let t = k as f32 / 8.0;
+            let (t2, t3) = (t * t, t * t * t);
+            let f = |a: f32, b: f32, c: f32, d: f32| 0.5 * (2.0 * b + (c - a) * t + (2.0 * a - 5.0 * b + 4.0 * c - d) * t2 + (3.0 * b - a - 3.0 * c + d) * t3);
+            samples.push(v(f(p0.x, p1.x, p2.x, p3.x), f(p0.y, p1.y, p2.y, p3.y)));
+        }
+    }
+    samples.push(pts[n - 1]);
+    let m = samples.len() - 1;
+    for i in 0..m {
+        let (ta, tb) = (i as f32 / m as f32, (i + 1) as f32 / m as f32);
+        cv.capsule(samples[i], samples[i + 1], r0 + (r1 - r0) * ta, r0 + (r1 - r0) * tb, ramp, 0.0);
+    }
+}
+
+/// Demon tail spade, pointing along +x (mirrored for -x).
+const SPADE: [&str; 5] = [".LL..", "LMMLL", "MMMMH", "DMMLL", ".DD.."];
+
+/// Tails grow from the small of the back. Side view: curving out behind.
+/// Back view: drawn over the body (it faces the camera). Front view: only
+/// the tip peeks out to one side from behind.
 fn tail(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
+    if !matches!(look.race, RACE_BEAST | RACE_DEMON) {
+        return;
+    }
     let sway = b.lag;
-    let base = v(b.cx + if dir == DIR_SIDE { -5.5 } else { 0.0 }, b.hip_y - 1.0);
+    let side = dir == DIR_SIDE;
+    // Direction away from the body: backward in profile, to one side otherwise.
+    let (bx, k) = if side { (b.cx - 5.0, -1.0) } else { (b.cx, 0.55) };
+    let base = v(bx, b.hip_y);
+    let p = |dx: f32, dy: f32| v(base.x + dx * k, base.y + dy);
+    let white = [hex(0xc8bcb0), hex(0xe0d8ce), hex(0xf0ece6), hex(0xfaf8f4), hex(0xffffff)];
     cv.begin();
     match look.race {
-        RACE_BEAST => {
-            if dir == DIR_DOWN && look.beast == 3 {
-                return;
+        RACE_BEAST => match look.beast {
+            // Rabbit: a round puff at the base.
+            3 => {
+                if dir != DIR_DOWN {
+                    cv.ellipse(p(2.0, 1.0), 3.4, 3.2, &white, 0.0);
+                }
             }
-            let dirx = if dir == DIR_SIDE { -1.0 } else { 0.6 };
-            let white = [hex(0xc8bcb0), hex(0xe0d8ce), hex(0xf0ece6), hex(0xfaf8f4), hex(0xffffff)];
-            match look.beast {
-                3 => cv.ellipse(base.add(v(dirx * 2.5, 1.0)), 3.6, 3.4, &white, 0.0),
-                1 => {
-                    let mid = base.add(v(dirx * 8.5, 5.0 + sway));
-                    let tip = mid.add(v(dirx * 6.0, -6.0 + sway));
-                    cv.capsule(base, mid, 2.6, 5.2, &c.hair, -0.05);
-                    cv.capsule(mid, tip, 5.2, 2.4, &c.hair, 0.0);
-                    cv.ellipse(tip, 3.0, 2.8, &white, 0.0);
+            // Fox: big, bushy, sweeping up, with a white tip.
+            1 => {
+                let pts = [p(0.0, 0.0), p(4.0, 4.0), p(9.0, 4.5), p(13.0, 0.5 + sway), p(14.5, -5.0 + sway)];
+                curve(cv, &pts, 2.4, 4.6, &c.hair);
+                cv.ellipse(pts[4], 3.2, 3.4, &white, 0.0);
+            }
+            // Wolf: bushy, hanging low with a slight curl.
+            2 => {
+                let pts = [p(0.0, 0.0), p(3.5, 4.0), p(6.0, 9.0), p(7.0, 14.0 + sway * 0.5)];
+                curve(cv, &pts, 2.2, 3.8, &c.hair);
+                cv.ellipse(pts[3], 2.6, 2.8, &c.hair, -0.05);
+            }
+            // Cat: slender S-curve rising at the tip.
+            _ => {
+                let pts = [p(0.0, 0.0), p(4.0, 4.0), p(8.0, 5.0), p(11.0, 2.0), p(12.5, -4.0 + sway), p(12.0, -8.0 + sway)];
+                curve(cv, &pts, 1.9, 1.4, &c.hair);
+            }
+        },
+        _ => {
+            // Demon: thin whip curving out and up, ending in a spade.
+            let pts = [p(0.0, 0.0), p(4.0, 5.0), p(9.0, 7.0), p(13.0, 4.0 + sway * 0.5), p(14.5, -1.0 + sway)];
+            curve(cv, &pts, 1.5, 1.0, &c.skin);
+            let s = c.skin;
+            let pal = |ch: char| -> Option<Rgb> {
+                match ch {
+                    'H' => Some(s[4]),
+                    'L' => Some(s[3]),
+                    'M' => Some(s[2]),
+                    'D' => Some(s[1]),
+                    _ => None,
                 }
-                2 => {
-                    let tip = base.add(v(dirx * 11.0, 7.0 + sway));
-                    cv.capsule(base, tip, 2.4, 3.8, &c.hair, -0.05);
-                }
-                _ => {
-                    let mid = base.add(v(dirx * 7.0, 2.5));
-                    let tip = mid.add(v(dirx * 2.5, -10.0 + sway));
-                    cv.capsule(base, mid, 1.8, 1.8, &c.hair, -0.05);
-                    cv.capsule(mid, tip, 1.8, 1.4, &c.hair, 0.0);
+            };
+            let tip = pts[4];
+            let flip = k < 0.0;
+            let x0 = if flip { tip.x as i32 - 4 } else { tip.x as i32 };
+            // The spade stamp points along +x; mirror it in place for -x.
+            for (r, row) in SPADE.iter().enumerate() {
+                for (i, ch) in row.chars().enumerate() {
+                    if let Some(col) = pal(ch) {
+                        let xi = if flip { x0 + 4 - i as i32 } else { x0 + i as i32 };
+                        cv.fill(xi, tip.y as i32 - 3 + r as i32, col);
+                    }
                 }
             }
         }
-        RACE_DEMON => {
-            if dir == DIR_DOWN {
-                return;
-            }
-            let dirx = if dir == DIR_SIDE { -1.0 } else { 0.5 };
-            let mid = base.add(v(dirx * 8.5, 7.0 + sway));
-            let tip = mid.add(v(dirx * 3.5, -5.0));
-            cv.capsule(base, mid, 1.4, 1.2, &c.skin, -0.1);
-            cv.capsule(mid, tip, 1.2, 1.0, &c.skin, -0.1);
-            let s = [c.skin[0], c.skin[0], c.skin[1], c.skin[2], c.skin[3]];
-            cv.ellipse(tip.add(v(dirx, -1.0)), 2.4, 2.8, &s, 0.0);
-        }
-        _ => {}
     }
 }
 
@@ -2658,14 +2807,13 @@ impl Look {
         self
     }
 
-    /// Whether the front (or back) view should be mirror-symmetric. Tails
-    /// curl to one side from behind, by design.
-    fn symmetric(&self, dir: u8) -> bool {
-        !(dir == DIR_UP && self.race == RACE_DEMON)
-            && matches!(self.hair_style, 1 | 3 | 5 | 6)
+    /// Whether the front (or back) view should be mirror-symmetric.
+    fn symmetric(&self, _dir: u8) -> bool {
+        matches!(self.hair_style, 1 | 3 | 5 | 6)
             && matches!(self.hat, 0 | 2 | 3 | 4 | 5 | 8 | 10)
             && self.held == held::NONE
-            && matches!(self.race, RACE_HUMAN | RACE_ELF | RACE_DEMON)
+            // Tails peek out to one side; tailed races aren't mirror-exact.
+            && matches!(self.race, RACE_HUMAN | RACE_ELF)
             && self.outfit != outfit::GUILD
             && !(self.beard && self.race != RACE_DWARF)
     }
