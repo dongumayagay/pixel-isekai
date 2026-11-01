@@ -170,7 +170,7 @@ pub fn creator_info() -> String {
         "skins": crate::palette::SKIN.len(), "demonSkins": crate::palette::DEMON_SKIN.len(),
         "hairs": crate::palette::HAIR.len(), "cloths": crate::palette::CLOTH.len(),
         "hairStyles": people::HAIR_STYLES,
-        "figures": people::FIGURES, "heights": people::HEIGHTS, "buildsF": people::BUILDS_F, "buildsM": people::BUILDS_M,
+        "figures": people::FIGURES, "heights": people::HEIGHTS, "facial": people::FACIAL, "buildsF": people::BUILDS_F, "buildsM": people::BUILDS_M,
         "swatch": {
             "skin": crate::palette::SKIN.iter().map(|r| r[2]).collect::<Vec<_>>(),
             "demon": crate::palette::DEMON_SKIN.iter().map(|r| r[2]).collect::<Vec<_>>(),

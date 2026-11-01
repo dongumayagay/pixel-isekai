@@ -10,11 +10,11 @@ interface Look {
   skin: number; hair: number; hair_style: number; top: number; bottom: number; outfit: number;
   hat: number; hat_color: number; female: boolean; age: number; beard: boolean; eyes: number;
   mature: boolean; race: number; beast: number; held: number; glasses: boolean;
-  figure: number; build: number; height: number;
+  figure: number; build: number; height: number; facial: number;
 }
 interface Info {
   fw: number; fh: number; pivot: [number, number]; framesPerDir: number; sheetFrames: number;
-  races: string[]; hairStyles: number; figures: string[]; heights: string[]; buildsF: string[]; buildsM: string[];
+  races: string[]; hairStyles: number; figures: string[]; heights: string[]; facial: string[]; buildsF: string[]; buildsM: string[];
   swatch: { skin: number[]; demon: number[]; hair: number[]; cloth: number[]; eyes: number[] };
 }
 
@@ -122,7 +122,10 @@ function set(patch: Partial<Look>) {
   // Same rules as Look::normalized in Rust: beards only on adult men.
   if (look.age === 0) look.age = 1;
   look.mature = look.age > 0;
-  if (look.female || look.age === 0) look.beard = false;
+  if (look.female || look.age === 0) {
+    look.beard = false;
+    look.facial = 0;
+  }
   if (look.race === 4) look.skin %= info.swatch.demon.length;
   else look.skin %= info.swatch.skin.length;
   location.hash = encodeURIComponent(JSON.stringify(look));
@@ -150,6 +153,7 @@ function renderControls() {
     <h3>Headwear</h3><div class="row" id="c-hat"></div>
     <h3>Headwear colour</h3><div class="row" id="c-hatc"></div>
     <h3>Holding</h3><div class="row" id="c-held"></div>
+    <div id="c-facial-wrap"><h3>Facial hair</h3><div class="row" id="c-facial"></div></div>
     <h3>Extras</h3><div class="row" id="c-extra"></div>`;
   buttons($('#c-race'), info.races, (r) => r, (i) => look.race === i, (i) => set({ race: i }));
   $('#c-beast-wrap').style.display = look.race === 3 ? '' : 'none';
@@ -170,14 +174,11 @@ function renderControls() {
   buttons($('#c-hat'), HATS, (s) => s, (i) => look.hat === i, (i) => set({ hat: i }));
   swatches($('#c-hatc'), info.swatch.cloth, (i) => look.hat_color === i, (i) => set({ hat_color: i }));
   buttons($('#c-held'), HELD, (s) => s, (i) => look.held === i, (i) => set({ held: i }));
-  const extras = !look.female && look.age > 0 ? ['Glasses', 'Beard'] : ['Glasses'];
-  buttons(
-    $('#c-extra'),
-    extras,
-    (s) => s,
-    (i) => (i === 0 ? look.glasses : look.beard),
-    (i) => set(i === 0 ? { glasses: !look.glasses } : { beard: !look.beard }),
-  );
+  $('#c-facial-wrap').style.display = !look.female && look.age > 0 ? '' : 'none';
+  // Legacy beard flag shows as a full beard (long on dwarves).
+  const facial = look.facial || (look.beard ? (look.race === 2 ? 6 : 5) : 0);
+  buttons($('#c-facial'), info.facial, (f) => f, (i) => facial === i, (i) => set({ facial: i, beard: false }));
+  buttons($('#c-extra'), ['Glasses'], (s) => s, () => look.glasses, () => set({ glasses: !look.glasses }));
 }
 
 function renderSheet() {

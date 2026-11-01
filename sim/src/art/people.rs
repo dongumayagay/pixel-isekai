@@ -115,6 +115,27 @@ pub struct Look {
     /// 0 short, 1 medium, 2 tall.
     #[serde(default = "default_height")]
     pub height: u8,
+    /// Facial hair for grown men (see [`FACIAL`]); 0 falls back to `beard`.
+    #[serde(default)]
+    pub facial: u8,
+}
+
+pub const FACIAL: [&str; 8] = ["None", "Stubble", "Mustache", "Goatee", "Short beard", "Full beard", "Long beard", "Sideburns"];
+
+impl Look {
+    /// Facial hair style actually drawn: grown men only; the legacy `beard`
+    /// flag means a full beard (a long one on dwarves).
+    pub fn facial_style(&self) -> u8 {
+        if self.female || !self.mature {
+            0
+        } else if self.facial > 0 {
+            self.facial.min(FACIAL.len() as u8 - 1)
+        } else if self.beard {
+            if self.race == RACE_DWARF { 6 } else { 5 }
+        } else {
+            0
+        }
+    }
 }
 
 fn default_height() -> u8 {
@@ -164,6 +185,7 @@ impl Look {
             figure: *rng.pick(&[1u8, 2, 2, 2, 3, 3, 4]),
             build: *rng.pick(&[0u8, 1, 1, 1, 2, 2, 3]),
             height: *rng.pick(&[0u8, 1, 1, 1, 2]),
+            facial: if !female && age >= 1 && rng.chance(if age == 2 { 0.7 } else { 0.4 }) { 1 + rng.below(FACIAL.len() - 1) as u8 } else { 0 },
         }
     }
 }
@@ -1435,11 +1457,6 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     if matches!(look.outfit, outfit::CLOAK | outfit::GOTHIC) && back {
         cloak_back(cv, b, c, false);
     }
-    if look.beard && !back && look.race == RACE_DWARF {
-        let (bx, w) = if side { (cx + 6.0, 4.5) } else { (cx, 7.5) };
-        cv.begin();
-        cv.profile(sy - 4.0, sy + 11.0, |_| bx, |y| w * (1.0 - ((y - (sy - 4.0)) / 15.0).powf(2.0) * 0.7), &c.hair, 0.05);
-    }
 }
 
 /// Side-view bust grown out of the chest line, as part of the same garment:
@@ -1862,22 +1879,7 @@ fn face(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, pose: Pose
                 cv.put(x, ey + 3, g);
             }
         }
-        if look.beard && look.race != RACE_DWARF {
-            for dy in 10..=15 {
-                let hw = face_hw(look, dy.min(14)).max(5.0) as i32 + 1;
-                for x in 32 - hw..32 + hw {
-                    let mouth = dy == 13 && (30..34).contains(&x);
-                    if !mouth && (dy >= 12 || (x - 31).abs() > 6) {
-                        cv.put(x, cy + dy, c.hair[if dy == 15 { 1 } else { 2 }]);
-                    }
-                }
-            }
-        }
-        if look.beard && look.race == RACE_DWARF {
-            cv.begin();
-            cv.ellipse(v(28.5, hc.y + 12.0), 4.0, 2.2, &c.hair, 0.1);
-            cv.ellipse(v(35.5, hc.y + 12.0), 4.0, 2.2, &c.hair, 0.1);
-        }
+        facial_hair(cv, look, dir, cy, c);
     } else if dir == DIR_SIDE {
         let ex = 37;
         let ey = cy + 3;
@@ -1888,10 +1890,7 @@ fn face(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, pose: Pose
             }
         }
         cv.put(32 + 9, cy + 13, lip);
-        if look.beard {
-            cv.begin();
-            cv.ellipse(v(32.0 + 6.0, hc.y + 12.0), 5.0, 3.6, &c.hair, 0.0);
-        }
+        facial_hair(cv, look, dir, cy, c);
         if look.glasses {
             let g = hex(0x4a3a30);
             for k in 0..7 {
@@ -1900,6 +1899,178 @@ fn face(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, pose: Pose
             }
             for k in 0..9 {
                 cv.put(ex - 10 + k, ey + 2, g);
+            }
+        }
+    }
+}
+
+/// Facial hair, shaped on the face's own jaw table so it follows the cheek
+/// and chin; symmetric in front view. Hair-colour tones, darker at the
+/// edges, small clumps at the tips, the mouth left clear.
+fn facial_hair(cv: &mut Canvas, look: &Look, dir: u8, cy: i32, c: &Colors) {
+    let style = look.facial_style();
+    if style == 0 {
+        return;
+    }
+    let h = &c.hair;
+    let stub = mix(c.skin[2], h[1], 0.38);
+    if dir == DIR_DOWN {
+        let hw = |dy: i32| face_hw(look, dy.min(14)) as i32;
+        let both = |cv: &mut Canvas, x: i32, y: i32, col: Rgb| {
+            cv.put(x, y, col);
+            cv.put(FW - 1 - x, y, col);
+        };
+        let mustache = |cv: &mut Canvas, half: f32| {
+            hspan(cv, half, cy + 12, h[2]);
+            hspan(cv, 1.0, cy + 12, h[1]);
+            both(cv, (32.0 - half).round() as i32, cy + 13, h[2]);
+            both(cv, (32.0 - half).round() as i32 + 1, cy + 12, h[3]);
+        };
+        match style {
+            // Stubble: a shadow along the jaw, chin and upper lip.
+            1 => {
+                for dy in 10..=14 {
+                    let w = hw(dy);
+                    for k in 0..2 {
+                        both(cv, 32 - w + k, cy + dy, stub);
+                    }
+                }
+                hspan(cv, (hw(14) as f32 - 1.0).max(2.0), cy + 14, stub);
+                hspan(cv, 2.0, cy + 12, stub);
+            }
+            2 => mustache(cv, 3.0),
+            // Goatee joined to the mustache around the mouth.
+            3 => {
+                mustache(cv, 2.5);
+                both(cv, 29, cy + 13, h[2]);
+                hspan(cv, 2.5, cy + 14, h[2]);
+                hspan(cv, 2.0, cy + 15, h[1]);
+                hspan(cv, 1.0, cy + 15, h[2]);
+            }
+            // Beards: cheeks below the eyes stay clean, the jaw is covered,
+            // and the full and long ones hang below the chin.
+            4..=6 => {
+                let below = match style {
+                    4 => 1,
+                    5 => 5,
+                    _ => 13,
+                };
+                for dy in 9..=14 + below {
+                    let half = if dy <= 14 {
+                        hw(dy) as f32
+                    } else {
+                        let t = (dy - 14) as f32;
+                        if style == 6 { (6.0 - t * 0.38).max(1.0) } else { (5.0 - t * 0.75).max(1.0) }
+                    };
+                    let x0 = (32.0 - half).round() as i32;
+                    for x in x0..32 {
+                        let inner = x - x0;
+                        // Cheek area above the mouth stays visible.
+                        if dy <= 12 && inner > if dy <= 10 { 2 } else { 3 } {
+                            continue;
+                        }
+                        if dy == 13 && x >= 30 {
+                            continue;
+                        }
+                        let tip = dy > 14 && (x - x0) % 3 == 0 && dy == 14 + below;
+                        let col = if inner == 0 || tip { h[1] } else if (x + dy) % 5 == 0 && dy > 11 { h[3] } else { h[2] };
+                        both(cv, x, cy + dy, col);
+                    }
+                }
+                mustache(cv, 3.0);
+                if style == 6 {
+                    // Strand lines down the long beard.
+                    for dy in 16..14 + below {
+                        both(cv, 30, cy + dy, h[1]);
+                    }
+                }
+            }
+            // Sideburns: strips down the face edges from the hair.
+            _ => {
+                for dy in 1..=11 {
+                    let w = hw(dy);
+                    let wide = if dy < 9 { 3 } else { 2 };
+                    for k in 0..wide {
+                        both(cv, 32 - w + k, cy + dy, if k == 0 { h[1] } else { h[2] });
+                    }
+                }
+            }
+        }
+    } else if dir == DIR_SIDE {
+        // Profile: the face edge comes from the side head table.
+        let edge = |dy: i32| SIDE_HEAD[(dy.clamp(-13, 14) + 13) as usize];
+        let put = |cv: &mut Canvas, x: i32, dy: i32, col: Rgb| cv.put(x, cy + dy, col);
+        let mustache = |cv: &mut Canvas| {
+            let r = 32 + edge(12).1;
+            for x in r - 5..r - 1 {
+                put(cv, x, 12, h[2]);
+            }
+            put(cv, r - 5, 13, h[2]);
+        };
+        match style {
+            // Stubble: a light band along the jaw and chin.
+            1 => {
+                for dy in 12..=14 {
+                    let (_, r) = edge(dy);
+                    for x in 33..(32 + r - 1) {
+                        if dy == 14 || x < 36 || (dy == 12 && x > 32 + r - 5) {
+                            put(cv, x, dy, stub);
+                        }
+                    }
+                }
+            }
+            2 => mustache(cv),
+            3 => {
+                mustache(cv);
+                let r = 32 + edge(14).1;
+                for dy in 14..=15 {
+                    for x in r - 4..r {
+                        put(cv, x, dy, h[if dy == 15 { 1 } else { 2 }]);
+                    }
+                }
+            }
+            4..=6 => {
+                let below = match style {
+                    4 => 1,
+                    5 => 5,
+                    _ => 13,
+                };
+                for dy in 9..=14 + below {
+                    let (l, r) = if dy <= 14 { edge(dy) } else { (edge(14).0, edge(14).1) };
+                    let t = (dy - 14).max(0) as f32;
+                    // Along the jaw from the sideburn; below the chin it tapers
+                    // down and forward to a clumped point.
+                    let (x0, x1) = if dy <= 14 {
+                        (32 + l.max(1), 32 + r - 1)
+                    } else {
+                        // Hangs straight down, narrowing from both sides.
+                        let (back, front) = if style == 6 { (0.3, 0.32) } else { (0.75, 0.6) };
+                        ((34.0 + t * back).round() as i32, (32.0 + r as f32 - 1.0 - t * front).round() as i32)
+                    };
+                    for x in x0..x1.max(x0 + 1) {
+                        if dy <= 11 && x > 35 {
+                            continue;
+                        }
+                        if dy == 13 && x >= 32 + r - 2 {
+                            continue;
+                        }
+                        let last = dy == 14 + below || (dy == 13 + below && (x - x0) % 2 == 1);
+                        if dy == 14 + below && (x - x0) % 2 == 1 {
+                            continue;
+                        }
+                        let col = if x == x0 || last { h[1] } else { h[2] };
+                        put(cv, x, dy, col);
+                    }
+                }
+                mustache(cv);
+            }
+            // Sideburns: down from the hairline in front of the ear.
+            _ => {
+                for dy in 1..=10 {
+                    for x in 33..35 {
+                        put(cv, x, dy, h[2]);
+                    }
+                }
             }
         }
     }
@@ -2940,6 +3111,7 @@ impl Look {
         l.build = rng.below(4) as u8;
         l.height = rng.below(3) as u8;
         l.beard = rng.chance(0.3);
+        l.facial = if rng.chance(0.5) { rng.below(FACIAL.len()) as u8 } else { 0 };
         if l.race == RACE_DEMON {
             l.skin = rng.below(pal::DEMON_SKIN.len()) as u8;
         }
@@ -2956,6 +3128,7 @@ impl Look {
         }
         if self.female || !self.mature {
             self.beard = false;
+            self.facial = 0;
         }
         if !self.female || !self.mature {
             self.figure = default_figure();
@@ -2971,7 +3144,7 @@ impl Look {
             // Tails peek out to one side; tailed races aren't mirror-exact.
             && matches!(self.race, RACE_HUMAN | RACE_ELF)
             && self.outfit != outfit::GUILD
-            && !(self.beard && self.race != RACE_DWARF)
+
     }
 }
 
@@ -3162,8 +3335,9 @@ mod traits {
             // Asking for a beard on a woman or child changes nothing.
             let mut bearded = l;
             bearded.beard = true;
+            bearded.facial = 5;
             if l.female || !l.mature {
-                assert_eq!(frame(&bearded, DIR_DOWN, 0).px, frame(&Look { beard: false, ..l }, DIR_DOWN, 0).px);
+                assert_eq!(frame(&bearded, DIR_DOWN, 0).px, frame(&Look { beard: false, facial: 0, ..l }, DIR_DOWN, 0).px);
             }
             // Figure has no effect on men, teens or children.
             if !l.female || !l.mature {
@@ -3210,7 +3384,7 @@ mod motion {
 /// The hand-tuned core cast: the faces a typical isekai story is built on.
 /// Each is curated for quality first; procedural villagers come later.
 pub fn cast() -> Vec<(&'static str, Look)> {
-    let base = Look { skin: 1, hair: 0, hair_style: 1, top: 0, bottom: 0, outfit: outfit::TUNIC, hat: 0, hat_color: 1, female: true, age: 1, beard: false, eyes: 0, mature: true, race: RACE_HUMAN, beast: 0, held: held::NONE, glasses: false, figure: 2, build: 1, height: 1 };
+    let base = Look { skin: 1, hair: 0, hair_style: 1, top: 0, bottom: 0, outfit: outfit::TUNIC, hat: 0, hat_color: 1, female: true, age: 1, beard: false, eyes: 0, mature: true, race: RACE_HUMAN, beast: 0, held: held::NONE, glasses: false, figure: 2, build: 1, height: 1, facial: 0 };
     vec![
         ("Reincarnated Hero", Look { build: 1, female: false, hair: 0, hair_style: 0, outfit: outfit::COAT, top: 8, bottom: 8, eyes: 2, skin: 1, held: held::SWORD, height: 1, ..base }),
         ("Guild Receptionist", Look { figure: 3, build: 1, hair: 1, hair_style: 1, outfit: outfit::GUILD, hat: 9, hat_color: 1, eyes: 1, skin: 1, held: held::BOOK, ..base }),
@@ -3218,11 +3392,11 @@ pub fn cast() -> Vec<(&'static str, Look)> {
         ("Cat-girl Adventurer", Look { figure: 2, build: 2, race: RACE_BEAST, beast: 0, hair: 2, hair_style: 5, outfit: outfit::VEST, top: 7, bottom: 3, eyes: 5, skin: 2, held: held::SWORD, ..base }),
         ("Female Knight", Look { figure: 3, build: 2, hair: 3, hair_style: 2, outfit: outfit::ARMOR, hat_color: 0, bottom: 8, eyes: 0, skin: 1, held: held::SWORD, ..base }),
         ("Healer", Look { figure: 3, build: 1, hair: 3, hair_style: 5, outfit: outfit::ROBE, top: 7, eyes: 0, skin: 0, held: held::STAFF, hat: 7, hat_color: 0, ..base }),
-        ("Dwarf Smith", Look { build: 2, female: false, race: RACE_DWARF, hair: 4, hair_style: 0, outfit: outfit::SMITH, bottom: 8, beard: true, hat: 2, hat_color: 1, eyes: 2, skin: 3, held: held::HAMMER, ..base }),
+        ("Dwarf Smith", Look { facial: 6, build: 2, female: false, race: RACE_DWARF, hair: 4, hair_style: 0, outfit: outfit::SMITH, bottom: 8, beard: true, hat: 2, hat_color: 1, eyes: 2, skin: 3, held: held::HAMMER, ..base }),
         ("Demon Lord", Look { figure: 4, build: 2, race: RACE_DEMON, skin: 3, beast: 1, hair: 0, hair_style: 1, outfit: outfit::GOTHIC, top: 8, hat_color: 1, eyes: 4, height: 2, ..base }),
         ("Barmaid", Look { figure: 4, build: 3, hair: 3, hair_style: 2, outfit: outfit::DIRNDL, top: 1, bottom: 2, hat: 10, eyes: 1, skin: 2, held: held::MUG, ..base }),
         ("Fox Merchant", Look { figure: 2, build: 2, race: RACE_BEAST, beast: 1, hair: 4, hair_style: 7, outfit: outfit::APRON, top: 5, bottom: 3, eyes: 5, skin: 1, held: held::BASKET, ..base }),
-        ("Village Elder", Look { build: 0, female: false, age: 2, hair: 5, hair_style: 0, outfit: outfit::ROBE, top: 3, beard: true, eyes: 2, skin: 3, held: held::STAFF, ..base }),
-        ("Shopkeeper", Look { build: 3, female: false, hair: 1, hair_style: 0, outfit: outfit::APRON, top: 9, bottom: 3, hat: 5, hat_color: 6, glasses: true, eyes: 2, skin: 2, held: held::BASKET, ..base }),
+        ("Village Elder", Look { facial: 6, build: 0, female: false, age: 2, hair: 5, hair_style: 0, outfit: outfit::ROBE, top: 3, beard: true, eyes: 2, skin: 3, held: held::STAFF, ..base }),
+        ("Shopkeeper", Look { facial: 2, build: 3, female: false, hair: 1, hair_style: 0, outfit: outfit::APRON, top: 9, bottom: 3, hat: 5, hat_color: 6, glasses: true, eyes: 2, skin: 2, held: held::BASKET, ..base }),
     ]
 }
