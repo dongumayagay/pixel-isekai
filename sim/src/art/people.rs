@@ -837,9 +837,11 @@ fn build(look: &Look, pose: Pose, plant: f32) -> Build {
         calf,
         thigh_r: if child { 4.4 } else if f && !fig { thr - 0.6 } else { thr } * width_k.max(0.9),
         calf_r: if child { 3.2 } else if f { 3.7 } else { 4.0 } * width_k.max(0.9),
-        upper_arm: 12.0 * torso_k,
-        forearm: 11.0 * torso_k,
-        arm_r: if child { 2.6 } else { arm } * width_k.max(0.9),
+        // Dwarves are broad, but their arms stay in proportion to their
+        // short legs: hands at mid-thigh, not the knee.
+        upper_arm: 12.0 * torso_k * if dwarf { 0.86 } else { 1.0 },
+        forearm: 11.0 * torso_k * if dwarf { 0.86 } else { 1.0 },
+        arm_r: if child { 2.6 } else { arm } * width_k.clamp(0.9, 1.06),
         bust,
         woman: fig,
         lag,
@@ -3032,30 +3034,33 @@ fn facial_hair(cv: &mut Canvas, look: &Look, dir: u8, cy: i32, c: &Colors) {
                     5 => 5,
                     _ => 13,
                 };
+                // A beard is a mass: from the sideburn it covers the jaw and
+                // chin (the lips stay clear), then hangs in front of the neck
+                // and chest, narrowing to clumped points.
                 for dy in 9..=14 + below {
-                    let (l, r) = if dy <= 14 { edge(dy) } else { (edge(14).0, edge(14).1) };
                     let t = (dy - 14).max(0) as f32;
-                    // Along the jaw from the sideburn; below the chin it tapers
-                    // down and forward to a clumped point.
                     let (x0, x1) = if dy <= 14 {
-                        (32 + l.max(1), 32 + r - 1)
+                        let (l, r) = edge(dy);
+                        let back = if dy <= 11 { 33 } else { 32 + l.max(-2) };
+                        (back, 32 + r - 1)
                     } else {
-                        // Hangs straight down, narrowing from both sides.
-                        let (back, front) = if style == 6 { (0.3, 0.32) } else { (0.75, 0.6) };
-                        ((34.0 + t * back).round() as i32, (32.0 + r as f32 - 1.0 - t * front).round() as i32)
+                        let (back, front) = if style == 6 { (0.4, 0.5) } else { (0.8, 0.9) };
+                        ((33.0 + t * back).round() as i32, (41.5 - t * front).round() as i32)
                     };
                     for x in x0..x1.max(x0 + 1) {
-                        if dy <= 11 && x > 35 {
+                        // Only the sideburn above the cheek; the lips clear.
+                        if dy <= 10 && x > 35 {
                             continue;
                         }
-                        if dy == 13 && x >= 32 + r - 2 {
+                        if (12..=13).contains(&dy) && x >= x1 - 2 {
                             continue;
                         }
-                        let last = dy == 14 + below || (dy == 13 + below && (x - x0) % 2 == 1);
-                        if dy == 14 + below && (x - x0) % 2 == 1 {
+                        let tip = dy == 14 + below && (x - x0) % 2 == 1;
+                        if tip {
                             continue;
                         }
-                        let col = if x == x0 || last { h[1] } else { h[2] };
+                        let edge_px = x == x0 || x == x1 - 1 || dy == 14 + below;
+                        let col = if edge_px { h[1] } else if (x + dy) % 4 == 0 { h[3] } else { h[2] };
                         put(cv, x, dy, col);
                     }
                 }
@@ -4275,9 +4280,11 @@ fn tail(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             }
             // Fox: big, bushy, sweeping up, with a white tip.
             1 => {
-                let pts = [p(0.0, 0.0), p(4.0, 4.0), p(9.0, 4.5), p(13.0, 0.5 + sway), p(14.5, -5.0 + sway)];
-                curve(cv, &pts, 2.4, 4.6, &c.hair);
-                cv.ellipse(pts[4], 3.2, 3.4, &white, 0.0);
+                // A full brush, thickest towards the end, with a big white tip.
+                let pts = [p(0.0, 0.0), p(4.0, 4.5), p(9.0, 5.5), p(13.5, 1.5 + sway), p(15.0, -4.0 + sway)];
+                curve(cv, &pts, 2.8, 5.8, &c.hair);
+                cv.begin();
+                cv.ellipse(pts[4].add(v(0.0, -1.0)), 4.0, 4.2, &white, 0.0);
             }
             // Wolf: bushy, hanging low with a slight curl.
             2 => {
@@ -4292,10 +4299,12 @@ fn tail(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             }
         },
         _ => {
-            // Demon: thin whip curving out and up, ending in a spade.
+            // Demon: thin dark whip curving out and up, ending in a spade
+            // (dark whatever the skin, so it never reads as a pale hand).
+            let s = [hex(0x140c18), hex(0x24162c), hex(0x3a2446), hex(0x56366a), hex(0x7a5090)];
+            cv.register(&s);
             let pts = [p(0.0, 0.0), p(4.0, 5.0), p(9.0, 7.0), p(13.0, 4.0 + sway * 0.5), p(14.5, -1.0 + sway)];
-            curve(cv, &pts, 1.5, 1.0, &c.skin);
-            let s = c.skin;
+            curve(cv, &pts, 1.5, 1.0, &s);
             let pal = |ch: char| -> Option<Rgb> {
                 match ch {
                     'H' => Some(s[4]),
