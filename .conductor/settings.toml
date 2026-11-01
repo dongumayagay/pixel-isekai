@@ -16,9 +16,15 @@ run_mode = "concurrent"
 
 [scripts.run.game]
 available_in = [ "local" ]
-command = ". \"$HOME/.cargo/env\" && npm run wasm && npx vite --port $CONDUCTOR_PORT --strictPort --open"
+command = ". \"$HOME/.cargo/env\" && node scripts/dev.mjs --port $CONDUCTOR_PORT --open"
 default = true
 icon = "gamepad-2"
+
+# Same hot loop, opening the character creator / sprite viewer.
+[scripts.run.creator]
+available_in = [ "local" ]
+command = ". \"$HOME/.cargo/env\" && node scripts/dev.mjs --port $CONDUCTOR_PORT --open /creator.html"
+icon = "palette"
 
 [scripts.run.test]
 command = ". \"$HOME/.cargo/env\" && cargo test --release"

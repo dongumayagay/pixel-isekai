@@ -1,5 +1,5 @@
 //! Procedural anime characters, constructed the way pixel artists build
-//! hand-drawn sprites at this size (64×112 frames, adults ~87px, about three
+//! hand-drawn sprites at this size (64×120 frames, adults ~92px, about three
 //! heads tall):
 //!
 //! - Front and back views are symmetric about the frame's centre line and lit
@@ -26,10 +26,10 @@ use crate::palette::{self as pal, hex, mix, Rgb};
 use crate::rng::Rng;
 
 pub const FW: i32 = 64;
-pub const FH: i32 = 112;
+pub const FH: i32 = 120;
 pub const FRAMES_PER_DIR: u16 = 8;
 pub const SHEET_FRAMES: u16 = FRAMES_PER_DIR * 3 + 1;
-pub const PIVOT: (i32, i32) = (32, 108);
+pub const PIVOT: (i32, i32) = (32, 116);
 
 pub const DIR_DOWN: u8 = 0;
 pub const DIR_UP: u8 = 1;
@@ -142,7 +142,7 @@ fn gold5() -> R5 {
     r5(&ramp4(&[pal::GOLD[0], pal::GOLD[1], pal::GOLD[2], pal::GOLD[3]]))
 }
 
-const EYE_COLORS: [[u32; 3]; 7] = [
+pub const EYE_COLORS: [[u32; 3]; 7] = [
     [0x1e2a6a, 0x3a64c8, 0x8ab8ff],
     [0x14382a, 0x2c8050, 0x78d098],
     [0x3a220f, 0x7a4c20, 0xc89450],
@@ -151,6 +151,10 @@ const EYE_COLORS: [[u32; 3]; 7] = [
     [0x3a2c0c, 0xa88018, 0xf8d460],
     [0x163a44, 0x2a8a98, 0x7ae0e0],
 ];
+
+/// Inside-test tolerance, so shapes mirrored across the centre line include
+/// exactly the same boundary pixels despite float rounding.
+const EPS: f32 = 1e-3;
 
 /// Colour the contour pass pulls overlapped edges toward.
 const CONTOUR: Rgb = hex(0x2a1430);
@@ -194,6 +198,20 @@ struct Canvas<'a> {
     /// Owning part per pixel (0 = none). Later parts have higher ids.
     ids: Vec<u8>,
     cur: u8,
+    /// Ramps in use, and per pixel which ramp/step its colour came from
+    /// (255 = a one-off detail colour). Contours and outlines step down the
+    /// pixel's own ramp, so the palette stays fixed and hue-matched.
+    ramps: Vec<R5>,
+    rid: Vec<u8>,
+    ridx: Vec<u8>,
+    /// Mirror group per part id (0 none, 1 left, 2 right): where a left
+    /// part meets a right one (legs, shoes, bust) the seam is shaded on both
+    /// sides so front views stay symmetric.
+    groups: Vec<u8>,
+    side: u8,
+    /// Optional column range a part may paint (keeps paired limbs on their
+    /// own side of the centre line).
+    clip: Option<(i32, i32)>,
 }
 
 impl Canvas<'_> {
@@ -201,18 +219,42 @@ impl Canvas<'_> {
     /// anything drawn before.
     fn begin(&mut self) {
         self.cur = self.cur.saturating_add(1);
+        self.groups[self.cur as usize] = self.side;
+    }
+
+    fn register(&mut self, r: &R5) {
+        if !self.ramps.contains(r) && self.ramps.len() < 250 {
+            self.ramps.push(*r);
+        }
+    }
+
+    fn mark(&mut self, i: usize, c: Rgb) {
+        let found = self.ramps.iter().enumerate().find_map(|(k, r)| r.iter().position(|&q| q == c).map(|j| (k as u8, j as u8)));
+        let (r, j) = found.unwrap_or((255, 0));
+        self.rid[i] = r;
+        self.ridx[i] = j;
     }
 
     /// Detail pixel: recolours without changing which part owns it.
     fn put(&mut self, x: i32, y: i32, c: Rgb) {
-        self.img.set(x, y, c);
+        if self.img.inside(x, y) {
+            self.img.set(x, y, c);
+            self.mark((y * self.img.w + x) as usize, c);
+        }
     }
 
     /// Body pixel owned by the current part.
     fn fill(&mut self, x: i32, y: i32, c: Rgb) {
+        if let Some((x0, x1)) = self.clip {
+            if x < x0 || x > x1 {
+                return;
+            }
+        }
         if self.img.inside(x, y) {
             self.img.set(x, y, c);
-            self.ids[(y * self.img.w + x) as usize] = self.cur;
+            let i = (y * self.img.w + x) as usize;
+            self.ids[i] = self.cur;
+            self.mark(i, c);
         }
     }
 
@@ -222,6 +264,7 @@ impl Canvas<'_> {
 
     /// Filled ellipse lit as a dome.
     fn ellipse(&mut self, c: V2, rx: f32, ry: f32, ramp: &R5, bias: f32) {
+        self.register(ramp);
         let (x0, x1) = ((c.x - rx).floor() as i32, (c.x + rx).ceil() as i32);
         let (y0, y1) = ((c.y - ry).floor() as i32, (c.y + ry).ceil() as i32);
         for y in y0..=y1 {
@@ -229,8 +272,8 @@ impl Canvas<'_> {
                 let nx = (x as f32 + 0.5 - c.x) / rx;
                 let ny = (y as f32 + 0.5 - c.y) / ry;
                 let d = nx * nx + ny * ny;
-                if d <= 1.0 {
-                    let nz = (1.0 - d).sqrt();
+                if d <= 1.0 + EPS {
+                    let nz = (1.0 - d).max(0.0).sqrt();
                     self.fill(x, y, ramp[tone(ny, nz, bias)]);
                 }
             }
@@ -239,6 +282,7 @@ impl Canvas<'_> {
 
     /// Tapered capsule from a (radius ra) to b (radius rb), lit as a cylinder.
     fn capsule(&mut self, a: V2, b: V2, ra: f32, rb: f32, ramp: &R5, bias: f32) {
+        self.register(ramp);
         let r = ra.max(rb);
         let (x0, x1) = ((a.x.min(b.x) - r).floor() as i32, (a.x.max(b.x) + r).ceil() as i32);
         let (y0, y1) = ((a.y.min(b.y) - r).floor() as i32, (a.y.max(b.y) + r).ceil() as i32);
@@ -251,7 +295,7 @@ impl Canvas<'_> {
                 let (cx, cy) = (a.x + dx * t, a.y + dy * t);
                 let rr = ra + (rb - ra) * t;
                 let (ox, oy) = (px - cx, py - cy);
-                if ox * ox + oy * oy <= rr * rr {
+                if ox * ox + oy * oy <= rr * rr + EPS {
                     // Shade as a cylinder (perpendicular to the axis only), so
                     // rounded ends don't draw rings where limbs join.
                     let along = (ox * dx + oy * dy) / len2;
@@ -267,6 +311,7 @@ impl Canvas<'_> {
     /// Region y0..y1 with half-width hw(y) around centre cx(y), lit as a
     /// vertical cylinder.
     fn profile(&mut self, y0: f32, y1: f32, cx: impl Fn(f32) -> f32, hw: impl Fn(f32) -> f32, ramp: &R5, bias: f32) {
+        self.register(ramp);
         for y in y0.floor() as i32..=y1.ceil() as i32 {
             let fy = y as f32 + 0.5;
             if fy < y0 || fy > y1 {
@@ -279,10 +324,10 @@ impl Canvas<'_> {
             }
             for x in (c - w).floor() as i32..=(c + w).ceil() as i32 {
                 let nx = (x as f32 + 0.5 - c) / w;
-                if nx.abs() > 1.0 {
+                if nx.abs() > 1.0 + EPS {
                     continue;
                 }
-                let nz = (1.0 - nx * nx).sqrt();
+                let nz = (1.0 - nx * nx).max(0.0).sqrt();
                 let ny = ((fy - y0) / (y1 - y0) - 0.5) * 0.4;
                 self.fill(x, y, ramp[tone(ny, nz, bias)]);
             }
@@ -300,7 +345,7 @@ impl Canvas<'_> {
     /// Recolour a pixel only where something is already drawn.
     fn tint(&mut self, x: i32, y: i32, c: Rgb) {
         if self.img.alpha(x, y) != 0 {
-            self.img.set(x, y, c);
+            self.put(x, y, c);
         }
     }
 
@@ -311,7 +356,10 @@ impl Canvas<'_> {
             let t = i as f32 / n as f32;
             let (x, y) = (a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
             if let Some(c) = col(t) {
-                self.tint(x.floor() as i32, y.floor() as i32, c);
+                // Nudge toward the centre line so mirrored lines that land on
+                // exact integers round to mirrored pixels.
+                let xs = x + if x < 32.0 { 1e-3 } else { -1e-3 };
+                self.tint(xs.floor() as i32, y.floor() as i32, c);
             }
         }
     }
@@ -331,6 +379,14 @@ fn keyed(keys: &[(f32, f32)], y: f32) -> f32 {
         }
     }
     keys[keys.len() - 1].1
+}
+
+/// Detail row centred on the frame's mirror line, so it stays symmetric.
+fn hspan(cv: &mut Canvas, half: f32, y: i32, c: Rgb) {
+    let x0 = (32.0 - half).round() as i32;
+    for x in x0..FW - x0 {
+        cv.put(x, y, c);
+    }
 }
 
 /// Draw an authored pixel stamp; `mirror` reflects it across the frame's
@@ -394,9 +450,12 @@ struct Build {
     bust: f32,
     /// Lag applied to soft parts (hair, skirts, figure) this frame.
     lag: f32,
+    /// Sideways swing of hair, skirts and capes: side view only. Seen from
+    /// the front or back, soft parts bounce vertically instead.
+    sway: f32,
 }
 
-fn build(look: &Look, pose: Pose) -> Build {
+fn build(look: &Look, pose: Pose, plant: f32) -> Build {
     let child = look.age == 0;
     let dwarf = look.race == RACE_DWARF;
     let elf = look.race == RACE_ELF;
@@ -413,7 +472,7 @@ fn build(look: &Look, pose: Pose) -> Build {
     // Long legs: about half the standing height for adults.
     let thigh = 15.0 * leg_k;
     let calf = 14.5 * leg_k;
-    let ground = 108.0;
+    let ground = 116.0;
     let (bob, lag) = match pose.walk {
         Some(ph) => (-(ph.sin().abs()) * 1.5, -ph.cos() * 1.4),
         None if pose.breathe => (0.6, 0.8),
@@ -421,7 +480,7 @@ fn build(look: &Look, pose: Pose) -> Build {
         None if pose.work == 2 => (0.8, 1.1),
         None => (0.0, 0.0),
     };
-    let hip_joint_y = ground - 3.0 - calf - thigh + bob;
+    let hip_joint_y = ground - 3.0 - calf - thigh + bob + plant;
     let crotch_y = hip_joint_y + 2.0;
     let torso = if f { 28.0 } else { 30.0 } * torso_k;
     let shoulder_y = crotch_y - torso;
@@ -452,6 +511,7 @@ fn build(look: &Look, pose: Pose) -> Build {
         arm_r: if child { 2.6 } else if f { 2.7 } else { 3.4 } * width_k.max(0.9),
         bust: if fig { if look.age == 2 { 4.8 } else { 5.8 } } else { 0.0 },
         lag,
+        sway: 0.0,
     }
 }
 
@@ -510,7 +570,7 @@ fn limbs(b: &Build, pose: Pose, dir: u8) -> Limbs {
             2 => {
                 if side {
                     let el = sh.add(V2::polar(b.upper_arm, 1.0));
-                    let wr = el.add(V2::polar(b.forearm, 1.45));
+                    let wr = el.add(V2::polar(b.forearm, 1.25));
                     (el, wr)
                 } else {
                     let el = sh.add(v(out * 1.5, b.upper_arm * 0.85));
@@ -579,10 +639,20 @@ fn colors(look: &Look) -> Colors {
 pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     let mut img = Img::new(FW, FH);
     let pose = pose_for(frame_idx);
-    let b = build(look, pose);
+    // Solve the body bob so the lowest foot always rests on the ground.
+    let b0 = build(look, pose, 0.0);
+    let l0 = limbs(&b0, pose, dir);
+    let low = l0.ankle_l.y.max(l0.ankle_r.y);
+    let plant = if pose.walk.is_some() { b0.ground - 3.0 - low } else { 0.0 };
+    let mut b = build(look, pose, plant);
+    b.sway = if dir == DIR_SIDE { b.lag } else { 0.0 };
     let l = limbs(&b, pose, dir);
     let c = colors(look);
-    let mut cv = Canvas { img: &mut img, ids: vec![0; (FW * FH) as usize], cur: 0 };
+    let n = (FW * FH) as usize;
+    let mut cv = Canvas { img: &mut img, ids: vec![0; n], cur: 0, ramps: Vec::new(), rid: vec![255; n], ridx: vec![0; n], groups: vec![0; 256], side: 0, clip: None };
+    for r in [c.skin, c.hair, c.top, c.bottom, c.hatc, c.metal, c.leather, c.linen, c.shoe, c.stocking, c.navy, gold5()] {
+        cv.register(&r);
+    }
     let side = dir == DIR_SIDE;
     let back = dir == DIR_UP;
 
@@ -621,17 +691,122 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     ears_horns(&mut cv, look, dir, &b, &c);
     hat(&mut cv, look, dir, &b, &c);
     let ids = std::mem::take(&mut cv.ids);
+    let ramps = std::mem::take(&mut cv.ramps);
+    let rid = std::mem::take(&mut cv.rid);
+    let ridx = std::mem::take(&mut cv.ridx);
+    let groups = std::mem::take(&mut cv.groups);
     drop(cv);
-    contours(&mut img, &ids);
-    outline(&mut img);
+    let shades = Shades { ramps: &ramps, rid: &rid, ridx: &ridx };
+    contours(&mut img, &ids, &groups, &shades);
+    outline(&mut img, &shades);
+    close_pinholes(&mut img);
     img
+}
+
+/// Per-pixel ramp provenance, for picking contour and outline shades.
+struct Shades<'a> {
+    ramps: &'a [R5],
+    rid: &'a [u8],
+    ridx: &'a [u8],
+}
+
+impl Shades<'_> {
+    /// Contour shade: `steps` down the pixel's own ramp.
+    fn contour(&self, i: usize, c: Rgb, steps: u8) -> Rgb {
+        match self.ramps.get(self.rid[i] as usize) {
+            Some(r) if self.ridx[i] >= steps => r[(self.ridx[i] - steps) as usize],
+            Some(r) => mix(r[0], CONTOUR, 0.35),
+            None => mix(c, CONTOUR, 0.5),
+        }
+    }
+
+    /// Outline shade: the ramp's darkest step pulled toward ink.
+    fn outline(&self, i: usize, c: Rgb) -> Rgb {
+        match self.ramps.get(self.rid[i] as usize) {
+            Some(r) => mix(r[0], pal::INK, 0.55),
+            None => mix(c, pal::INK, 0.72),
+        }
+    }
+}
+
+/// Close tiny enclosed gaps (slivers between outlines) with the darkest
+/// neighbouring colour; they read as noise rather than negative space.
+fn close_pinholes(img: &mut Img) {
+    let (w, h) = (img.w, img.h);
+    let mut outside = vec![false; (w * h) as usize];
+    let mut stack: Vec<(i32, i32)> = Vec::new();
+    for x in 0..w {
+        stack.push((x, 0));
+        stack.push((x, h - 1));
+    }
+    for y in 0..h {
+        stack.push((0, y));
+        stack.push((w - 1, y));
+    }
+    while let Some((x, y)) = stack.pop() {
+        if !img.inside(x, y) || img.alpha(x, y) != 0 || outside[(y * w + x) as usize] {
+            continue;
+        }
+        outside[(y * w + x) as usize] = true;
+        stack.extend([(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]);
+    }
+    let mut seen = vec![false; (w * h) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = (y * w + x) as usize;
+            if outside[i] || seen[i] || img.alpha(x, y) != 0 {
+                continue;
+            }
+            let mut region = Vec::new();
+            let mut st = vec![(x, y)];
+            seen[i] = true;
+            while let Some((cx, cy)) = st.pop() {
+                region.push((cx, cy));
+                for (nx, ny) in [(cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)] {
+                    let j = (ny * w + nx) as usize;
+                    if img.inside(nx, ny) && img.alpha(nx, ny) == 0 && !seen[j] {
+                        seen[j] = true;
+                        st.push((nx, ny));
+                    }
+                }
+            }
+            if region.len() > 8 {
+                continue;
+            }
+            // Fill inward in layers from a snapshot, so the result doesn't
+            // depend on visiting order (keeps mirrored gaps identical).
+            let mut left = region;
+            while !left.is_empty() {
+                let snap = img.clone();
+                let mut next = Vec::new();
+                let mut fills = Vec::new();
+                for &(px, py) in &left {
+                    let dark = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                        .iter()
+                        .filter_map(|&(dx, dy)| snap.get(px + dx, py + dy))
+                        .min_by_key(|c| (c[0] as u32 + c[1] as u32 + c[2] as u32, *c));
+                    match dark {
+                        Some(c) => fills.push((px, py, c)),
+                        None => next.push((px, py)),
+                    }
+                }
+                if fills.is_empty() {
+                    break;
+                }
+                for (px, py, c) in fills {
+                    img.set(px, py, c);
+                }
+                left = next;
+            }
+        }
+    }
 }
 
 /// Inner contour lines: a pixel of a part that borders a later (in-front)
 /// part darkens, so overlaps read as drawn lines rather than merged blobs.
 /// Lines fall beside and below the front part only (light from above), so a
 /// form's top edge blends into what is behind it.
-fn contours(img: &mut Img, ids: &[u8]) {
+fn contours(img: &mut Img, ids: &[u8], groups: &[u8], sh: &Shades) {
     let src = img.clone();
     let w = img.w;
     for y in 0..img.h {
@@ -641,12 +816,25 @@ fn contours(img: &mut Img, ids: &[u8]) {
                 continue;
             }
             let Some(c) = src.get(x, y) else { continue };
-            let covered = [(1, 0), (-1, 0), (0, -1)].iter().any(|&(dx, dy)| {
+            let mut covered = false;
+            let mut seam = false;
+            for (dx, dy) in [(1, 0), (-1, 0), (0, -1)] {
                 let (nx, ny) = (x + dx, y + dy);
-                src.inside(nx, ny) && src.alpha(nx, ny) != 0 && ids[(ny * w + nx) as usize] > a
-            });
+                if !src.inside(nx, ny) || src.alpha(nx, ny) == 0 {
+                    continue;
+                }
+                let b = ids[(ny * w + nx) as usize];
+                let pair = groups[a as usize] + groups[b as usize] == 3;
+                if pair {
+                    seam = true;
+                } else if b > a {
+                    covered = true;
+                }
+            }
             if covered {
-                img.set(x, y, mix(c, CONTOUR, 0.5));
+                img.set(x, y, sh.contour((y * w + x) as usize, c, 2));
+            } else if seam {
+                img.set(x, y, sh.contour((y * w + x) as usize, c, 1));
             }
         }
     }
@@ -654,22 +842,23 @@ fn contours(img: &mut Img, ids: &[u8]) {
 
 /// Coloured outline: each edge pixel takes a deep, hue-matched shade of the
 /// neighbour it borders.
-fn outline(img: &mut Img) {
+fn outline(img: &mut Img, sh: &Shades) {
     let src = img.clone();
     for y in 0..img.h {
         for x in 0..img.w {
             if src.alpha(x, y) != 0 {
                 continue;
             }
-            let mut found: Option<Rgb> = None;
-            for (dx, dy) in [(0, 1), (1, 0), (-1, 0), (0, -1)] {
-                if let Some(c) = src.get(x + dx, y + dy) {
-                    found = Some(c);
-                    break;
-                }
-            }
-            if let Some(c) = found {
-                img.set(x, y, mix(c, pal::INK, 0.72));
+            // Below wins, then the darker of left/right (a symmetric
+            // choice), then above.
+            let pick = |dx: i32, dy: i32| src.get(x + dx, y + dy).map(|c| sh.outline(((y + dy) * img.w + x + dx) as usize, c));
+            let key = |c: &Rgb| (c[0] as u32 + c[1] as u32 + c[2] as u32, *c);
+            let side = match (pick(-1, 0), pick(1, 0)) {
+                (Some(a), Some(b)) => Some(if key(&a) <= key(&b) { a } else { b }),
+                (a, b) => a.or(b),
+            };
+            if let Some(c) = pick(0, 1).or(side).or_else(|| pick(0, -1)) {
+                img.set(x, y, c);
             }
         }
     }
@@ -689,6 +878,12 @@ fn leg(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (hip, knee, ankle): 
     let bias = if far { -0.16 } else { 0.0 };
     let (tr, cr) = (b.thigh_r, b.calf_r);
     let ankle_r = cr * 0.62;
+    let front = dir != DIR_SIDE;
+    if front {
+        let left = hip.x < b.cx;
+        cv.side = if left { 1 } else { 2 };
+        cv.clip = Some(if left { (0, 31) } else { (32, FW - 1) });
+    }
     cv.begin();
     // Thigh: full through the upper half, then narrowing into the knee.
     let mid = v(hip.x + (knee.x - hip.x) * 0.5, hip.y + (knee.y - hip.y) * 0.5);
@@ -711,6 +906,8 @@ fn leg(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (hip, knee, ankle): 
     } else {
         cv.ellipse(ankle.add(v(0.0, 1.8)), 3.2, 2.4, &shoe, bias);
     }
+    cv.clip = None;
+    cv.side = 0;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -822,8 +1019,10 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     if fig && back && !matches!(look.outfit, outfit::DRESS | outfit::ROBE | outfit::DIRNDL | outfit::GUILD) {
         // Seat: two soft rounds with a centre seam from the contour pass.
         for s in [-1.0f32, 1.0] {
+            cv.side = if s < 0.0 { 1 } else { 2 };
             cv.begin();
-            cv.ellipse(v(b.cx + s * b.hip_w * 0.48, b.hip_y + 0.5), b.hip_w * 0.55, 5.5, &lower, 0.02);
+            cv.ellipse(v(b.cx + s * b.hip_w * 0.46, b.hip_y + 1.0), b.hip_w * 0.5, 4.5, &lower, 0.0);
+            cv.side = 0;
         }
     }
     if fig && side && !matches!(look.outfit, outfit::DRESS | outfit::ROBE) {
@@ -837,9 +1036,7 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     if !back && !side && matches!(look.outfit, outfit::DRESS | outfit::DIRNDL | outfit::SMITH | outfit::APRON) {
         for y in sy as i32..(sy + if fig { 5.0 } else { 3.0 }) as i32 {
             let half = (4.5 - (y as f32 - sy) * 0.6).max(1.0);
-            for x in (cx - half) as i32..(cx + half) as i32 {
-                cv.put(x, y, if y == sy as i32 { c.skin[3] } else { c.skin[2] });
-            }
+            hspan(cv, half, y, if y == sy as i32 { c.skin[3] } else { c.skin[2] });
         }
     }
     if fig && look.outfit != outfit::ARMOR {
@@ -854,7 +1051,7 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
         outfit::DRESS => {
             let top = b.waist_y + 1.0;
             let len = b.thigh + 4.0;
-            let sway = b.lag;
+            let sway = b.sway;
             cv.begin();
             cv.profile(top, top + len, |y| cx + (y - top) / len * sway * 0.8, |y| b.waist_w + 1.2 + (y - top) * 0.45, &c.top, -0.02);
             hem_folds(cv, top, top + len, cx, b.waist_w + 1.2, 0.45, &c.top, sway);
@@ -882,7 +1079,7 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             let skirt = if look.outfit == outfit::DIRNDL { c.bottom } else { c.navy };
             let top = b.waist_y + 2.0;
             let len = b.thigh + 2.5;
-            let sway = b.lag;
+            let sway = b.sway;
             cv.begin();
             cv.profile(top, top + len, |y| cx + (y - top) / len * sway * 0.8, |y| b.waist_w + 1.8 + (y - top) * 0.52, &skirt, 0.0);
             hem_folds(cv, top, top + len, cx, b.waist_w + 1.8, 0.52, &skirt, sway);
@@ -913,15 +1110,14 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             let top = b.waist_y - 2.0;
             let bottom = b.ground - 1.5;
             let len = bottom - top;
-            let sway = b.lag;
+            let sway = b.sway;
             cv.begin();
             cv.profile(top, bottom, |y| cx + (y - top) / len * sway * 0.7, |y| b.waist_w + 1.6 + (y - top) * 0.24, &c.top, 0.0);
             hem_folds(cv, top, bottom, cx, b.waist_w + 1.6, 0.24, &c.top, sway);
             if !side && !back {
                 let gold = gold5();
                 for y in (sy + 1.0) as i32..bottom as i32 {
-                    cv.put(cx as i32 - 1, y, gold[2]);
-                    cv.put(cx as i32, y, gold[1]);
+                    hspan(cv, 1.0, y, gold[2]);
                 }
                 sash(cv, b, &gold, lean, width);
                 // Mantle over the shoulders.
@@ -938,12 +1134,15 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             cv.profile(at, b.hip_y + 8.0, |_| ax, |_| aw, &ap, 0.06);
             if !side {
                 // Straps up to the shoulders.
+                let strap = (cx - aw + 1.0).floor() as i32;
                 for k in 0..(at - sy) as i32 {
-                    cv.put((cx - aw + 1.0) as i32, sy as i32 + k, ap[2]);
-                    cv.put((cx + aw - 2.0) as i32, sy as i32 + k, ap[2]);
+                    cv.put(strap, sy as i32 + k, ap[2]);
+                    cv.put(FW - 1 - strap, sy as i32 + k, ap[2]);
                 }
-                cv.rect((cx - 2.5) as i32, (b.waist_y + 4.0) as i32, 5, 4, ap[2]);
-                cv.rect((cx - 2.5) as i32, (b.waist_y + 4.0) as i32, 5, 1, ap[1]);
+                let py = (b.waist_y + 4.0) as i32;
+                for k in 0..4 {
+                    hspan(cv, 3.0, py + k, if k == 0 { ap[1] } else { ap[2] });
+                }
             }
         }
         outfit::ARMOR => {
@@ -1031,8 +1230,10 @@ fn bust(cv: &mut Canvas, b: &Build, dir: u8, by: f32, ramp: &R5) {
         }
         DIR_DOWN => {
             for s in [-1.0f32, 1.0] {
+                cv.side = if s < 0.0 { 1 } else { 2 };
                 cv.begin();
                 cv.ellipse(v(b.cx + s * r * 0.92, by), r, r * 0.9, ramp, -0.03);
+                cv.side = 0;
             }
         }
         _ => {}
@@ -1047,8 +1248,9 @@ fn belt(cv: &mut Canvas, b: &Build, leather: &R5, lean: impl Fn(f32) -> f32, wid
     cv.profile(y - 1.0, y + 1.0, |_| c, |_| w, leather, 0.05);
     if buckle {
         let g = gold5();
-        cv.rect(c as i32 - 1, y as i32 - 1, 3, 2, g[3]);
-        cv.put(c as i32, y as i32 - 1, g[1]);
+        hspan(cv, 2.0, y as i32 - 1, g[3]);
+        hspan(cv, 2.0, y as i32, g[2]);
+        hspan(cv, 1.0, y as i32 - 1, g[1]);
     }
 }
 
@@ -1077,7 +1279,7 @@ fn cloak_back(cv: &mut Canvas, b: &Build, c: &Colors, side: bool) {
     let top = b.shoulder_y - 0.5;
     let bottom = b.ground - 7.0;
     let cx = if side { b.cx - 3.5 } else { b.cx };
-    let lag = b.lag;
+    let lag = b.sway;
     let sw = b.shoulder_w;
     cv.begin();
     cv.profile(top, bottom, |y| cx - (y - top) / (bottom - top) * lag * 1.5, |y| if side { 5.5 + (y - top) * 0.14 } else { sw + 2.0 + (y - top) * 0.2 }, &c.hatc, -0.1);
@@ -1113,10 +1315,12 @@ fn held_item(cv: &mut Canvas, look: &Look, hand: V2, dir: u8, raised: bool, c: &
             cv.put(x as i32, (y - 1.0) as i32, hex(0xc8bca8));
         }
         held::SWORD => {
-            let (top, bot) = if raised { (y - 22.0, y + 1.0) } else { (y + 1.0, y + 22.0) };
-            cv.capsule(v(x, top), v(x, bot), 1.2, 1.0, &c.metal, 0.1);
-            let gy = if raised { bot } else { top + 1.0 };
-            cv.capsule(v(x - 3.5, gy), v(x + 3.5, gy), 1.1, 1.1, &gold5(), 0.0);
+            // Raised overhead, or carried low with the tip angled forward so
+            // it stays clear of the ground.
+            let (a, bb) = if raised { (v(x, y - 22.0), v(x, y + 1.0)) } else { (v(x, y + 1.0), v((x + 7.0).min(FW as f32 - 5.0), y + 17.0)) };
+            cv.capsule(a, bb, 1.2, 0.9, &c.metal, 0.1);
+            let g = if raised { bb } else { v(x + 0.6, y + 2.0) };
+            cv.capsule(v(g.x - 3.5, g.y), v(g.x + 3.5, g.y), 1.1, 1.1, &gold5(), 0.0);
         }
         held::BASKET if dir != DIR_UP => {
             let wick = [hex(0x5a3a1c), hex(0x8a6a3a), hex(0xa8844e), hex(0xc8a464), hex(0xe0c080)];
@@ -1441,7 +1645,7 @@ fn back_hair(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     let h = &c.hair;
     let hc = b.head_c;
     let side = dir == DIR_SIDE;
-    let sway = b.lag;
+    let sway = b.sway;
     let k = cut(look.hair_style);
     cv.begin();
     if k.back > 0.0 {
@@ -1495,7 +1699,8 @@ fn hair_sheet(cv: &mut Canvas, h: &R5, top: f32, end: f32, lit: bool, cx: impl F
             if u.abs() > 1.0 {
                 continue;
             }
-            let q = (px - c + 62.5) / 5.0;
+            // Clumps laid out from the centre so both halves mirror.
+            let q = ((px - c).abs() + 2.5) / 5.0;
             let uc = q - q.floor();
             if fy > end - (1.0 - (uc - 0.5).abs() * 2.0) * 3.5 - 0.5 && fy > end - 4.0 {
                 // Between clump points.
@@ -1530,7 +1735,7 @@ fn tail_lock(cv: &mut Canvas, h: &R5, a: V2, b: V2, r: f32) {
                 continue;
             }
             let u = ox / rr.max(0.5);
-            let tone = if u < -0.55 { 2 } else if u > 0.6 || t > 0.8 { 2 } else { 3 };
+            let tone = if u.abs() > 0.58 || t > 0.8 { 2 } else { 3 };
             let tone = if u.abs() < 0.15 && t > 0.2 && t < 0.85 { 2 } else { tone };
             cv.fill(x, y, h[tone]);
         }
@@ -1542,7 +1747,7 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     let hc = b.head_c;
     let style = look.hair_style;
     let k = cut(style);
-    let sway = b.lag;
+    let sway = b.sway;
     let (rx, ry) = mass_r(look);
     let shine = h[4];
     cv.begin();
@@ -1573,7 +1778,7 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             }
             // Strand lines from the crown.
             let crown = v(32.0, hc.y - 11.0);
-            for sx in [-9.0f32, -4.5, 0.0, 4.5, 9.0] {
+            for sx in [-9.0f32, -4.5, 4.5, 9.0] {
                 let end = v(32.0 + sx * 1.15, (nape - 2.0).max(hc.y + 4.0) + if k.back > 0.0 { k.back - 6.0 } else { 0.0 });
                 let start = v(crown.x + sx * 0.4, crown.y + 2.0);
                 cv.line(start, end, |t| if t < 0.12 { None } else { Some(h[2]) });
@@ -1687,7 +1892,14 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                 let nx = (w[0] + w[1]) * 0.5;
                 let px = (32.0 + nx).floor() as i32;
                 let nb = fringe_bottom(tips, cy, px);
-                notches.push(px);
+                if nx.abs() >= 0.6 {
+                    notches.push(px);
+                }
+                if nx.abs() < 0.6 {
+                    // A single centre column can't be mirrored; the clumps
+                    // either side already meet there.
+                    continue;
+                }
                 let start = v(32.0 + nx * 0.35, cy - 12.0);
                 let end = v(px as f32 + 0.5, nb - 0.5);
                 cv.line(start, end, |t| if t < 0.4 { None } else if t > 0.8 { Some(h[1]) } else { Some(h[2]) });
@@ -1755,8 +1967,10 @@ fn lock_strip(cv: &mut Canvas, h: &R5, cx: f32, top: f32, end: f32, w: f32, sway
 
 /// The anime "angel ring": a broken arc of highlight across the crown.
 fn highlight_ring(cv: &mut Canvas, h: &R5, shine: Rgb, mc: V2, rx: f32, ry: f32, skip: &[i32]) {
-    for x in (mc.x - rx * 0.62) as i32..(mc.x + rx * 0.62) as i32 {
-        if skip.contains(&x) || skip.contains(&(x + 1)) {
+    let x0 = (mc.x - rx * 0.62).round() as i32;
+    let x1 = (2.0 * mc.x).round() as i32 - x0;
+    for x in x0..x1 {
+        if skip.contains(&x) {
             continue;
         }
         let nx = (x as f32 + 0.5 - mc.x) / rx;
@@ -1919,10 +2133,18 @@ fn hat(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             for x in (hc.x - rx) as i32..(hc.x + rx) as i32 {
                 cv.tint(x, (top + 6.0) as i32, hcol[1]);
             }
-            if side || dir == DIR_UP {
+            if side {
                 let knot = v(hc.x - rx, top + 6.0);
                 cv.capsule(knot, knot.add(v(-2.5, 7.0)), 1.9, 1.2, hcol, -0.05);
                 cv.capsule(knot, knot.add(v(-4.0, 5.0)), 1.9, 1.2, hcol, -0.1);
+            } else if dir == DIR_UP {
+                // Knot at the centre back, two tails hanging either side.
+                let knot = v(hc.x, top + 7.0);
+                cv.begin();
+                for s in [-1.0f32, 1.0] {
+                    cv.capsule(knot, knot.add(v(s * 3.0, 7.0)), 1.8, 1.1, hcol, -0.05);
+                }
+                cv.ellipse(knot, 2.2, 1.8, hcol, 0.0);
             }
         }
         3 => {
@@ -2040,4 +2262,215 @@ pub fn sheet(look: &Look) -> Vec<Img> {
     }
     out.push(frame(look, DIR_DOWN, 8));
     out
+}
+
+// ---------------------------------------------------------------- quality
+
+impl Look {
+    /// Any combination the generator supports, for randomize buttons and
+    /// bulk QA.
+    pub fn random_any(rng: &mut Rng) -> Look {
+        let female = rng.chance(0.55);
+        let age = *rng.pick(&[0u8, 1, 1, 1, 1, 2]);
+        let mut l = Look::random(rng, female, age);
+        l.race = rng.below(5) as u8;
+        l.beast = rng.below(4) as u8;
+        l.hair_style = rng.below(HAIR_STYLES as usize) as u8;
+        l.hair = rng.below(pal::HAIR.len()) as u8;
+        l.outfit = rng.below(10) as u8;
+        l.hat = if rng.chance(0.4) { rng.below(11) as u8 } else { 0 };
+        l.held = if rng.chance(0.4) { rng.below(7) as u8 } else { held::NONE };
+        l.glasses = rng.chance(0.15);
+        if l.race == RACE_DEMON {
+            l.skin = rng.below(pal::DEMON_SKIN.len()) as u8;
+        }
+        l
+    }
+
+    /// Whether the front (or back) view should be mirror-symmetric. Tails
+    /// curl to one side from behind, by design.
+    fn symmetric(&self, dir: u8) -> bool {
+        !(dir == DIR_UP && self.race == RACE_DEMON)
+            && matches!(self.hair_style, 1 | 3 | 5 | 6)
+            && matches!(self.hat, 0 | 2 | 3 | 4 | 5 | 8 | 10)
+            && self.held == held::NONE
+            && matches!(self.race, RACE_HUMAN | RACE_ELF | RACE_DEMON)
+            && self.outfit != outfit::GUILD
+            && !(self.beard && self.race != RACE_DWARF)
+    }
+}
+
+/// A visual defect found by [`lint`].
+#[derive(Debug, Clone)]
+pub struct Issue {
+    pub kind: &'static str,
+    pub dir: u8,
+    pub frame: u16,
+    pub detail: String,
+}
+
+/// Automated visual QA for one character: renders every frame and checks
+/// for the defects a pixel artist would reject.
+pub fn lint(look: &Look) -> Vec<Issue> {
+    let mut out = Vec::new();
+    let mut push = |kind: &'static str, dir: u8, frame: u16, detail: String| out.push(Issue { kind, dir, frame, detail });
+    let iris = if look.race == RACE_DEMON && look.eyes < 4 { EYE_COLORS[4 + (look.eyes % 2) as usize] } else { EYE_COLORS[look.eyes as usize % EYE_COLORS.len()] };
+    for dir in [DIR_DOWN, DIR_UP, DIR_SIDE] {
+        let mut tops = Vec::new();
+        for f in 0..=FRAMES_PER_DIR {
+            if f == FRAMES_PER_DIR && dir != DIR_DOWN {
+                continue;
+            }
+            let img = frame(look, dir, f);
+            let (w, h) = (img.w, img.h);
+            let a = |x: i32, y: i32| img.alpha(x, y) != 0;
+            // Clipping: nothing may touch the frame edge.
+            let mut clip = 0;
+            for x in 0..w {
+                clip += a(x, 0) as i32 + a(x, h - 1) as i32;
+            }
+            for y in 0..h {
+                clip += a(0, y) as i32 + a(w - 1, y) as i32;
+            }
+            if clip > 0 {
+                push("clipped", dir, f, format!("{clip} edge px"));
+            }
+            // Connected components (8-way): small separate islands are debris.
+            let mut seen = vec![false; (w * h) as usize];
+            let mut sizes = Vec::new();
+            for y in 0..h {
+                for x in 0..w {
+                    if !a(x, y) || seen[(y * w + x) as usize] {
+                        continue;
+                    }
+                    let mut stack = vec![(x, y)];
+                    seen[(y * w + x) as usize] = true;
+                    let mut n = 0;
+                    while let Some((cx, cy)) = stack.pop() {
+                        n += 1;
+                        for dy in -1..=1 {
+                            for dx in -1..=1 {
+                                let (nx, ny) = (cx + dx, cy + dy);
+                                if img.inside(nx, ny) && a(nx, ny) && !seen[(ny * w + nx) as usize] {
+                                    seen[(ny * w + nx) as usize] = true;
+                                    stack.push((nx, ny));
+                                }
+                            }
+                        }
+                    }
+                    sizes.push(n);
+                }
+            }
+            sizes.sort_unstable_by(|a, b| b.cmp(a));
+            let debris: Vec<_> = sizes.iter().skip(1).filter(|&&s| s < 24).collect();
+            if !debris.is_empty() {
+                push("debris", dir, f, format!("{} islands {:?}", debris.len(), debris));
+            }
+            // Pinholes: tiny transparent regions enclosed by the sprite.
+            let mut outside = vec![false; (w * h) as usize];
+            let mut stack: Vec<(i32, i32)> = Vec::new();
+            for x in 0..w {
+                stack.push((x, 0));
+                stack.push((x, h - 1));
+            }
+            for y in 0..h {
+                stack.push((0, y));
+                stack.push((w - 1, y));
+            }
+            while let Some((x, y)) = stack.pop() {
+                if !img.inside(x, y) || a(x, y) || outside[(y * w + x) as usize] {
+                    continue;
+                }
+                outside[(y * w + x) as usize] = true;
+                stack.extend([(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]);
+            }
+            let holes = (0..w * h).filter(|&i| !outside[i as usize] && img.px[i as usize * 4 + 3] == 0).count();
+            if holes > 0 && holes <= 6 {
+                push("pinhole", dir, f, format!("{holes} px"));
+            }
+            // Feet on the ground.
+            let bottom = (0..h).rev().find(|&y| (0..w).any(|x| a(x, y))).unwrap_or(0);
+            if !(PIVOT.1 - 1..=PIVOT.1 + 2).contains(&bottom) {
+                push("feet", dir, f, format!("lowest row {bottom}, pivot {}", PIVOT.1));
+            }
+            let top = (0..h).find(|&y| (0..w).any(|x| a(x, y))).unwrap_or(0);
+            if f <= 1 || f == FRAMES_PER_DIR {
+                tops.push(top);
+            }
+            // Palette discipline.
+            let mut cols: Vec<[u8; 3]> = Vec::new();
+            for i in 0..(w * h) as usize {
+                if img.px[i * 4 + 3] != 0 {
+                    let c = [img.px[i * 4], img.px[i * 4 + 1], img.px[i * 4 + 2]];
+                    if !cols.contains(&c) {
+                        cols.push(c);
+                    }
+                }
+            }
+            if cols.len() > 72 {
+                push("palette", dir, f, format!("{} colours", cols.len()));
+            }
+            // Front and back views: symmetry; front: visible eyes.
+            if dir != DIR_SIDE && (f == 0 || f == 1) && look.symmetric(dir) && !(dir == DIR_UP && look.hair_style == 2) {
+                {
+                    let mut diff = 0;
+                    for y in 0..h {
+                        for x in 0..w / 2 {
+                            if img.get(x, y) != img.get(w - 1 - x, y) {
+                                diff += 1;
+                            }
+                        }
+                    }
+                    if diff > 3 {
+                        push("asymmetric", dir, f, format!("{diff} px differ"));
+                    }
+                }
+            }
+            if dir == DIR_DOWN && f != FRAMES_PER_DIR {
+                let hits = |x0: i32, x1: i32| {
+                    let mut n = 0;
+                    for y in 0..h {
+                        for x in x0..x1 {
+                            if let Some(c) = img.get(x, y) {
+                                if iris.iter().any(|&k| hex(k) == c) {
+                                    n += 1;
+                                }
+                            }
+                        }
+                    }
+                    n
+                };
+                let (l, r) = (hits(0, 32), hits(32, w));
+                if l < 6 || r < 6 {
+                    push("eyes", dir, f, format!("iris px left {l} right {r}"));
+                }
+            }
+        }
+        if let (Some(mn), Some(mx)) = (tops.iter().min(), tops.iter().max()) {
+            if mx - mn > 2 {
+                push("jitter", dir, 0, format!("head top varies {mn}..{mx}"));
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod qa {
+    use super::*;
+
+    #[test]
+    fn random_characters_pass_visual_qa() {
+        let mut rng = Rng::new(77);
+        let mut failures = Vec::new();
+        for i in 0..240 {
+            let look = Look::random_any(&mut rng);
+            // Palette size is advisory; everything else is a defect.
+            let issues: Vec<_> = lint(&look).into_iter().filter(|i| i.kind != "palette").collect();
+            if !issues.is_empty() {
+                failures.push(format!("#{i} {:?}: {:?}", look, &issues[..issues.len().min(3)]));
+            }
+        }
+        assert!(failures.is_empty(), "{} looks failed QA:\n{}", failures.len(), failures[..failures.len().min(12)].join("\n"));
+    }
 }

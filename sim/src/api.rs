@@ -151,3 +151,54 @@ impl Engine {
         self.g.villager_list()
     }
 }
+
+// ------------------------------------------------------------ creator
+
+use crate::art::people::{self, Look};
+
+fn look_from(json: &str) -> Look {
+    serde_json::from_str(json).unwrap_or_else(|_| Look::random_any(&mut crate::rng::Rng::new(1)))
+}
+
+/// Frame size and sheet layout, for the character creator.
+#[wasm_bindgen]
+pub fn creator_info() -> String {
+    serde_json::json!({
+        "fw": people::FW, "fh": people::FH, "pivot": [people::PIVOT.0, people::PIVOT.1],
+        "framesPerDir": people::FRAMES_PER_DIR, "sheetFrames": people::SHEET_FRAMES,
+        "races": people::RACE_NAMES,
+        "skins": crate::palette::SKIN.len(), "demonSkins": crate::palette::DEMON_SKIN.len(),
+        "hairs": crate::palette::HAIR.len(), "cloths": crate::palette::CLOTH.len(),
+        "hairStyles": people::HAIR_STYLES,
+        "swatch": {
+            "skin": crate::palette::SKIN.iter().map(|r| r[2]).collect::<Vec<_>>(),
+            "demon": crate::palette::DEMON_SKIN.iter().map(|r| r[2]).collect::<Vec<_>>(),
+            "hair": crate::palette::HAIR.iter().map(|r| r[2]).collect::<Vec<_>>(),
+            "cloth": crate::palette::CLOTH.iter().map(|r| r[2]).collect::<Vec<_>>(),
+            "eyes": people::EYE_COLORS.iter().map(|r| r[1]).collect::<Vec<_>>(),
+        },
+    })
+    .to_string()
+}
+
+/// One frame as RGBA bytes (FW × FH).
+#[wasm_bindgen]
+pub fn render_frame(look_json: &str, dir: u8, frame: u16) -> Vec<u8> {
+    people::frame(&look_from(look_json), dir, frame).px
+}
+
+/// A random look from a seed, as JSON.
+#[wasm_bindgen]
+pub fn random_look(seed: f64) -> String {
+    serde_json::to_string(&Look::random_any(&mut crate::rng::Rng::new(seed as u64))).unwrap()
+}
+
+/// Visual QA results for a look, as JSON.
+#[wasm_bindgen]
+pub fn lint_look(look_json: &str) -> String {
+    let issues: Vec<_> = people::lint(&look_from(look_json))
+        .into_iter()
+        .map(|i| serde_json::json!({ "kind": i.kind, "dir": i.dir, "frame": i.frame, "detail": i.detail }))
+        .collect();
+    serde_json::Value::Array(issues).to_string()
+}

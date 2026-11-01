@@ -9,6 +9,7 @@ export default defineConfig({
     emptyOutDir: true,
     target: 'es2022',
     assetsInlineLimit: 0,
+    rollupOptions: { input: { main: 'web/index.html', creator: 'web/creator.html' } },
   },
   worker: { format: 'es' },
   server: { host: true, port: 5173 },
