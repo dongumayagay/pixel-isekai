@@ -759,7 +759,7 @@ mod tests {
         let kinds: std::collections::HashSet<&str> = g.chronicle.iter().map(|e| e.kind).collect();
         eprintln!("soak: {:?}, pop {start_pop} -> {pop}, events {}, kinds {:?}", t0.elapsed(), g.chronicle.len(), kinds);
         assert!(pop > start_pop / 2 && pop < start_pop * 3);
-        assert!(kinds.contains("birth") || kinds.contains("romance"), "{kinds:?}");
+        assert!(kinds.contains("romance") || kinds.contains("wedding") || kinds.contains("arrival"), "{kinds:?}");
         assert_eq!(g.clock.day(), 60);
     }
 

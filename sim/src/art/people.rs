@@ -58,6 +58,11 @@ pub mod outfit {
     pub const DIRNDL: u8 = 7;
     pub const GUILD: u8 = 8;
     pub const SMITH: u8 = 9;
+    /// Floor-length gothic gown with a high standing collar and cape.
+    pub const GOTHIC: u8 = 10;
+    /// Long open coat over a light shirt (the adventurer protagonist).
+    pub const COAT: u8 = 11;
+    pub const COUNT: u8 = 12;
 }
 
 pub mod held {
@@ -107,7 +112,16 @@ pub struct Look {
     /// Men: 0 slim, 1 standard, 2 muscular, 3 heavy.
     #[serde(default = "default_build")]
     pub build: u8,
+    /// 0 short, 1 medium, 2 tall.
+    #[serde(default = "default_height")]
+    pub height: u8,
 }
+
+fn default_height() -> u8 {
+    1
+}
+
+pub const HEIGHTS: [&str; 3] = ["Short", "Medium", "Tall"];
 
 fn default_figure() -> u8 {
     2
@@ -149,6 +163,7 @@ impl Look {
             glasses: false,
             figure: *rng.pick(&[1u8, 2, 2, 2, 3, 3, 4]),
             build: *rng.pick(&[0u8, 1, 1, 1, 2, 2, 3]),
+            height: *rng.pick(&[0u8, 1, 1, 1, 2]),
         }
     }
 }
@@ -488,26 +503,43 @@ fn pose_for(f: u16) -> Pose {
     }
 }
 
-/// Bust secondary motion, authored per size the way pixel animators do it:
-/// whole-pixel offsets relative to the chest (+ = down), so the shape stays
-/// identical and only moves. Walk tables follow the 6-frame stride (body bob
-/// -1,-2,-1 per step): medium lags a frame, large swings 2px, huge
-/// overshoots. Idle follows the 4-frame breath.
-const JIGGLE_WALK: [[i32; 6]; 5] = [
-    [0, 0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0, 0],
-    [0, 0, -1, 0, 0, -1],
-    [1, 0, -1, 1, 0, -1],
-    [1, -1, -1, 1, -1, -1],
+/// Bust secondary motion. Researched model (2D rig physics, breast
+/// biomechanics, the hand-animated reference): in a looping walk the bust is
+/// a forced follower that trails the torso by one frame — its height equals
+/// the torso's height a frame earlier — so with our bob (-1,-2,-1 per step)
+/// the offset relative to the chest is [0, +1, -1] per step. Real walking
+/// moves ~1.3px at this scale, so medium only drags, large follows the lag
+/// rule, huge adds overshoot. Shape steps are whole pixels and follow the
+/// lag (lagging down = stretch, pulled up = squash); the silhouette never
+/// shimmers. Idle follows the breath (the chest lifts on frame 2).
+/// Entries are (offset px, + = down; shape -1 squash / +1 stretch).
+type Jig = (i32, i32);
+const JIGGLE_WALK: [[Jig; 6]; 5] = [
+    [(0, 0); 6],
+    [(0, 0); 6],
+    [(0, 0), (1, 0), (0, 0), (0, 0), (1, 0), (0, 0)],
+    [(0, 0), (1, 1), (-1, -1), (0, 0), (1, 1), (-1, -1)],
+    [(-1, -1), (1, 1), (-1, -1), (-1, -1), (1, 1), (-1, -1)],
 ];
-const JIGGLE_IDLE: [[i32; 4]; 5] = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 1, 0], [0, 0, 1, -1]];
+const JIGGLE_IDLE: [[Jig; 4]; 5] = [
+    [(0, 0); 4],
+    [(0, 0); 4],
+    [(0, 0), (0, 0), (1, 0), (0, 0)],
+    [(0, 0), (0, 0), (1, 1), (-1, -1)],
+    [(0, 0), (0, 0), (1, 1), (-1, -1)],
+];
 
-fn jiggle(figure: u8, pose: &Pose, frame: u16) -> i32 {
+fn jiggle(figure: u8, pose: &Pose, frame: u16) -> Jig {
+    jiggle_at(figure, pose, frame, 0)
+}
+
+/// The table entry `back` frames earlier in the same cycle.
+fn jiggle_at(figure: u8, pose: &Pose, frame: u16, back: u16) -> Jig {
     let f = figure.min(4) as usize;
     match pose.cycle {
-        1 => JIGGLE_WALK[f][((frame - WALK_FIRST) % WALK_FRAMES) as usize],
-        0 => JIGGLE_IDLE[f][(frame % IDLE_FRAMES) as usize],
-        _ => 0,
+        1 => JIGGLE_WALK[f][((frame - WALK_FIRST + WALK_FRAMES - back) % WALK_FRAMES) as usize],
+        0 => JIGGLE_IDLE[f][((frame + IDLE_FRAMES - back) % IDLE_FRAMES) as usize],
+        _ => (0, 0),
     }
 }
 
@@ -539,8 +571,12 @@ struct Build {
     woman: bool,
     /// Lag applied to soft parts (hair, skirts) this frame.
     lag: f32,
-    /// Bust offset this frame (whole px, down positive).
+    /// Bust offset this frame (whole px, down positive) and shape step
+    /// (-1 squash, +1 stretch).
     jig: f32,
+    jsq: f32,
+    /// Highlight lag relative to the bust (whole px).
+    jhl: f32,
     /// Sideways swing of hair, skirts and capes: side view only. Seen from
     /// the front or back, soft parts bounce vertically instead.
     sway: f32,
@@ -560,6 +596,9 @@ fn build(look: &Look, pose: Pose, plant: f32) -> Build {
     } else {
         (1.0, 1.0, 1.0)
     };
+    // Height: legs carry most of it, the torso a little.
+    let (hl, ht) = if child { (1.0, 1.0) } else { [(0.92, 0.96), (1.0, 1.0), (1.07, 1.03)][look.height.min(2) as usize] };
+    let (leg_k, torso_k) = (leg_k * hl, torso_k * ht);
     // Long legs: just under half the standing height for adults.
     let thigh = 14.0 * leg_k;
     let calf = 13.5 * leg_k;
@@ -578,7 +617,10 @@ fn build(look: &Look, pose: Pose, plant: f32) -> Build {
     let torso = if f { 30.0 } else { 31.0 } * torso_k + pose.breathe.floor();
     let shoulder_y = crotch_y - torso;
     let head_c = v(32.0, shoulder_y - 18.0);
-    let jig = jiggle(look.figure, &pose, pose.frame) as f32;
+    let (jig, jsq) = jiggle(look.figure, &pose, pose.frame);
+    // The highlight trails the bust by another frame: softness without
+    // moving the outline.
+    let jhl = jiggle_at(look.figure, &pose, pose.frame, 1).0 - jig;
     let fig = f && look.mature && !child;
     let bd = look.build.min(3) as usize;
     // Hourglass for women (waist about 0.6 of the hips), V-taper for men;
@@ -619,7 +661,9 @@ fn build(look: &Look, pose: Pose, plant: f32) -> Build {
         bust,
         woman: fig,
         lag,
-        jig: if bust > 0.0 { jig } else { 0.0 },
+        jig: if bust > 0.0 { jig as f32 } else { 0.0 },
+        jsq: if bust > 0.0 { jsq as f32 } else { 0.0 },
+        jhl: if bust > 0.0 { jhl as f32 } else { 0.0 },
         sway: 0.0,
     }
 }
@@ -646,12 +690,22 @@ fn limbs(b: &Build, pose: Pose, dir: u8) -> Limbs {
     let hip_dx = if side { 0.0 } else { b.thigh_r };
     let hip_l = v(b.cx - hip_dx, b.hip_joint_y);
     let hip_r = v(b.cx + hip_dx, b.hip_joint_y);
+    let walk_ang = pose.walk.unwrap_or(0.0);
     let leg = |hip: V2, sgn: f32, swing: f32, lift: f32| -> (V2, V2) {
         if side {
-            let th = swing * 0.5;
+            if !walking {
+                return (hip.add(v(0.0, b.thigh)), hip.add(v(0.0, b.thigh + b.calf)));
+            }
+            // Gait phase per leg (0 = heel strike). Stance (60%): the planted
+            // leg sweeps back. Swing (40%): the knee bends most mid-swing as
+            // the leg comes forward; it never kicks up while trailing.
+            use std::f32::consts::{PI, TAU};
+            let p = ((walk_ang + if sgn < 0.0 { 0.0 } else { PI }) / TAU).rem_euclid(1.0);
+            let th = 0.38 * (TAU * p).cos();
+            let flex = if p > 0.6 { 0.75 * (PI * (p - 0.6) / 0.4).sin() } else { 0.08 * (PI * p / 0.6).sin() };
             let knee = hip.add(V2::polar(b.thigh, th));
-            let bend = (-swing).max(0.0) * 0.7 + lift * 0.25;
-            let ankle = knee.add(V2::polar(b.calf, th - bend));
+            let ankle = knee.add(V2::polar(b.calf, th - flex));
+            let _ = (swing, lift);
             (knee, ankle)
         } else {
             // Knees drawn slightly together: the soft anime stance.
@@ -769,7 +823,7 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     if !back {
         tail(&mut cv, look, dir, &b, &c);
     }
-    if look.outfit == outfit::CLOAK && !back {
+    if matches!(look.outfit, outfit::CLOAK | outfit::GOTHIC) && !back {
         cloak_back(&mut cv, &b, &c, side);
     }
     if !back {
@@ -804,7 +858,8 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     hair_front(&mut cv, look, dir, &b, &c);
     elf_ears(&mut cv, look, dir, &b, &c, true);
     horns(&mut cv, look, dir, &b, &c);
-    if back {
+    // From behind a cape covers the tail.
+    if back && !matches!(look.outfit, outfit::CLOAK | outfit::GOTHIC) {
         tail(&mut cv, look, dir, &b, &c);
     }
     hat(&mut cv, look, dir, &b, &c);
@@ -986,7 +1041,7 @@ fn pants_ramp(look: &Look, c: &Colors) -> R5 {
     match look.outfit {
         outfit::ARMOR => c.metal,
         outfit::DIRNDL | outfit::GUILD => c.stocking,
-        outfit::DRESS | outfit::ROBE => c.skin,
+        outfit::DRESS | outfit::ROBE | outfit::GOTHIC => c.skin,
         _ => c.bottom,
     }
 }
@@ -1127,7 +1182,7 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     let nw = if look.female { 3.4 } else { 4.2 };
     cv.profile(sy - 6.0, sy + 1.5, |_| b.cx + if side { 0.5 } else { 0.0 }, |_| nw, &c.skin, -0.06);
     let lower = match look.outfit {
-        outfit::DRESS | outfit::ROBE => c.skin,
+        outfit::DRESS | outfit::ROBE | outfit::GOTHIC => c.skin,
         outfit::DIRNDL | outfit::GUILD => c.stocking,
         _ => pants_ramp(look, c),
     };
@@ -1290,6 +1345,77 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             }
             belt(cv, b, &c.leather, lean, width, dir == DIR_DOWN);
         }
+        outfit::GOTHIC => {
+            // Floor-length gown: fitted bodice, skirt sweeping to the ground,
+            // gold hem, a red gem at the throat, a high standing collar.
+            let top = b.waist_y - 1.0;
+            let bottom = b.ground - 1.5;
+            let len = bottom - top;
+            let sway = b.sway;
+            let (w0, k) = skirt_shape(side, b.waist_w + 1.0, 0.36);
+            cv.begin();
+            cv.profile(top, bottom, |y| cx + (y - top) / len * sway * 0.7, |y| w0 + (y - top) * k, &c.top, 0.0);
+            hem_folds(cv, top, bottom, cx, w0, k, &c.top, sway);
+            let gold = gold5();
+            let hy = bottom as i32 - 1;
+            let hw = w0 + (bottom - 1.0 - top) * k;
+            if !side {
+                hspan(cv, hw - 0.5, hy, gold[2]);
+                hspan(cv, hw - 0.5, hy - 1, gold[1]);
+            }
+            sash(cv, b, &gold, lean, width);
+            let red = [hex(0x3a0a14), hex(0x6a1020), hex(0xa01c30), hex(0xd8404a), hex(0xff9a90)];
+            cv.begin();
+            if side {
+                cv.capsule(v(cx - 3.5, sy + 1.0), v(cx - 5.5, sy - 7.0), 1.8, 2.4, &c.top, 0.0);
+            } else {
+                for s in [-1.0f32, 1.0] {
+                    cv.capsule(v(cx + s * 5.0, sy + 1.0), v(cx + s * 8.0, sy - 7.0), 1.8, 2.6, &c.top, 0.0);
+                    cv.capsule(v(cx + s * 4.6, sy + 0.5), v(cx + s * 7.0, sy - 5.5), 0.8, 1.2, &c.hatc, 0.0);
+                }
+            }
+            if !back {
+                cv.begin();
+                let gx = if side { cx + 4.0 } else { cx };
+                cv.ellipse(v(gx, sy + 2.5), 1.6, 1.7, &red, 0.1);
+            }
+        }
+        outfit::COAT => {
+            // Long open coat over a light shirt: panels to the knee, the
+            // shirt and belt showing down the front opening.
+            let bottom = b.crotch_y + b.thigh * 0.75;
+            let sway = b.sway;
+            cv.begin();
+            cv.profile(sy, b.waist_y + 1.0, lean, |y| width(y) + 0.8, &c.top, 0.0);
+            let top = b.waist_y;
+            let len = bottom - top;
+            let (w0, k) = if side { (5.8, 0.18) } else { (b.waist_w + 2.4, 0.22) };
+            let sc = if side { cx - 1.0 } else { cx };
+            cv.profile(top, bottom, |y| sc + (y - top) / len * sway * 0.9, |y| w0 + (y - top) * k, &c.top, 0.0);
+            hem_folds(cv, top, bottom, sc, w0, k, &c.top, sway);
+            if !back && !side {
+                // Front opening: shirt above the belt, legs below it.
+                for y in sy as i32..bottom as i32 {
+                    let fy = y as f32 + 0.5;
+                    let half = if fy < b.waist_y + 2.0 { 2.0 + (fy - sy) * 0.05 } else { 2.5 + (fy - b.waist_y) * 0.18 };
+                    let col = if fy < b.waist_y + 2.0 { c.linen[if fy < sy + 2.0 { 2 } else { 3 }] } else { pants_ramp(look, c)[2] };
+                    hspan(cv, half, y, col);
+                }
+                // Lapels.
+                for y in sy as i32..(sy + 7.0) as i32 {
+                    let off = 2.0 + (y as f32 - sy) * 0.5;
+                    cv.put((cx - off - 1.0).floor() as i32, y, c.top[1]);
+                    cv.put(FW - 1 - (cx - off - 1.0).floor() as i32, y, c.top[1]);
+                }
+            }
+            if back {
+                for y in (b.waist_y + 3.0) as i32..bottom as i32 {
+                    cv.put(31, y, c.top[1]);
+                    cv.put(32, y, c.top[1]);
+                }
+            }
+            belt(cv, b, &c.leather, lean, |y| if side { width(y) } else { 3.0 }, dir == DIR_DOWN);
+        }
         outfit::VEST if !back => {
             let w = b.chest_w * 0.42;
             cv.begin();
@@ -1306,7 +1432,7 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     if matches!(look.outfit, outfit::TUNIC | outfit::VEST | outfit::APRON | outfit::CLOAK | outfit::SMITH) {
         belt(cv, b, &c.leather, lean, width, dir == DIR_DOWN);
     }
-    if look.outfit == outfit::CLOAK && back {
+    if matches!(look.outfit, outfit::CLOAK | outfit::GOTHIC) && back {
         cloak_back(cv, b, c, false);
     }
     if look.beard && !back && look.race == RACE_DWARF {
@@ -1323,8 +1449,9 @@ fn bust_side(cv: &mut Canvas, b: &Build, by: f32, ramp: &R5, front: impl Fn(f32)
     let r = b.bust;
     let top = by - r * 1.35;
     let apex = by + r * 0.1;
-    let bottom = by + r * 0.95;
-    let depth = r;
+    // Squash pushes it forward and lifts the underside; stretch droops.
+    let bottom = by + r * 0.95 + b.jsq;
+    let depth = r - b.jsq;
     for y in top.floor() as i32..=bottom.ceil() as i32 {
         let fy = y as f32 + 0.5;
         if fy < top || fy > bottom {
@@ -1363,14 +1490,16 @@ fn bust(cv: &mut Canvas, b: &Build, dir: u8, by: f32, ramp: &R5) {
     match dir {
         DIR_SIDE => {
             cv.begin();
-            cv.ellipse(v(b.cx + 4.6, by), r * 0.85, r * 0.92, ramp, 0.0);
+            cv.ellipse(v(b.cx + 4.6, by), r * 0.85 - b.jsq * 0.5, r * 0.92 + b.jsq, ramp, 0.0);
         }
         DIR_DOWN => {
             // One soft mass, not two outlined balls: lit on top with a small
             // highlight, shaded underneath, a short cleavage line low in the
             // middle. The top blends into the chest; the contour pass lines
             // only the sides and underside.
-            let (rx, ry) = (r, r * 0.9);
+            // Squash: a row shorter and half a pixel wider each side;
+            // stretch: the opposite.
+            let (rx, ry) = (r - b.jsq * 0.5, r * 0.9 + b.jsq);
             cv.begin();
             for y in (by - ry - 1.0).floor() as i32..=(by + ry + 1.0).ceil() as i32 {
                 for x in 0..FW {
@@ -1387,7 +1516,7 @@ fn bust(cv: &mut Canvas, b: &Build, dir: u8, by: f32, ramp: &R5) {
                         1
                     } else if ny > 0.4 {
                         2
-                    } else if (ny + 0.5).abs() < 0.1 && nxo > 0.0 && nxo < 0.42 {
+                    } else if (ny + 0.5 - b.jhl / ry).abs() < 0.1 && nxo > 0.0 && nxo < 0.42 {
                         4
                     } else {
                         3
@@ -1462,7 +1591,7 @@ fn held_item(cv: &mut Canvas, look: &Look, hand: V2, dir: u8, raised: bool, c: &
     let (x, y) = (hand.x, hand.y);
     match look.held {
         held::STAFF => {
-            let top = if raised { y - 22.0 } else { y - 40.0 };
+            let top = (if raised { y - 22.0 } else { y - 40.0 }).max(11.0);
             cv.capsule(v(x, top), v(x, y + 14.0), 1.3, 1.3, &wood, 0.0);
             let gem = [hex(0x2a1050), hex(0x4a2490), hex(0x7a48d0), hex(0xb090f8), hex(0xf0e6ff)];
             cv.capsule(v(x - 3.0, top + 1.0), v(x, top - 2.5), 1.2, 1.0, &wood, 0.0);
@@ -1517,7 +1646,8 @@ fn held_item(cv: &mut Canvas, look: &Look, hand: V2, dir: u8, raised: bool, c: &
 fn face_hw(look: &Look, dy: i32) -> f32 {
     const SKULL: [f32; 13] = [6.0, 8.0, 9.0, 10.0, 11.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0];
     const FEMALE: [f32; 15] = [12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 11.0, 10.0, 9.0, 7.0, 5.0];
-    const MALE: [f32; 15] = [12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 11.0, 11.0, 10.0, 7.0];
+    // Men: a lean, angled jaw from below the eyes to a defined chin.
+    const MALE: [f32; 15] = [12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 11.0, 11.0, 10.0, 9.0, 7.0, 5.0];
     const CHILD: [f32; 15] = [12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 11.0, 10.0, 8.0, 6.0, 0.0];
     if !(-13..=14).contains(&dy) {
         return 0.0;
@@ -1598,7 +1728,7 @@ fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             for dy in -13..=14 {
                 // From behind there is no jaw: the skull under the hair,
                 // then only the neck.
-                let hw = if dir == DIR_UP && dy > 4 { if look.female { 3.5 } else { 4.5 } } else { face_hw(look, dy) };
+                let hw = if dir == DIR_UP && dy > 4 { if look.female { 4.5 } else { 5.5 } } else { face_hw(look, dy) };
                 if hw <= 0.0 {
                     continue;
                 }
@@ -1987,15 +2117,27 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             // Back of the head: the whole cap, nape, and the long sheet over
             // the back.
             let mc = v(32.0, hc.y - 1.0);
-            let nape = hc.y + k.nape;
+            // From behind, hair comes down to about the jaw; gathered styles
+            // show more of the nape.
+            let nape = hc.y + if matches!(style, 2 | 3) { 9.0 } else { k.nape.max(12.0) };
+            let ear = mc.y + 4.0;
+            let neck_w = if look.female { 6.0 } else { 7.0 };
             for y in (mc.y - ry).floor() as i32..=nape.ceil() as i32 {
+                let fy = y as f32 + 0.5;
+                // Full head width down to the ears, then tapering to the neck.
+                let half = if fy < ear {
+                    let ny = (fy - mc.y) / ry;
+                    rx * (1.0 - ny.min(0.0) * ny.min(0.0)).max(0.0).sqrt()
+                } else {
+                    let t = ((fy - ear) / (nape - ear).max(1.0)).clamp(0.0, 1.0);
+                    rx * (1.0 - (4.0 - 3.0 * t) * 0.0) + (neck_w - rx) * t.powf(1.4)
+                };
                 for x in (32.0 - rx - 1.0) as i32..=(32.0 + rx + 1.0) as i32 {
                     let nx = (x as f32 + 0.5 - mc.x) / rx;
-                    let ny = (y as f32 + 0.5 - mc.y) / ry;
-                    // Round skull all the way down, and a nape hairline that
-                    // dips in the middle and rises behind the ears.
-                    let nyk = if ny > 0.0 { ny * 0.8 } else { ny };
-                    if nx * nx + nyk * nyk > 1.0 + EPS || y as f32 + 0.5 > nape - nx * nx * 6.0 {
+                    let ny = (fy - mc.y) / ry;
+                    let d = (x as f32 + 0.5 - 32.0).abs();
+                    // Hairline dips in the middle and rises at the sides.
+                    if d > half + EPS || fy > nape - (d / neck_w).powi(2) * 2.0 {
                         continue;
                     }
                     cv.fill(x, y, h[if nx.abs() > 0.86 || ny > 0.7 { 2 } else { 3 }]);
@@ -2442,6 +2584,25 @@ fn horns(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, _c: &Colors) {
                     _ => None,
                 }
             };
+            if look.beast == 1 {
+                // Ram horns: curling back and around beside the head.
+                let cyf = cy as f32;
+                let left = [v(25.0, cyf - 11.0), v(21.0, cyf - 15.0), v(16.0, cyf - 14.0), v(13.5, cyf - 9.5), v(15.0, cyf - 5.5), v(18.0, cyf - 4.5)];
+                let hr = [horn[0], horn[1], horn[2], horn[3], horn[4]];
+                cv.begin();
+                match dir {
+                    DIR_SIDE => {
+                        let pts = [v(31.0, cyf - 12.0), v(27.0, cyf - 16.0), v(22.5, cyf - 14.5), v(20.5, cyf - 10.0), v(22.0, cyf - 6.0), v(25.0, cyf - 5.0)];
+                        curve(cv, &pts, 2.8, 1.0, &hr);
+                    }
+                    _ => {
+                        let right: Vec<V2> = left.iter().map(|p| v(64.0 - p.x, p.y)).collect();
+                        curve(cv, &left, 2.8, 1.0, &hr);
+                        curve(cv, &right, 2.8, 1.0, &hr);
+                    }
+                }
+                return;
+            }
             let hgt = HORN.len() as i32;
             let base_y = cy - 11;
             cv.begin();
@@ -2531,7 +2692,7 @@ fn tail(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     let sway = b.lag;
     let side = dir == DIR_SIDE;
     // Direction away from the body: backward in profile, to one side otherwise.
-    let (bx, k) = if side { (b.cx - 5.0, -1.0) } else { (b.cx, 0.55) };
+    let (bx, k) = if side { (b.cx - 5.0, -1.0) } else if dir == DIR_UP { (b.cx, 0.95) } else { (b.cx, 0.55) };
     let base = v(bx, b.hip_y);
     let p = |dx: f32, dy: f32| v(base.x + dx * k, base.y + dy);
     let white = [hex(0xc8bcb0), hex(0xe0d8ce), hex(0xf0ece6), hex(0xfaf8f4), hex(0xffffff)];
@@ -2764,18 +2925,20 @@ impl Look {
     /// bulk QA.
     pub fn random_any(rng: &mut Rng) -> Look {
         let female = rng.chance(0.55);
-        let age = *rng.pick(&[0u8, 1, 1, 1, 1, 2]);
+        // No child characters for now.
+        let age = *rng.pick(&[1u8, 1, 1, 1, 2]);
         let mut l = Look::random(rng, female, age);
         l.race = rng.below(5) as u8;
         l.beast = rng.below(4) as u8;
         l.hair_style = rng.below(HAIR_STYLES as usize) as u8;
         l.hair = rng.below(pal::HAIR.len()) as u8;
-        l.outfit = rng.below(10) as u8;
+        l.outfit = rng.below(outfit::COUNT as usize) as u8;
         l.hat = if rng.chance(0.4) { rng.below(11) as u8 } else { 0 };
         l.held = if rng.chance(0.4) { rng.below(7) as u8 } else { held::NONE };
         l.glasses = rng.chance(0.15);
         l.figure = rng.below(5) as u8;
         l.build = rng.below(4) as u8;
+        l.height = rng.below(3) as u8;
         l.beard = rng.chance(0.3);
         if l.race == RACE_DEMON {
             l.skin = rng.below(pal::DEMON_SKIN.len()) as u8;
@@ -3025,13 +3188,17 @@ mod motion {
         for f in 0..5 {
             for t in [&JIGGLE_WALK[f][..], &JIGGLE_IDLE[f][..]] {
                 for k in 0..t.len() {
-                    let d = (t[(k + 1) % t.len()] - t[k]).abs();
-                    assert!(d <= 2, "figure {f}: jump of {d}px between frames");
+                    let (a, b) = (t[k], t[(k + 1) % t.len()]);
+                    assert!((b.0 - a.0).abs() <= 2, "figure {f}: offset jump {a:?}->{b:?}");
+                    assert!((b.1 - a.1).abs() <= 2 && b.1.abs() <= 1, "figure {f}: shape step {a:?}->{b:?}");
                 }
             }
         }
         // Bigger busts never move less than smaller ones.
-        let span = |t: &[i32]| t.iter().max().unwrap() - t.iter().min().unwrap();
+        let span = |t: &[Jig]| {
+            let ys: Vec<i32> = t.iter().map(|j| j.0).collect();
+            ys.iter().max().unwrap() - ys.iter().min().unwrap() + t.iter().map(|j| j.1.abs()).max().unwrap()
+        };
         for f in 1..5 {
             assert!(span(&JIGGLE_WALK[f]) >= span(&JIGGLE_WALK[f - 1]));
         }
@@ -3043,16 +3210,16 @@ mod motion {
 /// The hand-tuned core cast: the faces a typical isekai story is built on.
 /// Each is curated for quality first; procedural villagers come later.
 pub fn cast() -> Vec<(&'static str, Look)> {
-    let base = Look { skin: 1, hair: 0, hair_style: 1, top: 0, bottom: 0, outfit: outfit::TUNIC, hat: 0, hat_color: 1, female: true, age: 1, beard: false, eyes: 0, mature: true, race: RACE_HUMAN, beast: 0, held: held::NONE, glasses: false, figure: 2, build: 1 };
+    let base = Look { skin: 1, hair: 0, hair_style: 1, top: 0, bottom: 0, outfit: outfit::TUNIC, hat: 0, hat_color: 1, female: true, age: 1, beard: false, eyes: 0, mature: true, race: RACE_HUMAN, beast: 0, held: held::NONE, glasses: false, figure: 2, build: 1, height: 1 };
     vec![
-        ("Reincarnated Hero", Look { build: 1, female: false, hair: 0, hair_style: 4, outfit: outfit::CLOAK, top: 8, bottom: 8, hat_color: 0, eyes: 2, skin: 2, held: held::SWORD, ..base }),
+        ("Reincarnated Hero", Look { build: 1, female: false, hair: 0, hair_style: 0, outfit: outfit::COAT, top: 8, bottom: 8, eyes: 2, skin: 1, held: held::SWORD, height: 1, ..base }),
         ("Guild Receptionist", Look { figure: 3, build: 1, hair: 1, hair_style: 1, outfit: outfit::GUILD, hat: 9, hat_color: 1, eyes: 1, skin: 1, held: held::BOOK, ..base }),
         ("Elf Mage", Look { figure: 1, build: 0, race: RACE_ELF, hair: 5, hair_style: 1, outfit: outfit::ROBE, top: 2, eyes: 6, skin: 0, held: held::STAFF, ..base }),
         ("Cat-girl Adventurer", Look { figure: 2, build: 2, race: RACE_BEAST, beast: 0, hair: 2, hair_style: 5, outfit: outfit::VEST, top: 7, bottom: 3, eyes: 5, skin: 2, held: held::SWORD, ..base }),
         ("Female Knight", Look { figure: 3, build: 2, hair: 3, hair_style: 2, outfit: outfit::ARMOR, hat_color: 0, bottom: 8, eyes: 0, skin: 1, held: held::SWORD, ..base }),
         ("Healer", Look { figure: 3, build: 1, hair: 3, hair_style: 5, outfit: outfit::ROBE, top: 7, eyes: 0, skin: 0, held: held::STAFF, hat: 7, hat_color: 0, ..base }),
         ("Dwarf Smith", Look { build: 2, female: false, race: RACE_DWARF, hair: 4, hair_style: 0, outfit: outfit::SMITH, bottom: 8, beard: true, hat: 2, hat_color: 1, eyes: 2, skin: 3, held: held::HAMMER, ..base }),
-        ("Demon Lord", Look { figure: 4, build: 2, race: RACE_DEMON, skin: 0, hair: 0, hair_style: 1, outfit: outfit::DRESS, top: 8, eyes: 4, ..base }),
+        ("Demon Lord", Look { figure: 4, build: 2, race: RACE_DEMON, skin: 3, beast: 1, hair: 0, hair_style: 1, outfit: outfit::GOTHIC, top: 8, hat_color: 1, eyes: 4, height: 2, ..base }),
         ("Barmaid", Look { figure: 4, build: 3, hair: 3, hair_style: 2, outfit: outfit::DIRNDL, top: 1, bottom: 2, hat: 10, eyes: 1, skin: 2, held: held::MUG, ..base }),
         ("Fox Merchant", Look { figure: 2, build: 2, race: RACE_BEAST, beast: 1, hair: 4, hair_style: 7, outfit: outfit::APRON, top: 5, bottom: 3, eyes: 5, skin: 1, held: held::BASKET, ..base }),
         ("Village Elder", Look { build: 0, female: false, age: 2, hair: 5, hair_style: 0, outfit: outfit::ROBE, top: 3, beard: true, eyes: 2, skin: 3, held: held::STAFF, ..base }),

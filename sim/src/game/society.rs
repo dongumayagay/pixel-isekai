@@ -9,6 +9,10 @@ use crate::art::people::Look;
 use crate::names;
 use crate::world::{PropKind, TILE};
 
+/// Child characters are disabled for now: no births, households start with
+/// grown children only, and newcomers keep villages growing.
+const CHILDREN: bool = false;
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Event {
     pub day: u32,
@@ -165,7 +169,7 @@ impl Game {
                 if v.pregnant <= 0.0 {
                     births.push(i);
                 }
-            } else if v.female && v.partner.is_some() && v.age < 44.0 && v.children.len() < 4 {
+            } else if CHILDREN && v.female && v.partner.is_some() && v.age < 44.0 && v.children.len() < 4 {
                 let partner_male = v.partner.and_then(|p| self.villagers.iter().find(|o| o.id == p)).map_or(false, |o| !o.female);
                 if partner_male && self.rng.chance(0.05) {
                     self.villagers[i].pregnant = 6.0;
@@ -192,7 +196,8 @@ impl Game {
         // Newcomers keep small villages alive.
         for vid in 0..self.world.villages.len() {
             let pop = self.villagers.iter().filter(|v| v.alive && v.village == vid).count();
-            if pop < 8 && self.rng.chance(0.35) || self.rng.chance(0.03) {
+            // With no births, newcomers are how villages grow.
+            if pop < 10 && self.rng.chance(0.4) || self.rng.chance(0.06) {
                 self.newcomer(vid);
             }
         }

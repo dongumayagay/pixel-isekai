@@ -10,20 +10,21 @@ interface Look {
   skin: number; hair: number; hair_style: number; top: number; bottom: number; outfit: number;
   hat: number; hat_color: number; female: boolean; age: number; beard: boolean; eyes: number;
   mature: boolean; race: number; beast: number; held: number; glasses: boolean;
-  figure: number; build: number;
+  figure: number; build: number; height: number;
 }
 interface Info {
   fw: number; fh: number; pivot: [number, number]; framesPerDir: number; sheetFrames: number;
-  races: string[]; hairStyles: number; figures: string[]; buildsF: string[]; buildsM: string[];
+  races: string[]; hairStyles: number; figures: string[]; heights: string[]; buildsF: string[]; buildsM: string[];
   swatch: { skin: number[]; demon: number[]; hair: number[]; cloth: number[]; eyes: number[] };
 }
 
-const OUTFITS = ['Tunic', 'Dress', 'Robe', 'Apron', 'Armor', 'Cloak', 'Vest', 'Dirndl', 'Guild', 'Smith'];
+const OUTFITS = ['Tunic', 'Dress', 'Robe', 'Apron', 'Armor', 'Cloak', 'Vest', 'Dirndl', 'Guild', 'Smith', 'Gothic gown', 'Long coat'];
 const HATS = ['None', 'Straw hat', 'Bandana', 'Helmet', 'Hood', 'Cap', 'Witch hat', 'Flower', 'Chef', 'Ribbon', 'Maid band'];
 const HELD = ['None', 'Staff', 'Hammer', 'Mug', 'Book', 'Sword', 'Basket'];
 const STYLES = ['Short', 'Long', 'Ponytail', 'Bun', 'Spiky', 'Bob', 'Twin tails', 'Side-swept'];
 const BEASTS = ['Cat', 'Fox', 'Wolf', 'Rabbit'];
-const AGES = ['Child', 'Adult', 'Elder'];
+// No child characters for now; age 1 = adult, 2 = elder.
+const AGES = ['Adult', 'Elder'];
 const DIRS = [
   { name: 'Down', dir: 0, flip: false },
   { name: 'Up', dir: 1, flip: false },
@@ -119,6 +120,7 @@ function swatches(host: HTMLElement, cols: number[], isOn: (i: number) => boolea
 function set(patch: Partial<Look>) {
   look = { ...look, ...patch };
   // Same rules as Look::normalized in Rust: beards only on adult men.
+  if (look.age === 0) look.age = 1;
   look.mature = look.age > 0;
   if (look.female || look.age === 0) look.beard = false;
   if (look.race === 4) look.skin %= info.swatch.demon.length;
@@ -135,6 +137,7 @@ function renderControls() {
     <h3>Race</h3><div class="row" id="c-race"></div>
     <div id="c-beast-wrap"><h3>Beast kind</h3><div class="row" id="c-beast"></div></div>
     <h3>Body</h3><div class="row" id="c-sex"></div><div class="row" id="c-age" style="margin-top:5px"></div>
+    <h3>Height</h3><div class="row" id="c-height"></div>
     <h3>Build</h3><div class="row" id="c-build"></div>
     <div id="c-fig-wrap"><h3>Figure</h3><div class="row" id="c-fig"></div></div>
     <h3>Skin</h3><div class="row" id="c-skin"></div>
@@ -152,7 +155,8 @@ function renderControls() {
   $('#c-beast-wrap').style.display = look.race === 3 ? '' : 'none';
   buttons($('#c-beast'), BEASTS, (b) => b, (i) => look.beast === i, (i) => set({ beast: i }));
   buttons($('#c-sex'), ['Female', 'Male'], (s) => s, (i) => look.female === (i === 0), (i) => set({ female: i === 0 }));
-  buttons($('#c-age'), AGES, (a) => a, (i) => look.age === i, (i) => set({ age: i }));
+  buttons($('#c-age'), AGES, (a) => a, (i) => look.age === i + 1, (i) => set({ age: i + 1 }));
+  buttons($('#c-height'), info.heights, (h) => h, (i) => (look.height ?? 1) === i, (i) => set({ height: i }));
   buttons($('#c-build'), look.female ? info.buildsF : info.buildsM, (b) => b, (i) => look.build === i, (i) => set({ build: i }));
   $('#c-fig-wrap').style.display = look.female && look.age > 0 ? '' : 'none';
   buttons($('#c-fig'), info.figures, (f) => f, (i) => look.figure === i, (i) => set({ figure: i }));

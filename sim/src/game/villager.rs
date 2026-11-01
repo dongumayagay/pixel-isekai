@@ -566,11 +566,12 @@ pub fn populate(world: &World, rng: &mut Rng) -> Vec<Villager> {
                 out[ia].partner = Some(idb);
                 out[ib].partner = Some(ida);
                 members.push(ib);
-                if age_a < 48.0 {
-                    let kids = rng.range(0, 4);
+                // Only grown children (no child characters in the game).
+                if age_a >= 38.0 {
+                    let kids = rng.range(0, 3);
                     for _ in 0..kids {
-                        let age_k = rng.range_f(2.0, (age_a - 18.0).clamp(3.0, 17.0));
-                        let job = if age_k < 15.0 { Job::Child } else { next_job(rng) };
+                        let age_k = rng.range_f(18.0, (age_a - 18.0).max(18.5));
+                        let job = next_job(rng);
                         let kx = door.0 as f32 + jitter(rng);
                         let kf = rng.chance(0.5);
                         let mut kid = make(next_id, rng, culture, &family, kf, age_k, job, v.id, home, kx, ay + 6.0);

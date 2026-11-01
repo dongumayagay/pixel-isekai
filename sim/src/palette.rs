@@ -75,11 +75,12 @@ pub const SKIN: &[[u32; 4]] = &[
     [0x744440, 0xc07c62, 0xe8ac88, 0xf8d0b2], // warm
     [0x683e3a, 0xb07056, 0xdc9c76, 0xf0c29c], // light tan
 ];
-/// Exotic skins for demonfolk: lavender, crimson, slate blue.
+/// Exotic skins for demonfolk: lavender, crimson, slate blue, ashen pale.
 pub const DEMON_SKIN: &[[u32; 4]] = &[
     [0x4a3a6a, 0x7a64a0, 0xa890cc, 0xcab8e6],
     [0x5a1e2a, 0x9a3a44, 0xc8605e, 0xe68a80],
     [0x2a3448, 0x46587a, 0x6a80a6, 0x92a8c8],
+    [0x5e4a5a, 0xb8a0b0, 0xe6d6de, 0xfaf0f4], // ashen pale (demon nobility)
 ];
 pub const HAIR: &[[u32; 4]] = &[
     [0x1c1420, 0x2c2030, 0x443444, 0x5e4c5a], // black
