@@ -873,7 +873,11 @@ fn limbs(b: &Build, pose: Pose, dir: u8) -> Limbs {
     let walking = pose.walk.is_some();
     let s = pose.walk.unwrap_or(0.0).sin();
     let hip_dx = if side { 0.0 } else { b.thigh_r };
-    let hip_l = v(b.cx - hip_dx, b.hip_joint_y);
+    // 3/4 top-down: what's farther from the camera sits higher on screen,
+    // so in profile the far leg stands 2px up (its foot above the near one)
+    // instead of both feet on one side-scroller baseline.
+    let far_up = if side { 2.0 } else { 0.0 };
+    let hip_l = v(b.cx - hip_dx, b.hip_joint_y - far_up);
     let hip_r = v(b.cx + hip_dx, b.hip_joint_y);
     let walk_ang = pose.walk.unwrap_or(0.0);
     let leg = |hip: V2, sgn: f32, swing: f32, lift: f32| -> (V2, V2) {
@@ -912,7 +916,7 @@ fn limbs(b: &Build, pose: Pose, dir: u8) -> Limbs {
     // The arm's ball sits just under the shoulder line so the deltoid reads
     // as a one-pixel rounding, not a pad poking above the slope.
     let sh_y = b.shoulder_y + 2.0 + b.arm_r * 0.6;
-    let sh_l = v(b.cx - sh_dx, sh_y);
+    let sh_l = v(b.cx - sh_dx, sh_y - far_up * 0.5);
     let sh_r = v(b.cx + sh_dx, sh_y);
     let arm = |sh: V2, swing: f32, out: f32| -> (V2, V2) {
         match pose.work {
@@ -1645,17 +1649,20 @@ fn leg(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (hip, knee, ankle): 
     // narrow ankle (baggy trousers gather at the ankle).
     let out = if front { if hip.x < b.cx { -0.6 } else { 0.6 } } else { -0.6 };
     let calf_mid = v(knee.x + (ankle.x - knee.x) * 0.32 + out, knee.y + (ankle.y - knee.y) * 0.32);
-    cv.capsule(knee, calf_mid, cr * 1.0, cr * 1.1, &ramp, bias);
-    cv.capsule(calf_mid, ankle, cr * 1.1, ankle_r * 0.9, &ramp, bias);
+    // From behind, the leg stepping away lifts its heel: the shin turns
+    // into shadow and only a heel shows below it.
+    let heel_up = dir == DIR_UP && ankle.y < b.ground - 4.5;
+    let shin_bias = if heel_up { bias - 0.35 } else { bias };
+    cv.capsule(knee, calf_mid, cr * 1.0, cr * 1.1, &ramp, shin_bias);
+    cv.capsule(calf_mid, ankle, cr * 1.1, ankle_r * 0.9, &ramp, shin_bias);
     let side = dir == DIR_SIDE;
     if let Some((d, h)) = g.boots {
-        // Shaft up the shin: knee-high riders reach over the knee.
-        // Up the actual shin, so a raised, foreshortened leg keeps its boot
-        // below the knee.
+        // Shaft up the actual shin (knee-high riders reach over the knee),
+        // so a raised, foreshortened leg keeps its boot below the knee.
         let k = (h / b.calf).min(1.25);
         let top = v(ankle.x + (knee.x - ankle.x) * k, ankle.y + (knee.y - ankle.y) * k);
         cv.begin();
-        cv.capsule(top, ankle, b.calf_r * 1.04, ankle_r + 0.6, &dye(c, d), bias);
+        cv.capsule(top, ankle, b.calf_r * 1.04, ankle_r + 0.6, &dye(c, d), shin_bias);
     }
     cv.begin();
     let shoe = match g.boots {
@@ -1665,6 +1672,8 @@ fn leg(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (hip, knee, ankle): 
     };
     if side {
         cv.ellipse(ankle.add(v(2.4, 1.6)), 4.4, 2.2, &shoe, bias);
+    } else if heel_up {
+        cv.ellipse(ankle.add(v(0.0, 1.0)), 2.6, 1.7, &shoe, bias - 0.3);
     } else {
         cv.ellipse(ankle.add(v(0.0, 1.8)), 3.2, 2.4, &shoe, bias);
     }
