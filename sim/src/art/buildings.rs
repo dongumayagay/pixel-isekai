@@ -280,9 +280,9 @@ pub fn house(kind: BuildingKind, culture: u8, seed: u32, fw: i32, fh: i32, lit: 
     let over = 8;
     let w = fw * 32 + over * 2;
     let wall_h = match kind {
-        BuildingKind::Inn => 104,
-        BuildingKind::Chapel => 112,
-        _ => 92,
+        BuildingKind::Inn => 140,
+        BuildingKind::Chapel => 148,
+        _ => 124,
     };
     let front_gable = kind != BuildingKind::Inn && match culture % 4 {
         0 => r.chance(0.5),
@@ -292,7 +292,7 @@ pub fn house(kind: BuildingKind, culture: u8, seed: u32, fw: i32, fh: i32, lit: 
     };
     let roof_kind: u8 = if st.roof == pal::ROOF_THATCH { 1 } else if st.roof == pal::ROOF_SLATE { 2 } else { 0 };
     let depth = (fh * 32) as f32 * 0.55; // footprint depth seen in projection
-    let rise = 26.0 + if kind == BuildingKind::Chapel { 14.0 } else { 0.0 };
+    let rise = 32.0 + if kind == BuildingKind::Chapel { 16.0 } else { 0.0 };
     let gable_h = ((fw * 32) as f32 * 0.38) as i32;
     let roof_h = if front_gable { depth as i32 + gable_h } else { (depth + rise) as i32 };
     let extra_top = if kind == BuildingKind::Chapel { 46 } else { 22 };
@@ -331,8 +331,8 @@ pub fn house(kind: BuildingKind, culture: u8, seed: u32, fw: i32, fh: i32, lit: 
                     shade(st.wall, v)
                 };
             } else if st.logs {
-                let row = (y - wall_top) % 9;
-                c = ramp_at(st.wall, [0, 2, 3, 4, 4, 3, 3, 2, 1][row as usize]);
+                let row = (y - wall_top) % 10;
+                c = ramp_at(st.wall, [0, 2, 3, 4, 4, 4, 3, 3, 2, 1][row as usize]);
             } else {
                 let grain = hash2(x / 2, y, seed) % 23 == 0;
                 let v = 0.76 - t * 0.12 + lx + if grain { -0.05 } else { 0.0 };
@@ -352,9 +352,9 @@ pub fn house(kind: BuildingKind, culture: u8, seed: u32, fw: i32, fh: i32, lit: 
     }
     if st.logs {
         // Round log ends at the corners.
-        for y in (wall_top..base_y - 10).step_by(9) {
+        for y in (wall_top..base_y - 10).step_by(10) {
             for cx in [wx0 + 2, wx1 - 2] {
-                img.ellipse_with(cx as f32 + 0.5, y as f32 + 4.5, 4.0, 4.0, |im, x, yy, nx, ny| {
+                img.ellipse_with(cx as f32 + 0.5, y as f32 + 5.0, 4.5, 4.5, |im, x, yy, nx, ny| {
                     let ring = ((nx * nx + ny * ny).sqrt() * 3.5) as i32 % 2 == 0;
                     im.set(x, yy, if ring { hex(0xc89a64) } else { hex(0xa87a48) });
                 });
@@ -401,7 +401,7 @@ pub fn house(kind: BuildingKind, culture: u8, seed: u32, fw: i32, fh: i32, lit: 
     img.hline(wx0, wx1, base_y - 12, ramp_at(pal::STONE_WALL, 4));
 
     // ---- Door ----
-    let (dw, dh) = if kind == BuildingKind::Inn || kind == BuildingKind::Chapel { (30, 54) } else { (26, 50) };
+    let (dw, dh) = if kind == BuildingKind::Inn || kind == BuildingKind::Chapel { (40, 80) } else { (34, 74) };
     let dx = w / 2 - dw / 2;
     let dy = base_y - dh;
     door(&mut img, dx, dy, dw, dh, st.trim, kind == BuildingKind::Chapel || culture % 4 == 3);
@@ -422,8 +422,8 @@ pub fn house(kind: BuildingKind, culture: u8, seed: u32, fw: i32, fh: i32, lit: 
     // ---- Windows ----
     let flowers = if r.chance(0.65) { Some(pal::FLOWERS[r.below(pal::FLOWERS.len())]) } else { None };
     let shutters = culture % 4 == 0 || culture % 4 == 2 && r.chance(0.6);
-    let (ww, wh) = (20, 24);
-    let win_y = base_y - 12 - 22 - wh;
+    let (ww, wh) = (24, 30);
+    let win_y = base_y - 12 - 32 - wh;
     let need = ww + if shutters { 26 } else { 12 };
     let mut slots: Vec<i32> = Vec::new();
     let left_space = dx - 4 - wx0;

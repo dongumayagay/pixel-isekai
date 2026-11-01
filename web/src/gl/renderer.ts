@@ -198,9 +198,11 @@ export class Renderer {
     return { fb, tex, rb };
   }
 
-  /** Fixed 9:16 portrait frame (360×640 logical px), integer-scaled. */
-  static readonly LOGICAL_W = 360;
-  static readonly LOGICAL_H = 640;
+  /** Fixed 9:16 portrait frame (540×960 logical px), integer-scaled. At
+   *  this framing an adult (~88px) stands about a tenth of the screen tall,
+   *  close to Eastward and Sea of Stars, and maps 2× onto 1080-wide phones. */
+  static readonly LOGICAL_W = 540;
+  static readonly LOGICAL_H = 960;
   resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 4);
     const sw = window.innerWidth * dpr;
@@ -212,8 +214,8 @@ export class Renderer {
     this.fboH = this.viewH + 2;
     this.canvas.width = this.viewW * this.scale;
     this.canvas.height = this.viewH * this.scale;
-    // CSS size: exact device-pixel mapping when it fits, otherwise shrink to fit.
-    const fit = Math.min(1, window.innerWidth / (this.canvas.width / dpr), window.innerHeight / (this.canvas.height / dpr));
+    // CSS size: fill the window at 9:16 (pixelated sampling keeps it crisp).
+    const fit = Math.min(window.innerWidth / (this.canvas.width / dpr), window.innerHeight / (this.canvas.height / dpr));
     const cssW = (this.canvas.width / dpr) * fit;
     const cssH = (this.canvas.height / dpr) * fit;
     this.cssW = cssW;

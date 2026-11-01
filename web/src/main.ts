@@ -269,7 +269,7 @@ function render(now: number) {
   if (po !== undefined) {
     const [px, py] = lerpPos(0, po);
     const tx = px - renderer.viewW / 2;
-    const ty = py - 40 - renderer.viewH / 2;
+    const ty = py - 46 - renderer.viewH / 2;
     if (!cam.ready) {
       cam.x = tx;
       cam.y = ty;
@@ -300,7 +300,7 @@ function render(now: number) {
   const cp = info.chunkPx;
   const vx0 = cam.x - 120;
   const vx1 = cam.x + r.viewW + 120;
-  const vy0 = cam.y - 40;
+  const vy0 = cam.y - 46;
   const vy1 = cam.y + r.viewH + 200;
   for (let cy = Math.floor(vy0 / cp); cy <= Math.floor(vy1 / cp); cy++) {
     for (let cx = Math.floor(vx0 / cp); cx <= Math.floor(vx1 / cp); cx++) {
@@ -345,12 +345,12 @@ function render(now: number) {
     const f = snap[o + 4];
     draw.push({ x, y, sid, flags: f & (EF.FLIP | EF.FLASH), alpha: 1, layerY: y });
     pushCaster(x, y, sid, f & EF.FLIP);
-    r.shadows.push(x, y - 1, 10, 4, 0.85);
+    r.shadows.push(x, y - 1, 13, 5, 0.85);
     const emote = snap[o + 5];
     if (emote > 0) emotes.push([x, y, emote]);
     const act = snap[o + 6] & 255;
     workFx(id, x, y, act, f, dt);
-    if (f & EF.PLAYER && at.night > 0.2) r.lights.push(x, y - 40, 96, 1, 0.9, 0.75, 0.5 * at.night);
+    if (f & EF.PLAYER && at.night > 0.2) r.lights.push(x, y - 46, 96, 1, 0.9, 0.75, 0.5 * at.night);
   }
 
   draw.sort((a, b) => a.layerY - b.layerY);
@@ -360,7 +360,7 @@ function render(now: number) {
     if (sid === undefined) continue;
     const bob = Math.round(Math.sin(time * 4 + x) * 1.5);
     const s = sid * 7;
-    r.overlay.push(x, y - 94 + bob, table[s + 1], table[s + 2], table[s + 3], table[s + 4], table[s + 5], table[s + 6], table[s], 0, 1);
+    r.overlay.push(x, y - 100 + bob, table[s + 1], table[s + 2], table[s + 3], table[s + 4], table[s + 5], table[s + 6], table[s], 0, 1);
   }
 
   // Lights: lamps, windows of lit houses, fires.

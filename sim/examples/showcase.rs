@@ -42,7 +42,7 @@ fn main() {
             sheet.blit(&img, 4 + c as i32 * cw + 3, 4 + r as i32 * ch + 3, false);
         }
     }
-    let s = 3usize;
+    let s = 2usize;
     let (ow, oh) = (w as usize * s, h as usize * s);
     let mut o = vec![0u8; ow * oh * 4];
     for yy in 0..oh {

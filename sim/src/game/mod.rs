@@ -405,8 +405,8 @@ impl Game {
         let mut best: Option<(u32, f32)> = None;
         for v in self.villagers.iter().filter(|v| v.alive && !v.actor.hidden) {
             let dx = x - v.actor.x;
-            let dy = y - (v.actor.y - 40.0);
-            if dx.abs() < 16.0 && dy.abs() < 42.0 {
+            let dy = y - (v.actor.y - 46.0);
+            if dx.abs() < 18.0 && dy.abs() < 46.0 {
                 let d = dx * dx + dy * dy;
                 if best.map_or(true, |(_, b)| d < b) {
                     best = Some((v.id, d));

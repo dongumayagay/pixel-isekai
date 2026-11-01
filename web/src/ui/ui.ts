@@ -132,10 +132,11 @@ export class UI {
   private begin() {
     const seed = Number(($('#seed') as HTMLInputElement).value) || Math.floor(Math.random() * 1e9);
     $('#title').classList.add('hidden');
+    // Story intro is parked for now: show only the loading status.
     $('#prologue').classList.remove('hidden');
-    this.prologueIdx = -1;
-    this.nextPrologue();
-    // Generate the world while the story plays.
+    $('#pro-art').classList.add('hidden');
+    $('#pro-line').textContent = '';
+    this.introDone = true;
     setTimeout(() => this.onStart(seed), 50);
   }
 
@@ -322,7 +323,7 @@ export class UI {
     const w = px[0];
     const h = px[1];
     const c = document.createElement('canvas');
-    const ph = Math.min(h, 44);
+    const ph = Math.min(h, 46);
     c.width = Math.max(1, w);
     c.height = Math.max(1, ph);
     if (w && h) {
