@@ -465,22 +465,22 @@ struct Pose {
     breathe: f32,
     work: u8,
     blink: bool,
-    /// 0 idle, 1 walk, 2 work; with the phase 0..1 within that cycle.
+    /// 0 idle, 1 walk, 2 work, and the sheet frame index.
     cycle: u8,
-    phase: f32,
+    frame: u16,
 }
 
 fn pose_for(f: u16) -> Pose {
     use std::f32::consts::TAU;
-    let base = Pose { walk: None, breathe: 0.0, work: 0, blink: false, cycle: 0, phase: 0.0 };
+    let base = Pose { walk: None, breathe: 0.0, work: 0, blink: false, cycle: 0, frame: f };
     match f {
         0..=3 => {
             let ph = f as f32 / IDLE_FRAMES as f32;
-            Pose { breathe: (1.0 - (TAU * ph).cos()) * 0.5, phase: ph, ..base }
+            Pose { breathe: (1.0 - (TAU * ph).cos()) * 0.5, ..base }
         }
         4..=9 => {
             let ph = (f - WALK_FIRST) as f32 / WALK_FRAMES as f32;
-            Pose { walk: Some(TAU * ph + 0.5), cycle: 1, phase: ph, ..base }
+            Pose { walk: Some(TAU * ph + 0.5), cycle: 1, ..base }
         }
         10 => Pose { work: 1, cycle: 2, ..base },
         11 => Pose { work: 2, cycle: 2, ..base },
@@ -488,33 +488,27 @@ fn pose_for(f: u16) -> Pose {
     }
 }
 
-/// Secondary motion of the bust: a damped spring riding on the body. The
-/// walk's foot strikes (the kinks in the bob) and the idle breath drive it,
-/// so it lags, overshoots and settles like the hand-animated reference.
-/// Returns (offset px, velocity px/cycle) at `phase` in steady state.
-fn jiggle(cycle: u8, phase: f32) -> (f32, f32) {
-    use std::f32::consts::TAU;
-    if cycle == 2 {
-        return (0.0, 0.0);
+/// Bust secondary motion, authored per size the way pixel animators do it:
+/// whole-pixel offsets relative to the chest (+ = down), so the shape stays
+/// identical and only moves. Walk tables follow the 6-frame stride (body bob
+/// -1,-2,-1 per step): medium lags a frame, large swings 2px, huge
+/// overshoots. Idle follows the 4-frame breath.
+const JIGGLE_WALK: [[i32; 6]; 5] = [
+    [0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0],
+    [0, 0, -1, 0, 0, -1],
+    [1, 0, -1, 1, 0, -1],
+    [1, -1, -1, 1, -1, -1],
+];
+const JIGGLE_IDLE: [[i32; 4]; 5] = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 1, 0], [0, 0, 1, -1]];
+
+fn jiggle(figure: u8, pose: &Pose, frame: u16) -> i32 {
+    let f = figure.min(4) as usize;
+    match pose.cycle {
+        1 => JIGGLE_WALK[f][((frame - WALK_FIRST) % WALK_FRAMES) as usize],
+        0 => JIGGLE_IDLE[f][(frame % IDLE_FRAMES) as usize],
+        _ => 0,
     }
-    let drive = |p: f32| -> f32 {
-        if cycle == 1 { -1.5 * (TAU * p + 0.5).sin().abs() } else { -0.6 * (1.0 - (TAU * p).cos()) * 0.5 }
-    };
-    let n = 720;
-    let dt = 1.0 / n as f32;
-    let (f0, zeta) = if cycle == 1 { (2.4, 0.16) } else { (1.4, 0.35) };
-    let w = TAU * f0;
-    let (k, c) = (w * w, 2.0 * zeta * w);
-    let (mut r, mut v) = (0.0f32, 0.0f32);
-    // Run a few cycles to reach the periodic steady state.
-    let steps = ((3.0 + phase) * n as f32) as usize;
-    for i in 0..steps {
-        let p = i as f32 * dt;
-        let acc = (drive(p + dt) - 2.0 * drive(p) + drive(p - dt)) / (dt * dt);
-        v += (-k * r - c * v - acc) * dt;
-        r += v * dt;
-    }
-    (r, v)
 }
 
 /// Body measurements in pixels, derived from race, age and sex.
@@ -545,9 +539,8 @@ struct Build {
     woman: bool,
     /// Lag applied to soft parts (hair, skirts) this frame.
     lag: f32,
-    /// Bust spring offset (px, down positive) and squash (-0.15..0.15).
+    /// Bust offset this frame (whole px, down positive).
     jig: f32,
-    squash: f32,
     /// Sideways swing of hair, skirts and capes: side view only. Seen from
     /// the front or back, soft parts bounce vertically instead.
     sway: f32,
@@ -577,13 +570,15 @@ fn build(look: &Look, pose: Pose, plant: f32) -> Build {
         None if pose.work == 2 => (0.8, 1.1),
         None => (0.0, 0.0),
     };
-    let hip_joint_y = ground - 3.0 - calf - thigh + bob + plant;
+    // Whole-pixel motion: fractional bobbing makes every frame re-rasterise
+    // differently (shimmering outlines), so the body moves in pixel steps.
+    let hip_joint_y = ground - 3.0 - calf - thigh + (bob + plant).round();
     let crotch_y = hip_joint_y + 2.0;
     // Breathing lifts the chest and head; hips and feet stay put.
-    let torso = if f { 30.0 } else { 31.0 } * torso_k + pose.breathe * 0.7;
+    let torso = if f { 30.0 } else { 31.0 } * torso_k + pose.breathe.floor();
     let shoulder_y = crotch_y - torso;
     let head_c = v(32.0, shoulder_y - 18.0);
-    let (jy, jv) = jiggle(pose.cycle, pose.phase);
+    let jig = jiggle(look.figure, &pose, pose.frame) as f32;
     let fig = f && look.mature && !child;
     let bd = look.build.min(3) as usize;
     // Hourglass for women (waist about 0.6 of the hips), V-taper for men;
@@ -599,8 +594,7 @@ fn build(look: &Look, pose: Pose, plant: f32) -> Build {
     } else {
         0.0
     };
-    // Bigger busts swing further and a touch slower.
-    let jig_gain = (bust / 5.4).max(0.0);
+
     Build {
         cx: 32.0,
         ground,
@@ -625,8 +619,7 @@ fn build(look: &Look, pose: Pose, plant: f32) -> Build {
         bust,
         woman: fig,
         lag,
-        jig: (jy * jig_gain * if pose.cycle == 1 { 1.5 } else { 3.2 }).clamp(-3.0, 3.0),
-        squash: (-jv * 0.01).clamp(-0.14, 0.14),
+        jig: if bust > 0.0 { jig } else { 0.0 },
         sway: 0.0,
     }
 }
@@ -1166,7 +1159,7 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     cv.begin();
     cv.profile(sy, b.waist_y + 3.5, lean, width, &shirt, 0.0);
     // Fuller busts sit a little lower.
-    let by = sy + 9.5 + (b.bust - 5.4).max(0.0) * 0.6 + b.jig;
+    let by = (sy + 9.5 + (b.bust - 5.4).max(0.0) * 0.6).round() + b.jig;
     let cx = b.cx;
     // Neckline: a little skin under the collarbone for open-necked tops.
     if !back && !side && matches!(look.outfit, outfit::DRESS | outfit::DIRNDL | outfit::SMITH | outfit::APRON) {
@@ -1330,8 +1323,8 @@ fn bust_side(cv: &mut Canvas, b: &Build, by: f32, ramp: &R5, front: impl Fn(f32)
     let r = b.bust;
     let top = by - r * 1.35;
     let apex = by + r * 0.1;
-    let bottom = by + r * (0.95 + b.squash);
-    let depth = r * (1.0 - b.squash * 0.4);
+    let bottom = by + r * 0.95;
+    let depth = r;
     for y in top.floor() as i32..=bottom.ceil() as i32 {
         let fy = y as f32 + 0.5;
         if fy < top || fy > bottom {
@@ -1370,14 +1363,14 @@ fn bust(cv: &mut Canvas, b: &Build, dir: u8, by: f32, ramp: &R5) {
     match dir {
         DIR_SIDE => {
             cv.begin();
-            cv.ellipse(v(b.cx + 4.6, by), r * 0.85, r * 0.92 * (1.0 + b.squash), ramp, 0.0);
+            cv.ellipse(v(b.cx + 4.6, by), r * 0.85, r * 0.92, ramp, 0.0);
         }
         DIR_DOWN => {
             // One soft mass, not two outlined balls: lit on top with a small
             // highlight, shaded underneath, a short cleavage line low in the
             // middle. The top blends into the chest; the contour pass lines
             // only the sides and underside.
-            let (rx, ry) = (r * (1.0 - b.squash * 0.5), r * 0.9 * (1.0 + b.squash));
+            let (rx, ry) = (r, r * 0.9);
             cv.begin();
             for y in (by - ry - 1.0).floor() as i32..=(by + ry + 1.0).ceil() as i32 {
                 for x in 0..FW {
@@ -1394,7 +1387,7 @@ fn bust(cv: &mut Canvas, b: &Build, dir: u8, by: f32, ramp: &R5) {
                         1
                     } else if ny > 0.4 {
                         2
-                    } else if (ny + 0.52).abs() < 0.1 && nxo > -0.15 && nxo < 0.5 {
+                    } else if (ny + 0.5).abs() < 0.1 && nxo > 0.0 && nxo < 0.42 {
                         4
                     } else {
                         3
@@ -3028,13 +3021,20 @@ mod motion {
     use super::*;
 
     #[test]
-    fn jiggle_lags_and_settles() {
-        let walk: Vec<(f32, f32)> = (0..WALK_FRAMES).map(|k| jiggle(1, k as f32 / WALK_FRAMES as f32)).collect();
-        let idle: Vec<(f32, f32)> = (0..IDLE_FRAMES).map(|k| jiggle(0, k as f32 / IDLE_FRAMES as f32)).collect();
-        println!("walk {walk:?}\nidle {idle:?}");
-        let span = |v: &[(f32, f32)]| v.iter().map(|p| p.0).fold(f32::MIN, f32::max) - v.iter().map(|p| p.0).fold(f32::MAX, f32::min);
-        assert!(span(&walk) > 0.8 && span(&walk) < 4.0, "walk jiggle span {}", span(&walk));
-        assert!(span(&idle) > 0.05 && span(&idle) < 1.5, "idle jiggle span {}", span(&idle));
+    fn bust_motion_steps_are_small() {
+        for f in 0..5 {
+            for t in [&JIGGLE_WALK[f][..], &JIGGLE_IDLE[f][..]] {
+                for k in 0..t.len() {
+                    let d = (t[(k + 1) % t.len()] - t[k]).abs();
+                    assert!(d <= 2, "figure {f}: jump of {d}px between frames");
+                }
+            }
+        }
+        // Bigger busts never move less than smaller ones.
+        let span = |t: &[i32]| t.iter().max().unwrap() - t.iter().min().unwrap();
+        for f in 1..5 {
+            assert!(span(&JIGGLE_WALK[f]) >= span(&JIGGLE_WALK[f - 1]));
+        }
     }
 }
 
