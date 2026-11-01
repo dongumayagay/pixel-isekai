@@ -3,7 +3,7 @@
 // the visual QA linter live, browse random galleries and export sheets.
 
 import './creator.css';
-import init, { creator_info, render_frame, random_look, lint_look, cast_list } from './pkg/sim.js';
+import init, { creator_info, render_frame, random_look, lint_look, cast_list, profession_list, dress_look } from './pkg/sim.js';
 import wasmUrl from './pkg/sim_bg.wasm?url';
 
 interface Look {
@@ -19,8 +19,8 @@ interface Info {
 }
 
 const OUTFITS = ['Tunic', 'Dress', 'Robe', 'Apron', 'Armor', 'Cloak', 'Vest', 'Dirndl', 'Guild', 'Smith', 'Gothic gown', 'Long coat'];
-const HATS = ['None', 'Straw hat', 'Bandana', 'Helmet', 'Hood', 'Cap', 'Witch hat', 'Flower', 'Chef', 'Ribbon', 'Maid band'];
-const HELD = ['None', 'Staff', 'Hammer', 'Mug', 'Book', 'Sword', 'Basket'];
+const HATS = ['None', 'Straw hat', 'Bandana', 'Helmet', 'Hood', 'Cap', 'Witch hat', 'Flower', 'Chef', 'Ribbon', 'Maid band', 'Miner helmet'];
+const HELD = ['None', 'Staff', 'Hammer', 'Mug', 'Book', 'Sword', 'Basket', 'Axe', 'Pickaxe', 'Hoe', 'Fishing rod', 'Spear', 'Ladle'];
 const STYLES = ['Short', 'Long', 'Ponytail', 'Bun', 'Spiky', 'Bob', 'Twin tails', 'Side-swept'];
 const BEASTS = ['Cat', 'Fox', 'Wolf', 'Rabbit'];
 // No child characters for now; age 1 = adult, 2 = elder.
@@ -256,6 +256,7 @@ function frameAt(t: number, dir: number): number {
 function tick(t: number) {
   DIRS.forEach((v, i) => draw(viewCanvases[i], look, v.dir, frameAt(t, v.dir), v.flip, zoom));
   castLooks.forEach((l, i) => draw(castCanvases[i], l, 0, frameAt(t + i * 211, 0), false, 2));
+  profLooks.forEach((l, i) => draw(profCanvases[i], l, 0, frameAt(t + i * 173, 0), false, 2));
   galleryLooks.forEach((l, i) => {
     const phase = t + i * 97;
     const f = ANIMS.Walk.frames[Math.floor((phase * speed) / 100) % 6];
@@ -287,6 +288,35 @@ function buildCast() {
     };
     host.appendChild(card);
     castCanvases.push(cv);
+  });
+}
+
+const profCanvases: HTMLCanvasElement[] = [];
+let profLooks: Look[] = [];
+function buildProfessions() {
+  const host = $('#profs');
+  const names = JSON.parse(profession_list()) as string[];
+  profLooks = names.map((_, i) => {
+    const base = JSON.parse(random_look(9000 + i)) as Look;
+    const person = { ...base, race: 0, age: 1, female: i % 2 === 0, hat: 0, held: 0 };
+    return JSON.parse(dress_look(JSON.stringify(person), i, 77 + i)) as Look;
+  });
+  names.forEach((name, i) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    const cv = document.createElement('canvas');
+    cv.width = info.fw * 2;
+    cv.height = info.fh * 2;
+    card.appendChild(cv);
+    const s = document.createElement('small');
+    s.textContent = name;
+    card.appendChild(s);
+    card.onclick = () => {
+      set(profLooks[i]);
+      document.querySelector('main')!.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    host.appendChild(card);
+    profCanvases.push(cv);
   });
 }
 
@@ -371,6 +401,7 @@ async function boot() {
       <div class="views" id="views"></div>
       <div id="qa"></div>
       <section><h2>Core cast</h2><div class="gallery" id="cast"></div></section>
+      <section><h2>Professions — signature looks</h2><div class="gallery" id="profs"></div></section>
       <section><h2>Every frame</h2><div class="sheet" id="sheet"></div></section>
       <section><h2>Gallery — click to edit <button id="reroll">Reroll</button></h2><div class="gallery" id="gallery"></div></section>
     </main>`;
@@ -401,6 +432,7 @@ async function boot() {
   buildViews();
   set({});
   buildCast();
+  buildProfessions();
   buildGallery();
   requestAnimationFrame(tick);
 }

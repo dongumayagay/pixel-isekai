@@ -210,3 +210,20 @@ pub fn cast_list() -> String {
     let v: Vec<_> = people::cast().into_iter().map(|(n, l)| serde_json::json!({ "name": n, "look": l })).collect();
     serde_json::Value::Array(v).to_string()
 }
+
+/// Working professions, as JSON names (index = job for `dress_look`).
+#[wasm_bindgen]
+pub fn profession_list() -> String {
+    let v: Vec<_> = crate::game::villager::Job::WORKING.iter().map(|j| j.label()).collect();
+    serde_json::to_string(&v).unwrap()
+}
+
+/// A look dressed in a profession's signature outfit.
+#[wasm_bindgen]
+pub fn dress_look(look_json: &str, job: usize, seed: f64) -> String {
+    let mut look = look_from(look_json);
+    let jobs = crate::game::villager::Job::WORKING;
+    let mut rng = crate::rng::Rng::new(seed as u64);
+    jobs[job % jobs.len()].dress(&mut look, &mut rng);
+    serde_json::to_string(&look).unwrap()
+}

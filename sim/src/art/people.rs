@@ -73,6 +73,13 @@ pub mod held {
     pub const BOOK: u8 = 4;
     pub const SWORD: u8 = 5;
     pub const BASKET: u8 = 6;
+    pub const AXE: u8 = 7;
+    pub const PICKAXE: u8 = 8;
+    pub const HOE: u8 = 9;
+    pub const ROD: u8 = 10;
+    pub const SPEAR: u8 = 11;
+    pub const LADLE: u8 = 12;
+    pub const COUNT: u8 = 13;
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
@@ -84,7 +91,7 @@ pub struct Look {
     pub bottom: u8,
     pub outfit: u8,
     /// 0 none, 1 straw hat, 2 bandana, 3 helmet, 4 hood, 5 cap, 6 witch hat,
-    /// 7 flower, 8 chef toque, 9 ribbon, 10 maid headband
+    /// 7 flower, 8 chef toque, 9 ribbon, 10 maid headband, 11 miner helmet
     pub hat: u8,
     pub hat_color: u8,
     pub female: bool,
@@ -157,6 +164,7 @@ pub const BUILDS_F: [&str; 4] = ["Slim", "Standard", "Curvy", "Thick"];
 pub const BUILDS_M: [&str; 4] = ["Slim", "Standard", "Muscular", "Heavy"];
 
 pub const HAIR_STYLES: u8 = 8;
+pub const HATS: u8 = 12;
 
 impl Look {
     pub fn random(rng: &mut Rng, female: bool, age: u8) -> Look {
@@ -1643,6 +1651,60 @@ fn held_item(cv: &mut Canvas, look: &Look, hand: V2, dir: u8, raised: bool, c: &
             let g = if raised { bb } else { v(x + 0.6, y + 2.0) };
             cv.capsule(v(g.x - 3.5, g.y), v(g.x + 3.5, g.y), 1.1, 1.1, &gold5(), 0.0);
         }
+        held::AXE | held::PICKAXE => {
+            // Gripped near the handle's end: head down at rest, up to swing.
+            let (grip, head) = if raised { (v(x, y + 2.0), v(x, y - 11.0)) } else { (v(x, y - 3.0), v((x + 1.0).min(FW as f32 - 9.0), (y + 10.0).min(FH as f32 - 6.0))) };
+            cv.capsule(grip, head, 1.2, 1.2, &wood, 0.0);
+            cv.begin();
+            if look.held == held::AXE {
+                // Bearded blade flaring out to a curved, bright cutting edge.
+                let up = if raised { -1.0 } else { 1.0 };
+                for k in 0..6 {
+                    let t = k as f32;
+                    let half = 1.2 + t * 0.55;
+                    let x = (head.x + 1.0 + t).round() as i32;
+                    for dy in (-half).round() as i32..=(half).round() as i32 {
+                        let edge = k == 5;
+                        let col = if edge { c.metal[4] } else if dy as f32 * up < 0.0 { c.metal[3] } else { c.metal[2] };
+                        cv.fill(x, (head.y + dy as f32 * up).round() as i32, col);
+                    }
+                }
+            } else {
+                // Pick: a curved spike either way.
+                for s in [-1.0f32, 1.0] {
+                    cv.capsule(head, head.add(v(s * 5.0, 1.5)), 1.8, 0.6, &c.metal, 0.05);
+                }
+            }
+        }
+        held::HOE => {
+            let (top, bot) = if raised { (v(x - 2.0, y - 16.0), v(x + 1.0, y + 8.0)) } else { (v(x, (y - 14.0).max(11.0)), v(x, (y + 15.0).min(FH as f32 - 6.0))) };
+            cv.capsule(top, bot, 1.1, 1.1, &wood, 0.0);
+            cv.begin();
+            let blade = if raised { top } else { bot };
+            cv.capsule(blade, blade.add(v(4.0, if raised { -1.0 } else { 1.0 })), 1.6, 1.4, &c.metal, 0.05);
+        }
+        held::ROD => {
+            let tip = v((x + 9.0).min(FW as f32 - 4.0), (y - 26.0).max(6.0));
+            cv.capsule(v(x, y + 2.0), tip, 1.1, 0.6, &wood, 0.0);
+            cv.begin();
+            let line = [hex(0x8a8a9a), hex(0xb8b8c8), hex(0xd8d8e4), hex(0xeeeef6), hex(0xffffff)];
+            cv.capsule(tip, v(tip.x + 1.0, y + 6.0), 0.5, 0.5, &line, 0.0);
+            let red = [hex(0x5a1010), hex(0x9a2020), hex(0xd84040), hex(0xf07070), hex(0xffa0a0)];
+            cv.ellipse(v(tip.x + 1.0, y + 7.0), 1.1, 1.1, &red, 0.0);
+        }
+        held::SPEAR => {
+            let top = (y - 34.0).max(13.0);
+            cv.capsule(v(x, top), v(x, (y + 16.0).min(FH as f32 - 6.0)), 1.1, 1.1, &wood, 0.0);
+            cv.begin();
+            cv.capsule(v(x, top), v(x, top - 7.0), 2.0, 0.4, &c.metal, 0.1);
+            let red = [hex(0x5a1010), hex(0x9a2020), hex(0xd84040), hex(0xf07070), hex(0xffa0a0)];
+            cv.ellipse(v(x, top + 1.5), 1.6, 1.2, &red, 0.0);
+        }
+        held::LADLE if dir != DIR_UP => {
+            cv.capsule(v(x, y - 6.0), v(x, y + 4.0), 0.8, 0.8, &c.metal, 0.0);
+            cv.begin();
+            cv.ellipse(v(x + 0.5, y + 6.0), 2.4, 1.8, &c.metal, 0.1);
+        }
         held::BASKET if dir != DIR_UP => {
             let wick = [hex(0x5a3a1c), hex(0x8a6a3a), hex(0xa8844e), hex(0xc8a464), hex(0xe0c080)];
             cv.capsule(v(x - 3.5, y + 2.5), v(x + 3.5, y + 2.5), 3.0, 3.0, &wick, 0.0);
@@ -1687,34 +1749,38 @@ fn face_hw(look: &Look, dy: i32) -> f32 {
 /// Side-view head rows (left, right) offsets from x=32 for dy -13..=14:
 /// round skull at the back, forehead, a one-pixel nose, lips and chin.
 const SIDE_HEAD: [(i32, i32); 28] = [
+    // Cranium (under the hair).
     (-6, 5),
     (-9, 8),
     (-10, 9),
     (-11, 10),
     (-12, 11),
     (-12, 11),
+    (-13, 11),
     (-13, 12),
     (-13, 12),
     (-13, 12),
     (-13, 12),
     (-13, 12),
     (-13, 12),
+    // Brow, a slight eye socket, cheek, nose tip at the eye's bottom, lips,
+    // chin. Behind the ear the skull narrows into the nape, and the jaw
+    // angles from under the ear down to the chin.
     (-13, 12),
     (-13, 12),
-    (-13, 12),
-    (-13, 12),
-    (-13, 12),
-    (-13, 12),
-    (-13, 12),
-    (-13, 12),
-    (-13, 12),
-    (-12, 12),
-    (-12, 12),
-    (-12, 13),
-    (-11, 12),
+    (-13, 11),
+    (-12, 11),
+    (-12, 11),
+    (-11, 11),
     (-10, 11),
-    (-8, 11),
-    (-3, 9),
+    (-9, 12),
+    (-8, 12),
+    (-7, 13),
+    (-6, 12),
+    (-6, 11),
+    (-1, 11),
+    (2, 10),
+    (4, 9),
 ];
 
 fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
@@ -1723,10 +1789,6 @@ fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     cv.begin();
     match dir {
         DIR_SIDE => {
-            // Ear behind the cheek.
-            if look.race != RACE_ELF {
-                cv.ellipse(v(30.5, hc.y + 4.0), 2.2, 3.0, &c.skin, -0.05);
-            }
             for dy in -13..=14 {
                 let (l, r) = SIDE_HEAD[(dy + 13) as usize];
                 for x in cx + l..cx + r {
@@ -1759,6 +1821,17 @@ fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
         }
     }
 }
+
+/// Human ear in profile, facing right: the helix rim at the top and back,
+/// the shadowed bowl in the middle, the lobe at the bottom.
+const EAR_SIDE: [&str; 6] = [
+    ".ML.",
+    "MLLL",
+    "MLDL",
+    "MLDL",
+    "MLL.",
+    ".ML.",
+];
 
 /// Female eye, left side (column 0 is the outer corner). Two-row lash bar
 /// tilting down toward the nose, a 4-wide iris dark at the top and light at
@@ -1881,7 +1954,7 @@ fn face(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, pose: Pose
         }
         facial_hair(cv, look, dir, cy, c);
     } else if dir == DIR_SIDE {
-        let ex = 37;
+        let ex = 36;
         let ey = cy + 3;
         stamp(cv, ex, ey, if pose.blink { &EYE_SIDE_CLOSED } else { &EYE_SIDE }, false, &eye_pal);
         if soft {
@@ -2383,6 +2456,21 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     let rim = nx * nx + ny * ny > 0.8 && ny > -0.2;
                     cv.fill(x, y, h[if rim { 2 } else { 3 }]);
                 }
+            }
+            // The ear sits on the hair just behind the jaw hinge, from the
+            // eye line to the nose, tucked behind the side lock. Beastfolk
+            // hear with their animal ears and elves draw their own.
+            if !matches!(look.race, RACE_ELF | RACE_BEAST) {
+                let s = c.skin;
+                let pal = |ch: char| match ch {
+                    'L' => Some(s[3]),
+                    'M' => Some(s[2]),
+                    'D' => Some(s[1]),
+                    _ => None,
+                };
+                cv.begin();
+                stamp_fill(cv, 26, cy.round() as i32 + 3, &EAR_SIDE, false, &pal);
+                cv.begin();
             }
             // Side lock in front of the ear.
             let (ll, lw) = k.lock;
@@ -2983,26 +3071,35 @@ fn hat(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             cv.capsule(v(hc.x, top - 1.0), v(hc.x - if side { 5.0 } else { 0.0 }, top - 7.0), 2.2, 1.4, &plume, 0.0);
         }
         4 => {
-            let (x0, x1) = ((hc.x - rx - 3.0) as i32, (hc.x + rx + 3.0) as i32);
-            for y in (top - 2.0) as i32..(hc.y + ry + 4.0) as i32 {
-                for x in x0..=x1 {
-                    let nx = (x as f32 + 0.5 - hc.x) / (rx + 3.0);
-                    let ny = (y as f32 + 0.5 - hc.y) / (ry + 3.0);
-                    let d = nx * nx + ny * ny;
-                    if d > 1.0 {
+            // Hood: close over the crown, opening framed by a shadowed rim
+            // around the face, draping down onto the shoulders.
+            let (hr, vr) = (rx + 1.6, ry + 1.4);
+            let cc = v(hc.x - if side { 1.5 } else { 0.0 }, hc.y - 1.0);
+            let cyi = hc.y.round() as i32;
+            let bottom = hc.y + ry + 3.0;
+            for y in (cc.y - vr - 1.0) as i32..bottom as i32 {
+                for x in (cc.x - hr - 3.0) as i32..=(cc.x + hr + 3.0) as i32 {
+                    let fy = y as f32 + 0.5;
+                    let nx = (x as f32 + 0.5 - cc.x) / hr;
+                    let ny = (fy - cc.y) / vr;
+                    // Round over the head, then flaring a little to the shoulders.
+                    let flare = if ny > 0.3 { 1.0 + (ny - 0.3) * 0.35 } else { 1.0 };
+                    let inside = if ny < 0.0 { nx * nx + ny * ny <= 1.0 } else { nx.abs() <= flare };
+                    if !inside {
                         continue;
                     }
-                    let dy = y - hc.y.round() as i32;
-                    let face_open = match dir {
-                        DIR_DOWN => dy > -6 && (x as f32 + 0.5 - 32.0).abs() < face_hw(look, dy.min(14)) - 0.5,
-                        DIR_SIDE => x > 33 && dy > -6,
+                    let dy = y - cyi;
+                    let open = |w: f32| match dir {
+                        DIR_DOWN => dy > -5 && (x as f32 + 0.5 - 32.0).abs() < face_hw(look, dy.min(14)) - w,
+                        DIR_SIDE => x as f32 + 0.5 > 33.0 + w && dy > -5,
                         _ => false,
                     };
-                    if face_open {
+                    if open(0.5) {
                         continue;
                     }
-                    let nz = (1.0 - d).sqrt();
-                    cv.fill(x, y, hcol[tone(ny, nz, 0.0)]);
+                    let rim = open(-1.5);
+                    let i = if rim { 1 } else if nx.abs() > 0.82 || ny > 0.8 { 2 } else { 3 };
+                    cv.fill(x, y, hcol[i]);
                 }
             }
         }
@@ -3064,6 +3161,30 @@ fn hat(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             cv.capsule(bc, bc.add(v(-1.8, 5.0)), 1.1, 0.8, hcol, -0.1);
             cv.capsule(bc, bc.add(v(1.8, 5.0)), 1.1, 0.8, hcol, -0.15);
         }
+        11 => {
+            // Miner's helmet: hard ochre dome, brim, and a lamp at the front.
+            let shell = [hex(0x5a3c10), hex(0x9a6e1c), hex(0xd0a030), hex(0xf0cc58), hex(0xfff0a0)];
+            let cc = v(hc.x - if side { 1.0 } else { 0.0 }, hc.y - 1.0);
+            for y in (top - 3.0) as i32..(top + 8.0) as i32 {
+                for x in (hc.x - rx - 2.0) as i32..=(hc.x + rx + 2.0) as i32 {
+                    let nx = (x as f32 + 0.5 - cc.x) / (rx + 1.6);
+                    let ny = (y as f32 + 0.5 - cc.y) / (ry + 1.6);
+                    let d = nx * nx + ny * ny;
+                    if d <= 1.0 {
+                        cv.fill(x, y, shell[tone(ny, (1.0 - d).sqrt(), 0.06)]);
+                    }
+                }
+            }
+            cv.begin();
+            cv.profile(top + 7.0, top + 9.0, |_| cc.x, |_| rx + 2.6, &shell, -0.1);
+            let lamp = [hex(0x8a6a20), hex(0xd8b040), hex(0xfff0a0), hex(0xfffce0), hex(0xffffff)];
+            cv.begin();
+            match dir {
+                DIR_DOWN => cv.ellipse(v(hc.x, top + 3.5), 2.4, 2.2, &lamp, 0.2),
+                DIR_SIDE => cv.ellipse(v(hc.x + rx + 1.0, top + 4.0), 1.6, 2.2, &lamp, 0.2),
+                _ => {}
+            }
+        }
         10 => {
             let w = [hex(0xb8b0ae), hex(0xd8d2d0), hex(0xf0ecea), hex(0xfcfaf8), hex(0xffffff)];
             cv.profile(top + 1.5, top + 4.5, |_| hc.x, |_| rx * 0.88, &w, 0.0);
@@ -3104,8 +3225,8 @@ impl Look {
         l.hair_style = rng.below(HAIR_STYLES as usize) as u8;
         l.hair = rng.below(pal::HAIR.len()) as u8;
         l.outfit = rng.below(outfit::COUNT as usize) as u8;
-        l.hat = if rng.chance(0.4) { rng.below(11) as u8 } else { 0 };
-        l.held = if rng.chance(0.4) { rng.below(7) as u8 } else { held::NONE };
+        l.hat = if rng.chance(0.4) { rng.below(HATS as usize) as u8 } else { 0 };
+        l.held = if rng.chance(0.4) { rng.below(held::COUNT as usize) as u8 } else { held::NONE };
         l.glasses = rng.chance(0.15);
         l.figure = rng.below(5) as u8;
         l.build = rng.below(4) as u8;

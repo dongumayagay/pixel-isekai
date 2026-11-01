@@ -30,6 +30,24 @@ pub enum Job {
 }
 
 impl Job {
+    /// Working professions (everyone but children and the retired).
+    pub const WORKING: [Job; 14] = [
+        Job::Farmer,
+        Job::Woodcutter,
+        Job::Miner,
+        Job::Fisher,
+        Job::Smith,
+        Job::Merchant,
+        Job::Innkeeper,
+        Job::Guard,
+        Job::Priest,
+        Job::Adventurer,
+        Job::Healer,
+        Job::Scholar,
+        Job::Mage,
+        Job::Cook,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Job::Farmer => "Farmer",
@@ -52,6 +70,8 @@ impl Job {
     }
     /// Outfit and hat that make the job readable at a glance.
     /// Outfit, hat and held item that make the job readable at a glance.
+    /// Each profession's signature look: outfit, headwear, palette and tool
+    /// chosen so the job reads at a glance, with a little personal variety.
     pub fn dress(self, look: &mut Look, rng: &mut Rng) {
         look.held = held::NONE;
         look.glasses = false;
@@ -60,33 +80,35 @@ impl Job {
         }
         match self {
             Job::Farmer => {
-                if rng.chance(0.6) {
-                    look.hat = 1;
-                }
-                if look.outfit != outfit::DRESS && rng.chance(0.4) {
-                    look.outfit = outfit::VEST;
-                }
-                if rng.chance(0.3) {
-                    look.held = held::BASKET;
-                }
+                look.hat = if rng.chance(0.8) { 1 } else { 0 };
+                look.outfit = if look.female { outfit::DRESS } else { *rng.pick(&[outfit::VEST, outfit::TUNIC]) };
+                look.top = *rng.pick(&[2, 3, 0]);
+                look.bottom = *rng.pick(&[3, 0]);
+                look.held = if rng.chance(0.7) { held::HOE } else { held::BASKET };
             }
             Job::Woodcutter => {
-                look.top = 1;
                 look.outfit = outfit::TUNIC;
-                if rng.chance(0.5) {
+                look.top = 1;
+                look.bottom = 3;
+                if rng.chance(0.4) {
                     look.hat = 2;
+                    look.hat_color = 2;
                 }
+                look.held = held::AXE;
             }
             Job::Miner => {
-                look.hat = 5;
-                look.hat_color = 3;
-                look.top = 8;
                 look.outfit = outfit::TUNIC;
+                look.hat = 11;
+                look.top = 8;
+                look.bottom = 3;
+                look.held = held::PICKAXE;
             }
             Job::Fisher => {
-                look.hat = if rng.chance(0.5) { 5 } else { 1 };
-                look.hat_color = 0;
-                look.top = 9;
+                look.outfit = *rng.pick(&[outfit::TUNIC, outfit::VEST]);
+                look.hat = 1;
+                look.top = *rng.pick(&[9, 0]);
+                look.bottom = *rng.pick(&[3, 8]);
+                look.held = held::ROD;
             }
             Job::Smith => {
                 look.outfit = outfit::SMITH;
@@ -117,32 +139,32 @@ impl Job {
             }
             Job::Guard => {
                 look.outfit = outfit::ARMOR;
-                look.hat = 3;
+                look.hat = if look.female && rng.chance(0.5) { 0 } else { 3 };
                 look.hat_color = 1;
-                look.held = held::SWORD;
+                look.held = held::SPEAR;
             }
             Job::Priest => {
                 look.outfit = outfit::ROBE;
                 look.top = 7;
                 look.held = held::BOOK;
-                if rng.chance(0.4) {
+                if rng.chance(0.5) {
                     look.hat = 4;
                     look.hat_color = 7;
                 }
             }
             Job::Adventurer => {
-                look.outfit = outfit::CLOAK;
+                look.outfit = if look.female && rng.chance(0.4) { outfit::VEST } else { outfit::CLOAK };
                 look.hat_color = *rng.pick(&[1, 2, 5, 9]);
                 look.held = held::SWORD;
-                if rng.chance(0.3) {
+                if rng.chance(0.25) {
                     look.hat = 4;
                 }
             }
             Job::Healer => {
                 look.outfit = outfit::ROBE;
-                look.top = *rng.pick(&[7, 2]);
-                look.held = held::BASKET;
-                if rng.chance(0.5) {
+                look.top = 7;
+                look.held = held::STAFF;
+                if rng.chance(0.4) {
                     look.hat = 4;
                     look.hat_color = 7;
                 }
@@ -162,6 +184,7 @@ impl Job {
             Job::Cook => {
                 look.outfit = outfit::APRON;
                 look.hat = 8;
+                look.held = held::LADLE;
             }
             Job::Child => {
                 if look.female && rng.chance(0.5) {
