@@ -1765,26 +1765,24 @@ const SIDE_HEAD: [(i32, i32); 28] = [
     (-13, 12),
     (-13, 12),
     (-13, 12),
-    // Face front on the same rows as the front view: forehead and bridge
-    // straight down past the eye, a one-pixel nose on the front nose row,
-    // the lips on the mouth row, a small chin tucked behind the nose. Behind
-    // the ear the skull narrows into the nape, and the jaw angles from under
-    // the ear to the chin.
+    // Brow, a slight eye socket, cheek, nose tip at the eye's bottom, lips,
+    // chin. Behind the ear the skull narrows straight into the nape, and the
+    // jaw angles from under the ear down to the chin.
     (-13, 12),
     (-13, 12),
-    (-13, 12),
-    (-12, 12),
-    (-12, 12),
-    (-11, 12),
-    (-9, 12),
-    (-7, 12),
-    (-5, 12),
+    (-13, 11),
+    (-12, 11),
+    (-12, 11),
+    (-11, 11),
+    (-5, 11),
     (-4, 12),
     (-4, 12),
     (-4, 13),
-    (-3, 12),
-    (2, 12),
-    (5, 11),
+    (-4, 12),
+    (-4, 11),
+    (-3, 11),
+    (2, 10),
+    (4, 9),
 ];
 
 fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
@@ -1872,26 +1870,15 @@ const EYE_CLOSED: [&str; 8] = [
     ".......",
 ];
 /// Side-view eye facing right (column 0 is the back corner).
-/// Same rows as the front eye; about half its width is visible, the lash
-/// bar stays as thick, and the iris is pushed to the front edge with the
-/// white showing behind it.
 const EYE_SIDE: [&str; 8] = [
     "aKKKa",
     "KKKKK",
     ".bDDK",
-    ".SWDD",
-    ".SDMD",
-    "..MLM",
-    "..LLM",
-    "...b.",
-];
-const EYE_SIDE_M: [&str; 6] = [
-    "aKKKa",
-    "KKKKK",
-    ".SDDK",
-    ".SWDM",
-    "..MLM",
-    "...b.",
+    ".WDDS",
+    ".WDMS",
+    ".MMLS",
+    "..LM.",
+    "..b..",
 ];
 const EYE_SIDE_CLOSED: [&str; 8] = [".....", ".....", ".....", ".....", ".....", "KKKKa", ".bb..", "....."];
 
@@ -1972,24 +1959,15 @@ fn face(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, pose: Pose
         }
         facial_hair(cv, look, dir, cy, c);
     } else if dir == DIR_SIDE {
-        // Two pixels of skin between the eye and the bridge, as in front.
-        let ex = 37;
+        let ex = 36;
         let ey = cy + 3;
-        if pose.blink {
-            stamp(cv, ex, ey, &EYE_SIDE_CLOSED, false, &eye_pal);
-        } else if soft {
-            stamp(cv, ex, ey, &EYE_SIDE, false, &eye_pal);
-        } else {
-            stamp(cv, ex, ey + 1, &EYE_SIDE_M, false, &eye_pal);
-        }
-        // Nose shadow under the tip, on the front view's nose row.
-        cv.put(32 + 12, cy + 12, c.skin[2]);
+        stamp(cv, ex, ey, if pose.blink { &EYE_SIDE_CLOSED } else { &EYE_SIDE }, false, &eye_pal);
         if soft {
             for k in 0..3 {
                 cv.put(ex - 1 + k, cy + 11, blush);
             }
         }
-        cv.put(32 + 11, cy + 13, lip);
+        cv.put(32 + 9, cy + 13, lip);
         facial_hair(cv, look, dir, cy, c);
         if look.glasses {
             let g = hex(0x4a3a30);
@@ -2395,24 +2373,31 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             let neck_w = if look.female { 6.0 } else { 7.0 };
             for y in (mc.y - ry).floor() as i32..=nape.ceil() as i32 {
                 let fy = y as f32 + 0.5;
-                // An egg from behind: round crown, widest at the temples,
-                // then curving in smoothly to the nape (no bell flare and
-                // pinch), never narrower than the neck.
+                // From behind: a round crown, full width to the ears, then
+                // the back of the skull curves in quickly under the ears and
+                // eases into the neck, like the jaw line seen from the front
+                // (a late pinch reads as a bell or a bowling ball on a stick).
+                // A hair under the full radius keeps the widest row from
+                // poking out a one-pixel nub on each side.
+                let er = rx - 0.4;
+                let ear = hc.y + 3.0;
                 let half = if fy < mc.y {
                     let ny = (fy - mc.y) / ry;
-                    rx * (1.0 - ny * ny).max(0.0).sqrt()
+                    er * (1.0 - ny * ny).max(0.0).sqrt()
+                } else if fy < ear {
+                    er
                 } else {
-                    let t = ((fy - mc.y) / (nape - mc.y + 2.0)).clamp(0.0, 1.0);
-                    (rx * (1.0 - t * t).sqrt()).max(neck_w)
+                    let t = ((fy - ear) / (nape - ear).max(1.0)).clamp(0.0, 1.0);
+                    er + (neck_w + 0.5 - er) * (1.0 - (1.0 - t).powf(1.8))
                 };
                 for x in (32.0 - rx - 1.0) as i32..=(32.0 + rx + 1.0) as i32 {
                     let nx = (x as f32 + 0.5 - mc.x) / rx;
                     let ny = (fy - mc.y) / ry;
                     let d = (x as f32 + 0.5 - 32.0).abs();
                     // Hairline dips in the middle and rises at the sides.
-                    // Gathered hair shows the hairline: it curves up behind
-                    // the ears into a rounded V at the nape.
-                    let rise = if gathered { (d / rx).min(1.0).powf(1.6) * 7.0 } else { (d / neck_w).min(1.0).powi(2) * 2.0 };
+                    // The hairline curves up behind the ears into a rounded U
+                    // at the nape; gathered hair shows more of it.
+                    let rise = (d / rx).min(1.0).powf(1.6) * if gathered { 7.0 } else { 4.0 };
                     if d > half + EPS || fy > nape - rise {
                         continue;
                     }
@@ -2460,7 +2445,10 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                 _ => &[(5.0, 2.0, 1.5), (9.0, 0.5, 1.6), (12.5, 1.5, 1.4)],
             };
             let nape = cy + k.nape;
-            for y in (mc.y - ry).floor() as i32..=nape.ceil() as i32 {
+            // Long hair falls over the ear and the nape down to the jaw; only
+            // shorter cuts show the ear.
+            let long = k.back > 0.0;
+            for y in (mc.y - ry).floor() as i32..=(if long { cy + 13.0 } else { nape }).ceil() as i32 {
                 for x in (mc.x - rx - 1.0) as i32..=(mc.x + rx + 1.0) as i32 {
                     let nx = (x as f32 + 0.5 - mc.x) / rx;
                     let ny = (y as f32 + 0.5 - mc.y) / ry;
@@ -2480,7 +2468,7 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                         if fy > cy - 1.0 {
                             continue;
                         }
-                    } else if fy > nape - ((x as f32 - 22.0) / 11.0).clamp(0.0, 1.0) * 3.0 {
+                    } else if fy > if long { cy + 13.0 } else { nape - ((x as f32 - 22.0) / 11.0).clamp(0.0, 1.0) * 3.0 } {
                         // Behind the side lock the head is all hair, down to
                         // the nape; only the face shows in front of it.
                         continue;
@@ -2489,10 +2477,10 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     cv.fill(x, y, h[if rim { 2 } else { 3 }]);
                 }
             }
-            // The ear sits just behind the head's centre, from mid-eye down
-            // to the nose row, its front edge tucked under the side lock. Beastfolk
+            // The ear sits on the hair just behind the jaw hinge, from the
+            // eye line to the nose, tucked behind the side lock. Beastfolk
             // hear with their animal ears and elves draw their own.
-            if !matches!(look.race, RACE_ELF | RACE_BEAST) {
+            if !long && !matches!(look.race, RACE_ELF | RACE_BEAST) {
                 let s = c.skin;
                 let pal = |ch: char| match ch {
                     'L' => Some(s[3]),
@@ -2501,7 +2489,7 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     _ => None,
                 };
                 cv.begin();
-                stamp_fill(cv, 27, cy.round() as i32 + 5, &EAR_SIDE, false, &pal);
+                stamp_fill(cv, 27, cy.round() as i32 + 3, &EAR_SIDE, false, &pal);
                 cv.begin();
             }
             // Side lock in front of the ear.
