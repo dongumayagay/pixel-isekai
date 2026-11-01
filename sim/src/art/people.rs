@@ -739,6 +739,7 @@ fn colors(look: &Look) -> Colors {
 // ---------------------------------------------------------------- drawing
 
 pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
+    let look = &look.normalized();
     let mut img = Img::new(FW, FH);
     let pose = pose_for(frame_idx);
     // Solve the body bob so the lowest foot always rests on the ground.
@@ -2633,10 +2634,28 @@ impl Look {
         l.glasses = rng.chance(0.15);
         l.figure = rng.below(5) as u8;
         l.build = rng.below(4) as u8;
+        l.beard = rng.chance(0.3);
         if l.race == RACE_DEMON {
             l.skin = rng.below(pal::DEMON_SKIN.len()) as u8;
         }
-        l
+        l.normalized()
+    }
+
+    /// Enforce traits that only exist for some bodies: beards only on grown
+    /// men, figure (bust) only on grown women; children are never mature
+    /// (teens keep `mature` false until 18). Every render goes through this,
+    /// so no combination can break the rule.
+    pub fn normalized(mut self) -> Look {
+        if self.age == 0 {
+            self.mature = false;
+        }
+        if self.female || !self.mature {
+            self.beard = false;
+        }
+        if !self.female || !self.mature {
+            self.figure = default_figure();
+        }
+        self
     }
 
     /// Whether the front (or back) view should be mirror-symmetric. Tails
@@ -2824,6 +2843,35 @@ mod qa {
             }
         }
         assert!(failures.is_empty(), "{} looks failed QA:\n{}", failures.len(), failures[..failures.len().min(12)].join("\n"));
+    }
+}
+
+#[cfg(test)]
+mod traits {
+    use super::*;
+
+    #[test]
+    fn beards_only_on_men_and_figures_only_on_women() {
+        let mut rng = Rng::new(5);
+        for _ in 0..200 {
+            let l = Look::random_any(&mut rng);
+            // Asking for a beard on a woman or child changes nothing.
+            let mut bearded = l;
+            bearded.beard = true;
+            if l.female || !l.mature {
+                assert_eq!(frame(&bearded, DIR_DOWN, 0).px, frame(&Look { beard: false, ..l }, DIR_DOWN, 0).px);
+            }
+            // Figure has no effect on men, teens or children.
+            if !l.female || !l.mature {
+                assert_eq!(frame(&Look { figure: 4, ..l }, DIR_DOWN, 0).px, frame(&Look { figure: 0, ..l }, DIR_DOWN, 0).px);
+            }
+            let n = l.normalized();
+            assert!(!(n.beard && (n.female || !n.mature)));
+            assert!(!n.mature || n.age >= 1);
+            // A teen (adult stage, not yet 18) gets neither.
+            let teen = Look { mature: false, age: 1, beard: true, figure: 4, ..l }.normalized();
+            assert!(!teen.beard && teen.figure == default_figure());
+        }
     }
 }
 

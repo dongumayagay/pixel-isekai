@@ -118,8 +118,9 @@ function swatches(host: HTMLElement, cols: number[], isOn: (i: number) => boolea
 
 function set(patch: Partial<Look>) {
   look = { ...look, ...patch };
-  if (look.age === 0) look.mature = false;
-  else if (patch.age !== undefined) look.mature = true;
+  // Same rules as Look::normalized in Rust: beards only on adult men.
+  look.mature = look.age > 0;
+  if (look.female || look.age === 0) look.beard = false;
   if (look.race === 4) look.skin %= info.swatch.demon.length;
   else look.skin %= info.swatch.skin.length;
   location.hash = encodeURIComponent(JSON.stringify(look));
@@ -165,9 +166,10 @@ function renderControls() {
   buttons($('#c-hat'), HATS, (s) => s, (i) => look.hat === i, (i) => set({ hat: i }));
   swatches($('#c-hatc'), info.swatch.cloth, (i) => look.hat_color === i, (i) => set({ hat_color: i }));
   buttons($('#c-held'), HELD, (s) => s, (i) => look.held === i, (i) => set({ held: i }));
+  const extras = !look.female && look.age > 0 ? ['Glasses', 'Beard'] : ['Glasses'];
   buttons(
     $('#c-extra'),
-    ['Glasses', 'Beard'],
+    extras,
     (s) => s,
     (i) => (i === 0 ? look.glasses : look.beard),
     (i) => set(i === 0 ? { glasses: !look.glasses } : { beard: !look.beard }),
