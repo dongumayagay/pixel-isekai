@@ -407,9 +407,13 @@ pub(super) fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors
     let keys: Vec<(f32, f32)> = if side {
         Vec::new()
     } else {
+        // Shoulders slope over 4-5 rows as a convex curve (reference pack
+        // front idle: width 26 -> 33 across rows 50-54), not a 2-row step.
+        let n = if look.female { 5.0 } else { 6.5 };
         vec![
-            (sy - 0.5, if look.female { 5.0 } else { 6.5 }),
-            (sy + 2.0, b.shoulder_w),
+            (sy - 0.5, n),
+            (sy + 2.0, n + (b.shoulder_w - n) * 0.62),
+            (sy + 4.5, b.shoulder_w),
             (sy + 7.0, b.chest_w),
             (sy + 12.0, b.chest_w - 1.0),
             (b.waist_y, b.waist_w),

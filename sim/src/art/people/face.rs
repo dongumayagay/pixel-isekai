@@ -38,24 +38,27 @@ pub(super) const SIDE_HEAD: [(i32, i32); 28] = [
     (-13, 12),
     (-13, 12),
     (-13, 12),
-    // Brow, a slight eye socket, cheek, nose tip at the eye's bottom, lips,
-    // chin. Behind the ear the skull narrows straight into the nape, and the
-    // jaw angles from under the ear down to the chin.
+    // Profile relief measured off the reference pack's side idle (brow 44,
+    // eye socket 42, nose tip 46, chin 43 -> 41 on a 64-wide frame): brow,
+    // a 1 px eye socket, a 3 px nose over two rows at the eye's bottom,
+    // under-nose, lips, a receding chin. Behind: the nape curves in under
+    // the occiput and the jaw runs as one diagonal from under the ear to
+    // the chin, so the neck shows behind it instead of a skin block.
     (-13, 12),
     (-13, 12),
-    (-13, 11),
+    (-13, 12),
     (-12, 11),
     (-12, 11),
     (-11, 11),
-    (-5, 11),
-    (-4, 12),
-    (-4, 12),
-    (-4, 13),
-    (-4, 12),
-    (-4, 11),
-    (-3, 11),
-    (2, 10),
-    (4, 9),
+    (-9, 12),
+    (-8, 13),
+    (-6, 14),
+    (-4, 14),
+    (-2, 12),
+    (0, 12),
+    (2, 12),
+    (4, 11),
+    (6, 9),
 ];
 
 pub(super) fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
@@ -67,7 +70,8 @@ pub(super) fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors)
             for dy in -13..=14 {
                 let (l, r) = SIDE_HEAD[(dy + 13) as usize];
                 for x in cx + l..cx + r {
-                    let edge = x == cx + r - 1 || (dy >= 9 && x < cx + l + 2);
+                    // Shadow under the jaw line and under the chin.
+                    let edge = x == cx + r - 1 || (dy >= 6 && x < cx + l + 2) || dy == 14;
                     cv.fill(x, cy + dy, c.skin[if edge { 2 } else { 3 }]);
                 }
             }
@@ -80,9 +84,13 @@ pub(super) fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors)
                 // From behind, the back of the skull and jaw narrow smoothly
                 // into the neck under the hairline.
                 let hw = if dir == DIR_UP && dy > 4 {
-                    let neck = if look.female { 4.5 } else { 5.5 };
-                    let top = face_hw(look, 4);
-                    top + (neck - top) * ((dy - 4) as f32 / 8.0).min(1.0).powf(0.7)
+                    // Occiput: the skull's round bottom (a quarter ellipse
+                    // from the ear line to the nape, 6 rows), then only the
+                    // neck. The old trapezoid to the chin read as a huge
+                    // neck block from behind.
+                    let nape = b.neck_w + 0.8;
+                    let t = (dy as f32 - 4.0) / 6.0;
+                    (face_hw(look, 4) * (1.0 - t * t).max(0.0).sqrt()).max(nape)
                 } else {
                     face_hw(look, dy)
                 };

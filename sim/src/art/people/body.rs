@@ -327,7 +327,9 @@ pub(super) fn limbs(b: &Build, pose: Pose, dir: u8) -> Limbs {
     let sh_dx = if side { 0.0 } else { b.shoulder_w - 0.6 };
     // The arm's ball sits just under the shoulder line so the deltoid reads
     // as a one-pixel rounding, not a pad poking above the slope.
-    let sh_y = b.shoulder_y + 2.0 + b.arm_r * 0.6;
+    // The torso's shoulder slope runs 4-5 rows (reference pack: half-width
+    // grows 0.7 px per row), so the ball sits a little lower to stay under it.
+    let sh_y = b.shoulder_y + 3.0 + b.arm_r * 0.6;
     // The torso turns a touch toward the camera in profile: the far
     // shoulder edges forward, peeking past the chest line.
     let sh_l = v(b.cx - sh_dx + if side { 1.5 } else { 0.0 }, sh_y - far_up * 0.5);
@@ -521,11 +523,14 @@ pub(super) fn arm(cv: &mut Canvas, look: &Look, b: &Build, c: &Colors, (sh, el, 
 /// underside curving back to the ribs, shaded darker underneath.
 pub(super) fn bust_side(cv: &mut Canvas, b: &Build, by: f32, ramp: &R5, front: impl Fn(f32) -> f32) {
     let r = b.bust;
-    let top = by - r * 1.35;
+    let top = by - r * 1.15;
     let apex = by + r * 0.1;
     // Squash pushes it forward and lifts the underside; stretch droops.
-    let bottom = by + r * 0.95 + b.jsq;
-    let depth = r - b.jsq;
+    let bottom = by + r * 0.85 + b.jsq;
+    // A gentle forward curve grown out of the chest line (2-3 px at this
+    // scale, as in the reference pack and LPC), not a ball stuck on: a
+    // full radius of depth read as a pillow in profile.
+    let depth = r * 0.42 - b.jsq * 0.5;
     for y in top.floor() as i32..=bottom.ceil() as i32 {
         let fy = y as f32 + 0.5;
         if fy < top || fy > bottom {
