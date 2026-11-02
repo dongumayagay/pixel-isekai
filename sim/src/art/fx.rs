@@ -1,8 +1,10 @@
 //! Emote bubbles and small effect sprites.
 
 use super::canvas::Img;
-use crate::palette::{self as pal, hex};
+use crate::palette::{self as pal, hex, Rgb};
 
+/// Icon bitmaps indexed by emote id - 1. Each letter is a colour from
+/// `icon_colour`; anything else is transparent.
 const ICONS: [&[&str]; 11] = [
     // 1 heart
     &[".rr.rr.", "rRRrRRr", "rRRRRRr", ".rRRRr.", "..rRr..", "...r..."],
@@ -28,39 +30,42 @@ const ICONS: [&[&str]; 11] = [
     &["k...k", ".....", ".kkk.", "k...k", "...b.", "...b."],
 ];
 
+/// Lowercase is the base tone, uppercase its highlight.
+fn icon_colour(ch: char) -> Option<Rgb> {
+    let v = match ch {
+        'r' => 0xc8303a,
+        'R' => 0xf05a5a,
+        'k' => 0x3a3048,
+        'b' => 0x4a8ad8,
+        'B' => 0xa8d8ff,
+        'y' => pal::GOLD[2],
+        'Y' => pal::GOLD[4],
+        'o' => 0xb86a34,
+        'O' => 0xe09a54,
+        'w' => 0xf8f0e0,
+        _ => return None,
+    };
+    Some(hex(v))
+}
+
+/// Speech bubble holding emote `n` (1-based; out-of-range ids clamp to the
+/// last icon). The pivot is the tip of the bubble's tail.
 pub fn emote(n: usize) -> (Img, (i32, i32)) {
     let mut img = Img::new(20, 20);
     let paper = hex(0xfdf8ec);
     let rim = hex(0xd8cfc0);
-    // Bubble with a tail.
     img.ellipse_with(10.0, 8.5, 8.5, 7.5, |im, x, y, nx, ny| {
-        let c = if nx + ny > 0.9 { rim } else { paper };
-        im.set(x, y, c);
+        im.set(x, y, if nx + ny > 0.9 { rim } else { paper });
     });
-    img.set(9, 16, paper);
-    img.set(10, 16, paper);
-    img.set(10, 17, paper);
+    for (x, y) in [(9, 16), (10, 16), (10, 17)] {
+        img.set(x, y, paper);
+    }
     let rows = ICONS[(n - 1).min(ICONS.len() - 1)];
-    let h = rows.len() as i32;
-    let w = rows[0].len() as i32;
-    let ox = 10 - w / 2;
-    let oy = 9 - h / 2 - 1;
+    let ox = 10 - rows[0].len() as i32 / 2;
+    let oy = 9 - rows.len() as i32 / 2 - 1;
     for (y, row) in rows.iter().enumerate() {
         for (x, ch) in row.chars().enumerate() {
-            let c = match ch {
-                'r' => Some(hex(0xc8303a)),
-                'R' => Some(hex(0xf05a5a)),
-                'k' => Some(hex(0x3a3048)),
-                'b' => Some(hex(0x4a8ad8)),
-                'B' => Some(hex(0xa8d8ff)),
-                'y' => Some(hex(pal::GOLD[2])),
-                'Y' => Some(hex(pal::GOLD[4])),
-                'o' => Some(hex(0xb86a34)),
-                'O' => Some(hex(0xe09a54)),
-                'w' => Some(hex(0xf8f0e0)),
-                _ => None,
-            };
-            if let Some(c) = c {
+            if let Some(c) = icon_colour(ch) {
                 img.set(ox + x as i32, oy + y as i32, c);
             }
         }

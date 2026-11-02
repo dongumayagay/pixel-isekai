@@ -1,18 +1,29 @@
 //! A tiny RGBA pixel canvas with the drawing primitives the sprite
-//! generators need.
+//! generators need. Every write is clipped, so generators can draw freely
+//! past the edges without bounds checks of their own.
 
 use crate::palette::{hex, Rgb};
+
+/// The four edge neighbours, in the order outlines probe them.
+const NEIGHBOURS: [(i32, i32); 4] = [(0, 1), (0, -1), (1, 0), (-1, 0)];
 
 #[derive(Clone)]
 pub struct Img {
     pub w: i32,
     pub h: i32,
+    /// Row-major RGBA bytes, ready to upload as a texture.
     pub px: Vec<u8>,
 }
 
 impl Img {
     pub fn new(w: i32, h: i32) -> Img {
         Img { w, h, px: vec![0; (w * h * 4) as usize] }
+    }
+
+    /// Byte offset of a pixel. The caller must check `inside` first.
+    #[inline]
+    fn offset(&self, x: i32, y: i32) -> usize {
+        ((y * self.w + x) * 4) as usize
     }
 
     #[inline]
@@ -22,51 +33,40 @@ impl Img {
 
     #[inline]
     pub fn set(&mut self, x: i32, y: i32, c: Rgb) {
-        if self.inside(x, y) {
-            let i = ((y * self.w + x) * 4) as usize;
-            self.px[i] = c[0];
-            self.px[i + 1] = c[1];
-            self.px[i + 2] = c[2];
-            self.px[i + 3] = 255;
-        }
+        self.set_a(x, y, c, 255);
     }
 
     #[inline]
     pub fn set_a(&mut self, x: i32, y: i32, c: Rgb, a: u8) {
         if self.inside(x, y) {
-            let i = ((y * self.w + x) * 4) as usize;
-            self.px[i] = c[0];
-            self.px[i + 1] = c[1];
-            self.px[i + 2] = c[2];
-            self.px[i + 3] = a;
+            let i = self.offset(x, y);
+            self.px[i..i + 4].copy_from_slice(&[c[0], c[1], c[2], a]);
         }
     }
 
+    /// Colour of an opaque pixel; `None` if transparent or off the canvas.
     #[inline]
     pub fn get(&self, x: i32, y: i32) -> Option<Rgb> {
         if !self.inside(x, y) {
             return None;
         }
-        let i = ((y * self.w + x) * 4) as usize;
-        if self.px[i + 3] == 0 {
-            None
-        } else {
-            Some([self.px[i], self.px[i + 1], self.px[i + 2]])
-        }
+        let i = self.offset(x, y);
+        (self.px[i + 3] != 0).then(|| [self.px[i], self.px[i + 1], self.px[i + 2]])
     }
 
+    /// Alpha of a pixel, 0 off the canvas.
     #[inline]
     pub fn alpha(&self, x: i32, y: i32) -> u8 {
         if !self.inside(x, y) {
             return 0;
         }
-        self.px[((y * self.w + x) * 4 + 3) as usize]
+        self.px[self.offset(x, y) + 3]
     }
 
     pub fn clear_px(&mut self, x: i32, y: i32) {
         if self.inside(x, y) {
-            let i = ((y * self.w + x) * 4) as usize;
-            self.px[i..i + 4].copy_from_slice(&[0, 0, 0, 0]);
+            let i = self.offset(x, y);
+            self.px[i..i + 4].fill(0);
         }
     }
 
@@ -78,18 +78,21 @@ impl Img {
         }
     }
 
+    /// Horizontal run, inclusive of both ends in either order.
     pub fn hline(&mut self, x0: i32, x1: i32, y: i32, c: Rgb) {
         for x in x0.min(x1)..=x0.max(x1) {
             self.set(x, y, c);
         }
     }
 
+    /// Vertical run, inclusive of both ends in either order.
     pub fn vline(&mut self, x: i32, y0: i32, y1: i32, c: Rgb) {
         for y in y0.min(y1)..=y0.max(y1) {
             self.set(x, y, c);
         }
     }
 
+    /// Bresenham line, inclusive of both end points.
     pub fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, c: Rgb) {
         let (mut x, mut y) = (x0, y0);
         let dx = (x1 - x0).abs();
@@ -146,16 +149,10 @@ impl Img {
                 if src.alpha(x, y) != 0 {
                     continue;
                 }
-                let mut found: Option<(Rgb, i32, i32)> = None;
-                for (dx, dy) in [(0, 1), (0, -1), (1, 0), (-1, 0)] {
-                    if let Some(c) = src.get(x + dx, y + dy) {
-                        found = Some((c, dx, dy));
-                        break;
-                    }
-                }
-                if let Some((c, dx, dy)) = found {
-                    // Neighbour is to the bottom-right of us (we're on its
-                    // top-left edge) or the other way round.
+                let touching = NEIGHBOURS.iter().find_map(|&(dx, dy)| src.get(x + dx, y + dy).map(|c| (c, dx, dy)));
+                if let Some((c, dx, dy)) = touching {
+                    // A neighbour below or to the right puts us on the
+                    // shape's lit top-left edge.
                     let lit = dx > 0 || dy > 0;
                     let amt = if lit { 0.62 } else { 0.8 };
                     self.set(x, y, mix_dark(c, ink, amt));
@@ -169,10 +166,7 @@ impl Img {
         let src = self.clone();
         for y in 0..self.h {
             for x in 0..self.w {
-                if src.alpha(x, y) != 0 {
-                    continue;
-                }
-                if [(0, 1), (0, -1), (1, 0), (-1, 0)].iter().any(|(dx, dy)| src.alpha(x + dx, y + dy) != 0) {
+                if src.alpha(x, y) == 0 && NEIGHBOURS.iter().any(|&(dx, dy)| src.alpha(x + dx, y + dy) != 0) {
                     self.set(x, y, c);
                 }
             }
@@ -184,16 +178,16 @@ impl Img {
         for y in 0..src.h {
             for x in 0..src.w {
                 let sx = if flip { src.w - 1 - x } else { x };
-                let i = ((y * src.w + sx) * 4) as usize;
+                let i = src.offset(sx, y);
                 let a = src.px[i + 3];
-                if a == 0 {
-                    continue;
+                if a != 0 {
+                    self.set_a(dx + x, dy + y, [src.px[i], src.px[i + 1], src.px[i + 2]], a);
                 }
-                self.set_a(dx + x, dy + y, [src.px[i], src.px[i + 1], src.px[i + 2]], a);
             }
         }
     }
 
+    /// Mirror image, used for left-facing frames.
     pub fn flipped(&self) -> Img {
         let mut o = Img::new(self.w, self.h);
         o.blit(self, 0, 0, true);
@@ -201,10 +195,12 @@ impl Img {
     }
 }
 
+/// Blend a colour toward an ink colour by `t` (0 keeps `c`, 1 gives `ink`).
 pub fn mix_dark(c: Rgb, ink: Rgb, t: f32) -> Rgb {
     crate::palette::mix(c, ink, t)
 }
 
+/// Short alias of `hex` for dense colour tables.
 pub const fn c(v: u32) -> Rgb {
     hex(v)
 }
