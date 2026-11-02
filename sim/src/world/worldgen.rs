@@ -14,16 +14,44 @@ fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
 }
 
 fn quantile(values: &[f32], q: f32) -> f32 {
-    let mut v: Vec<f32> = values.to_vec();
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    if v.is_empty() {
+    if values.is_empty() {
         return 0.0;
     }
+    let mut v: Vec<f32> = values.to_vec();
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     v[((v.len() - 1) as f32 * q) as usize]
 }
 
 const N4: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 const N8: [(i32, i32); 8] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1)];
+
+/// In-bounds 4-neighbours of a tile index.
+fn neighbours4(w: &World, i: usize) -> impl Iterator<Item = usize> + '_ {
+    let (x, y) = w.xy(i);
+    N4.iter().map(move |(dx, dy)| (x + dx, y + dy)).filter(|&(nx, ny)| w.in_bounds(nx, ny)).map(|(nx, ny)| w.idx(nx, ny))
+}
+
+/// Breadth-first step distance from every tile to the nearest source tile.
+fn distance_field(w: &World, is_source: impl Fn(usize) -> bool) -> Vec<u16> {
+    let n = w.terrain.len();
+    let mut dist = vec![u16::MAX; n];
+    let mut q = VecDeque::new();
+    for (i, d) in dist.iter_mut().enumerate() {
+        if is_source(i) {
+            *d = 0;
+            q.push_back(i);
+        }
+    }
+    while let Some(i) = q.pop_front() {
+        for j in neighbours4(w, i) {
+            if dist[j] == u16::MAX {
+                dist[j] = dist[i] + 1;
+                q.push_back(j);
+            }
+        }
+    }
+    dist
+}
 
 pub fn generate(seed: u64) -> World {
     let mut w = World::empty(seed);
@@ -48,7 +76,7 @@ pub fn generate(seed: u64) -> World {
     villages::generate(&mut w, &mut vrng);
 
     let mut prng = rng.fork(37);
-    scatter_props(&mut w, &mut prng, &n_misc);
+    scatter_props(&mut w, &mut prng);
     w
 }
 
@@ -79,9 +107,7 @@ fn levels(w: &mut World, sea: f32) {
     let t3 = quantile(&land, 0.9);
     for i in 0..w.height.len() {
         let h = w.height[i];
-        w.level[i] = if h < sea {
-            0
-        } else if h < t1 {
+        w.level[i] = if h < sea || h < t1 {
             0
         } else if h < t2 {
             1
@@ -97,8 +123,7 @@ fn levels(w: &mut World, sea: f32) {
         let mask: Vec<bool> = w.level.iter().map(|&l| l >= lv).collect();
         let eroded: Vec<bool> = (0..w.level.len())
             .map(|i| {
-                let x = i as i32 % w.w;
-                let y = i as i32 / w.w;
+                let (x, y) = w.xy(i);
                 mask[i] && N8.iter().all(|(dx, dy)| {
                     let (nx, ny) = (x + dx, y + dy);
                     !w.in_bounds(nx, ny) || mask[w.idx(nx, ny)]
@@ -106,8 +131,7 @@ fn levels(w: &mut World, sea: f32) {
             })
             .collect();
         for i in 0..w.level.len() {
-            let x = i as i32 % w.w;
-            let y = i as i32 / w.w;
+            let (x, y) = w.xy(i);
             let keep = eroded[i] || N8.iter().any(|(dx, dy)| {
                 let (nx, ny) = (x + dx, y + dy);
                 w.in_bounds(nx, ny) && eroded[w.idx(nx, ny)]
@@ -134,14 +158,7 @@ fn remove_small_regions(w: &mut World, min: usize) {
         q.push_back(start);
         let mut border_levels = [0usize; 4];
         while let Some(i) = q.pop_front() {
-            let x = i as i32 % w.w;
-            let y = i as i32 / w.w;
-            for (dx, dy) in N4 {
-                let (nx, ny) = (x + dx, y + dy);
-                if !w.in_bounds(nx, ny) {
-                    continue;
-                }
-                let j = w.idx(nx, ny);
+            for j in neighbours4(w, i) {
                 if w.level[j] == lv {
                     if !seen[j] {
                         seen[j] = true;
@@ -190,34 +207,11 @@ fn enforce_slopes(w: &mut World) {
 }
 
 fn water(w: &mut World, sea: f32) {
-    let n = w.terrain.len();
     // Distance from land, for deep vs shallow.
-    let mut dist = vec![u16::MAX; n];
-    let mut q = VecDeque::new();
-    for i in 0..n {
-        if w.height[i] >= sea {
-            dist[i] = 0;
-            q.push_back(i);
-        }
-    }
-    while let Some(i) = q.pop_front() {
-        let x = i as i32 % w.w;
-        let y = i as i32 / w.w;
-        for (dx, dy) in N4 {
-            let (nx, ny) = (x + dx, y + dy);
-            if !w.in_bounds(nx, ny) {
-                continue;
-            }
-            let j = w.idx(nx, ny);
-            if dist[j] == u16::MAX {
-                dist[j] = dist[i] + 1;
-                q.push_back(j);
-            }
-        }
-    }
-    for i in 0..n {
+    let dist = distance_field(w, |i| w.height[i] >= sea);
+    for (i, d) in dist.into_iter().enumerate() {
         if w.height[i] < sea {
-            w.terrain[i] = if dist[i] <= 3 { Terrain::Shallow } else { Terrain::Deep } as u8;
+            w.terrain[i] = if d <= 3 { Terrain::Shallow } else { Terrain::Deep } as u8;
             w.level[i] = 0;
         }
     }
@@ -262,7 +256,7 @@ fn rivers(w: &mut World, rng: &mut Rng, n: &Noise) {
                 let jitter = n.get(nx as f32 * 0.21, ny as f32 * 0.21) * 0.025;
                 let bias = if dy == 1 { -0.012 } else if dy == -1 { 0.01 } else { 0.0 };
                 let h = w.height[w.idx(nx, ny)] + jitter + bias + w.level(nx, ny) as f32 * 0.2;
-                if best.map_or(true, |(_, bh)| h < bh) {
+                if best.is_none_or(|(_, bh)| h < bh) {
                     best = Some(((nx, ny), h));
                 }
             }
@@ -287,10 +281,9 @@ fn rivers(w: &mut World, rng: &mut Rng, n: &Noise) {
             w.level[i] = lv;
             w.terrain[i] = Terrain::Shallow as u8;
             w.flags[i] |= flag::RIVER;
-            // Widen downstream.
+            // Widen downstream, sideways to the direction of flow.
             if k > path.len() / 3 {
-                let (px, _py) = if k > 0 { path[k - 1] } else { (x, y) };
-                let (ox, oy) = if px != x { (0, 1) } else { (1, 0) };
+                let (ox, oy) = if path[k - 1].0 != x { (0, 1) } else { (1, 0) };
                 let (wx, wy) = (x + ox, y + oy);
                 if w.in_bounds(wx, wy) && !w.terrain(wx, wy).is_water() && w.level(wx, wy) >= lv {
                     let j = w.idx(wx, wy);
@@ -304,32 +297,9 @@ fn rivers(w: &mut World, rng: &mut Rng, n: &Noise) {
 }
 
 fn surfaces(w: &mut World, n: &Noise) {
-    // Distance to any water, for beaches.
-    let len = w.terrain.len();
-    let mut dist = vec![u16::MAX; len];
-    let mut q = VecDeque::new();
-    for i in 0..len {
-        if Terrain::from_u8(w.terrain[i]).is_water() && w.flags[i] & flag::RIVER == 0 {
-            dist[i] = 0;
-            q.push_back(i);
-        }
-    }
-    while let Some(i) = q.pop_front() {
-        let x = i as i32 % w.w;
-        let y = i as i32 / w.w;
-        for (dx, dy) in N4 {
-            let (nx, ny) = (x + dx, y + dy);
-            if !w.in_bounds(nx, ny) {
-                continue;
-            }
-            let j = w.idx(nx, ny);
-            if dist[j] == u16::MAX {
-                dist[j] = dist[i] + 1;
-                q.push_back(j);
-            }
-        }
-    }
-    let land: Vec<f32> = (0..len).filter(|&i| w.level[i] == 3).map(|i| w.height[i]).collect();
+    // Distance to the sea or a lake (not rivers), for beaches.
+    let dist = distance_field(w, |i| Terrain::from_u8(w.terrain[i]).is_water() && w.flags[i] & flag::RIVER == 0);
+    let land: Vec<f32> = (0..w.level.len()).filter(|&i| w.level[i] == 3).map(|i| w.height[i]).collect();
     let snow_line = quantile(&land, 0.55);
     for y in 0..w.h {
         for x in 0..w.w {
@@ -368,7 +338,7 @@ fn fields(w: &mut World, n_m: &Noise, n_f: &Noise) {
     }
 }
 
-fn scatter_props(w: &mut World, rng: &mut Rng, n: &Noise) {
+fn scatter_props(w: &mut World, rng: &mut Rng) {
     let seed = w.seed as u32;
     let mut taken = vec![false; (w.w * w.h) as usize];
     for y in 1..w.h - 1 {
@@ -427,10 +397,8 @@ fn scatter_props(w: &mut World, rng: &mut Rng, n: &Noise) {
             };
             let Some(kind) = kind else { continue };
             // Trees need breathing room so canopies don't become a wall.
-            if kind.is_tree() {
-                if (-1..=1).any(|dy| (-1..=1).any(|dx| taken[w.idx(x + dx, y + dy)])) {
-                    continue;
-                }
+            if kind.is_tree() && (-1..=1).any(|dy| (-1..=1).any(|dx| taken[w.idx(x + dx, y + dy)])) {
+                continue;
             }
             taken[i] = true;
             let variant = (hash2f(x, y, seed ^ 0x99) * 8.0) as u8;
@@ -448,7 +416,7 @@ fn scatter_props(w: &mut World, rng: &mut Rng, n: &Noise) {
         for x in 1..w.w - 1 {
             let t = w.terrain(x, y);
             let r = hash2f(x, y, seed ^ 0x1234);
-            if t == Terrain::Shallow && w.flags(x, y) & (flag::RIVER | flag::BRIDGE) == 0 && r < 0.03 {
+            if t == Terrain::Shallow && !w.has(x, y, flag::RIVER | flag::BRIDGE) && r < 0.03 {
                 let near_land = N4.iter().any(|(dx, dy)| !w.terrain(x + dx, y + dy).is_water());
                 if near_land {
                     let v = (rng.f32() * 4.0) as u8;
@@ -457,7 +425,6 @@ fn scatter_props(w: &mut World, rng: &mut Rng, n: &Noise) {
             }
         }
     }
-    let _ = n;
 }
 
 #[cfg(test)]

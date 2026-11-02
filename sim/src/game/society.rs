@@ -1,18 +1,23 @@
 //! Social life: conversation outcomes, romance, weddings, births, aging and
 //! death, newcomers, and the village economy's daily cycle.
 
+use super::actor::{nearest_walkable, stand_pos};
 use super::ai::Stock;
-use super::clock::YEARS_PER_DAY;
-use super::villager::{self, Emote, Job, Traits, Villager};
+use super::clock::{SEASON_NAMES, WINTER, YEARS_PER_DAY};
+use super::villager::{self, look_stage, top_up, Emote, Goal, Job, Phase, Traits, Villager, ADULT_AGE, ELDER_AGE, TEEN_AGE};
 use super::Game;
 use crate::art::people::Look;
 use crate::names;
-use crate::world::{PropKind, TILE};
+use crate::world::PropKind;
 
 /// Child characters are disabled for now: no births, households start with
 /// grown children only, and newcomers keep villages growing.
 const CHILDREN: bool = false;
 
+/// How many chronicle entries are kept; older ones drop off.
+const CHRONICLE_LEN: usize = 400;
+
+/// A notable happening, shown in the chronicle and as a UI notification.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Event {
     pub day: u32,
@@ -27,13 +32,9 @@ impl Game {
         let e = Event { day: self.clock.day(), minute: self.clock.minute_of_day() as u32, kind, text, who };
         self.events_out.push(e.clone());
         self.chronicle.push(e);
-        if self.chronicle.len() > 400 {
+        if self.chronicle.len() > CHRONICLE_LEN {
             self.chronicle.remove(0);
         }
-    }
-
-    pub fn index_of(&self, id: u32) -> Option<usize> {
-        self.villagers.iter().position(|v| v.id == id && v.alive)
     }
 
     /// Resolve finished conversations between pairs of villagers.
@@ -41,7 +42,7 @@ impl Game {
         for (a, b) in talks {
             let (Some(ia), Some(ib)) = (self.index_of(a), self.index_of(b)) else { continue };
             // Each pair is resolved once (from the lower id's side).
-            if a > b && self.villagers[ib].goal == villager::Goal::Socialize(a) {
+            if a > b && self.villagers[ib].goal == Goal::Socialize(a) {
                 continue;
             }
             let ta: Traits = self.villagers[ia].traits;
@@ -119,7 +120,7 @@ impl Game {
             if self.rng.chance(0.5) {
                 v.emote(Emote::Sparkle, 3.0);
             }
-            v.needs.fun = (v.needs.fun + 15.0).min(100.0);
+            top_up(&mut v.needs.fun, 15.0);
         }
     }
 
@@ -129,7 +130,6 @@ impl Game {
         let season = self.clock.season();
         for v in self.villagers.iter_mut() {
             v.talked_today = false;
-            v.gifted_today = false;
         }
         // Aging and life stages.
         let n = self.villagers.len();
@@ -143,17 +143,19 @@ impl Game {
             }
             let before = v.age;
             v.age += YEARS_PER_DAY;
-            if before < 15.0 && v.age >= 15.0 && v.job == Job::Child {
+            let reached = |threshold: f32| before < threshold && v.age >= threshold;
+            // Children take up a trade at fifteen.
+            if reached(15.0) && v.job == Job::Child {
                 grown_up.push(i);
             }
-            if before < 18.0 && v.age >= 18.0 {
+            if reached(ADULT_AGE) {
                 v.look.mature = true;
                 self.dirty_looks.push(v.id);
             }
-            if before < 13.0 && v.age >= 13.0 || before < 60.0 && v.age >= 60.0 {
-                // Re-draw the sprite for the new life stage.
-                v.look.age = if v.age >= 60.0 { 2 } else { 1 };
-                if v.age >= 60.0 {
+            if reached(TEEN_AGE) || reached(ELDER_AGE) {
+                // Re-draw the sprite for the new life stage; elders go silver.
+                v.look.age = look_stage(v.age);
+                if v.age >= ELDER_AGE {
                     v.look.hair = 5;
                 }
                 self.dirty_looks.push(v.id);
@@ -170,7 +172,7 @@ impl Game {
                     births.push(i);
                 }
             } else if CHILDREN && v.female && v.partner.is_some() && v.age < 44.0 && v.children.len() < 4 {
-                let partner_male = v.partner.and_then(|p| self.villagers.iter().find(|o| o.id == p)).map_or(false, |o| !o.female);
+                let partner_male = v.partner.and_then(|p| self.villagers.iter().find(|o| o.id == p)).is_some_and(|o| !o.female);
                 if partner_male && self.rng.chance(0.05) {
                     self.villagers[i].pregnant = 6.0;
                 }
@@ -193,11 +195,11 @@ impl Game {
         for i in deaths {
             self.death(i);
         }
-        // Newcomers keep small villages alive.
+        // Newcomers keep small villages alive; with no births they are how
+        // villages grow at all.
         for vid in 0..self.world.villages.len() {
             let pop = self.villagers.iter().filter(|v| v.alive && v.village == vid).count();
-            // With no births, newcomers are how villages grow.
-            if pop < 10 && self.rng.chance(0.4) || self.rng.chance(0.06) {
+            if (pop < 10 && self.rng.chance(0.4)) || self.rng.chance(0.06) {
                 self.newcomer(vid);
             }
         }
@@ -206,18 +208,16 @@ impl Game {
             match p.kind {
                 PropKind::Stump if p.alive => {
                     p.state += 1;
-                    if p.state > 8 && season != 3 {
+                    if p.state > 8 && season != WINTER {
                         p.kind = PropKind::Oak;
                         p.hp = 5;
                         p.state = 0;
                         self.changed_props.push(i);
                     }
                 }
-                PropKind::Crop if season != 3 && p.state < 3 => {
-                    if self.rng.chance(0.35) {
-                        p.state += 1;
-                        self.changed_props.push(i);
-                    }
+                PropKind::Crop if season != WINTER && p.state < 3 && self.rng.chance(0.35) => {
+                    p.state += 1;
+                    self.changed_props.push(i);
                 }
                 _ => {}
             }
@@ -228,7 +228,7 @@ impl Game {
             st.goods *= 0.99;
         }
         if self.clock.day_of_season() == 1 && day > 0 {
-            let s = super::clock::SEASON_NAMES[season as usize];
+            let s = SEASON_NAMES[season as usize];
             self.chronicle("season", format!("{s} has arrived."), vec![]);
             self.season_changed = true;
         }
@@ -245,7 +245,14 @@ impl Game {
         let mut kid = villager::make(id, &mut rng, culture, &mother.family, female, 0.0, Job::Child, mother.village, mother.home, mother.actor.x, mother.actor.y);
         kid.parents = vec![mother.id, father.id];
         kid.traits = Traits::blend(&mother.traits, &father.traits, &mut rng);
-        kid.look = Look { skin: if rng.chance(0.5) { mother.look.skin } else { father.look.skin }, hair: if rng.chance(0.5) { mother.look.hair } else { father.look.hair }, age: 0, mature: false, ..kid.look };
+        kid.look = Look {
+            skin: if rng.chance(0.5) { mother.look.skin } else { father.look.skin },
+            hair: if rng.chance(0.5) { mother.look.hair } else { father.look.hair },
+            age: 0,
+            mature: false,
+            ..kid.look
+        };
+        // Babies aren't born silver-haired.
         if kid.look.hair == 5 {
             kid.look.hair = rng.below(5) as u8;
         }
@@ -253,8 +260,8 @@ impl Game {
         kid.adjust_opinion(father.id, 90.0);
         kid.actor.hidden = true;
         kid.inside = Some(mother.home);
-        kid.goal = villager::Goal::Sleep;
-        kid.phase = villager::Phase::Perform;
+        kid.goal = Goal::Sleep;
+        kid.phase = Phase::Perform;
         kid.timer = 60.0;
         kid.actor.sheet = self.sprites.add_sheet(&kid.look);
         let name = kid.first.clone();
@@ -296,7 +303,7 @@ impl Game {
     }
 
     fn newcomer(&mut self, vid: usize) {
-        let homes: Vec<usize> = self.world.villages[vid].buildings.iter().filter(|b| b.kind == crate::world::villages::BuildingKind::Home).map(|b| b.prop).collect();
+        let homes = self.world.villages[vid].homes();
         if homes.is_empty() {
             return;
         }
@@ -309,10 +316,10 @@ impl Game {
         let job = [Job::Farmer, Job::Adventurer, Job::Woodcutter, Job::Fisher][rng.below(4)];
         // They walk in along the road from the village edge.
         let vil = &self.world.villages[vid];
-        let (sx, sy) = (vil.cx + vil.radius + 6, vil.cy + 2);
-        let (sx, sy) = super::actor::nearest_walkable(&self.world, (sx, sy)).unwrap_or((vil.cx, vil.cy + 2));
+        let edge = (vil.cx + vil.radius + 6, vil.cy + 2);
+        let (x, y) = stand_pos(nearest_walkable(&self.world, edge).unwrap_or((vil.cx, vil.cy + 2)));
         let (fem, age) = (rng.chance(0.5), rng.range_f(19.0, 35.0));
-        let mut v = villager::make(id, &mut rng, culture, &fam, fem, age, job, vid, home, (sx * TILE + 16) as f32, (sy * TILE + 22) as f32);
+        let mut v = villager::make(id, &mut rng, culture, &fam, fem, age, job, vid, home, x, y);
         v.actor.sheet = self.sprites.add_sheet(&v.look);
         let (name, jl, vname) = (v.name(), job.label(), vil.name.clone());
         self.villagers.push(v);

@@ -1,9 +1,9 @@
 //! The world grid: terrain, elevation, flags and static props.
 
 pub mod bake;
-pub mod worldgen;
 pub mod path;
 pub mod villages;
+pub mod worldgen;
 
 use serde::{Deserialize, Serialize};
 
@@ -15,8 +15,14 @@ pub const CHUNK: i32 = 16;
 pub const CHUNKS_X: i32 = WORLD_W / CHUNK;
 pub const CHUNKS_Y: i32 = WORLD_H / CHUNK;
 
+/// Pixel centre of a tile.
+#[inline]
+pub fn tile_center((x, y): (i32, i32)) -> (f32, f32) {
+    ((x * TILE + TILE / 2) as f32, (y * TILE + TILE / 2) as f32)
+}
+
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Terrain {
     Deep = 0,
     Shallow = 1,
@@ -52,7 +58,6 @@ pub mod flag {
     pub const TILLED: u8 = 16;
     pub const PLAZA: u8 = 32;
     pub const NO_PROPS: u8 = 64;
-    pub const WATERED: u8 = 128;
 }
 
 #[repr(u8)]
@@ -105,6 +110,23 @@ impl PropKind {
     pub fn is_tree(self) -> bool {
         matches!(self, PropKind::Oak | PropKind::Pine | PropKind::Birch | PropKind::FruitTree)
     }
+
+    /// Stone that can be mined: rocks, boulders and ore veins.
+    pub fn is_rock(self) -> bool {
+        matches!(self, PropKind::Rock | PropKind::Boulder | PropKind::OreRock)
+    }
+
+    /// Whether the player can gather something from it by tapping.
+    pub fn is_harvestable(self) -> bool {
+        self.is_tree()
+            || self.is_rock()
+            || matches!(self, PropKind::Stump | PropKind::BerryBush | PropKind::Mushroom | PropKind::Flowers | PropKind::Crop)
+    }
+
+    /// Structures with a multi-tile footprint rather than a single anchor tile.
+    pub fn is_structure(self) -> bool {
+        matches!(self, PropKind::House | PropKind::Stall | PropKind::Tent)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -123,6 +145,32 @@ pub struct Prop {
     pub fw: u8,
     pub fh: u8,
     pub alive: bool,
+}
+
+impl Prop {
+    /// Tiles this prop blocks. Structure footprints grow north from the anchor row.
+    fn footprint(&self) -> impl Iterator<Item = (i32, i32)> {
+        let (x, y) = (self.x, self.y);
+        let (fw, fh) = if self.kind.is_structure() { (self.fw as i32, self.fh as i32) } else { (1, 1) };
+        (0..fh).flat_map(move |dy| (0..fw).map(move |dx| (x + dx, y - dy)))
+    }
+
+    /// Tile in front of a building's door, where agents enter and exit.
+    pub fn door(&self) -> (i32, i32) {
+        (self.x + self.fw as i32 / 2, self.y + 1)
+    }
+
+    /// Deal chop damage to a tree. Returns true when it falls and becomes a stump.
+    pub fn chop(&mut self, damage: u8) -> bool {
+        self.hp = self.hp.saturating_sub(damage);
+        if self.hp > 0 {
+            return false;
+        }
+        self.kind = PropKind::Stump;
+        self.hp = 2;
+        self.state = 0;
+        true
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -172,6 +220,12 @@ impl World {
     #[inline]
     pub fn idx(&self, x: i32, y: i32) -> usize {
         (y * self.w + x) as usize
+    }
+
+    /// Inverse of `idx`.
+    #[inline]
+    pub fn xy(&self, i: usize) -> (i32, i32) {
+        (i as i32 % self.w, i as i32 / self.w)
     }
 
     #[inline]
@@ -272,8 +326,7 @@ impl World {
             }
             // Diagonal moves must not squeeze between two blocked corners.
             if ax != bx && ay != by {
-                return self.walkable(ax, by) && self.walkable(bx, ay)
-                    && self.level(ax, by) == la && self.level(bx, ay) == la;
+                return self.walkable(ax, by) && self.walkable(bx, ay) && self.level(ax, by) == la && self.level(bx, ay) == la;
             }
             return true;
         }
@@ -289,20 +342,11 @@ impl World {
     pub fn add_prop(&mut self, p: Prop) -> usize {
         let id = self.props.len();
         if p.kind.blocks() {
-            if p.kind == PropKind::House || p.kind == PropKind::Stall || p.kind == PropKind::Tent {
-                // Footprint grows up (north) from the anchor row.
-                for dy in 0..p.fh as i32 {
-                    for dx in 0..p.fw as i32 {
-                        let (tx, ty) = (p.x + dx, p.y - dy);
-                        if self.in_bounds(tx, ty) {
-                            let i = self.idx(tx, ty);
-                            self.blocker[i] = id as u32 + 1;
-                        }
-                    }
+            for (tx, ty) in p.footprint() {
+                if self.in_bounds(tx, ty) {
+                    let i = self.idx(tx, ty);
+                    self.blocker[i] = id as u32 + 1;
                 }
-            } else if self.in_bounds(p.x, p.y) {
-                let i = self.idx(p.x, p.y);
-                self.blocker[i] = id as u32 + 1;
             }
         }
         self.props.push(p);
@@ -310,17 +354,12 @@ impl World {
     }
 
     pub fn remove_prop(&mut self, id: usize) {
-        let p = &mut self.props[id];
-        p.alive = false;
-        let (x, y, fw, fh) = (p.x, p.y, p.fw as i32, p.fh as i32);
-        for dy in 0..fh.max(1) {
-            for dx in 0..fw.max(1) {
-                let (tx, ty) = (x + dx, y - dy);
-                if self.in_bounds(tx, ty) {
-                    let i = self.idx(tx, ty);
-                    if self.blocker[i] == id as u32 + 1 {
-                        self.blocker[i] = 0;
-                    }
+        self.props[id].alive = false;
+        for (tx, ty) in self.props[id].footprint() {
+            if self.in_bounds(tx, ty) {
+                let i = self.idx(tx, ty);
+                if self.blocker[i] == id as u32 + 1 {
+                    self.blocker[i] = 0;
                 }
             }
         }
@@ -336,11 +375,10 @@ impl World {
 
     /// Tile area free for building or decoration.
     pub fn free_for_prop(&self, x: i32, y: i32) -> bool {
-        self.in_bounds(x, y)
-            && self.walkable(x, y)
+        self.walkable(x, y)
             && !self.is_face(x, y)
             && !self.is_face(x, y + 1)
-            && self.flags(x, y) & (flag::ROAD | flag::PLAZA | flag::NO_PROPS | flag::TILLED | flag::STAIRS | flag::BRIDGE) == 0
+            && !self.has(x, y, flag::ROAD | flag::PLAZA | flag::NO_PROPS | flag::TILLED | flag::STAIRS | flag::BRIDGE)
     }
 
     /// Stable checksum of the generated world, used by determinism tests.

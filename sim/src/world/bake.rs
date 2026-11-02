@@ -17,6 +17,7 @@ use crate::rng::{hash2, hash2f};
 
 pub const CHUNK_PX: i32 = CHUNK * TILE;
 
+// Surface ranks: where terrains meet, the higher rank draws over the lower.
 const R_DEEP: u8 = 0;
 const R_SHALLOW: u8 = 1;
 const R_SAND: u8 = 2;
@@ -44,9 +45,65 @@ struct Surf {
     below: u8,
 }
 
+/// A world pixel, the tile it falls in, and its offset within that tile.
+#[derive(Clone, Copy)]
+struct Pixel {
+    px: i32,
+    py: i32,
+    tx: i32,
+    ty: i32,
+    lx: i32,
+    ly: i32,
+}
+
+impl Pixel {
+    fn new(px: i32, py: i32) -> Pixel {
+        Pixel { px, py, tx: px.div_euclid(TILE), ty: py.div_euclid(TILE), lx: px.rem_euclid(TILE), ly: py.rem_euclid(TILE) }
+    }
+}
+
 #[inline]
 fn smooth(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
+}
+
+/// Shadows shift toward a cool violet instead of grey.
+fn darken(c: Rgb, amt: f32) -> Rgb {
+    pal::mix(c, hex(0x24203c), amt)
+}
+
+/// The tile-centre lattice cell around a pixel: its top-left corner tile and
+/// the pixel's fractional position (u, v) inside it, for bilinear blends.
+#[inline]
+fn lattice(px: i32, py: i32) -> (i32, i32, f32, f32) {
+    let fx = (px as f32 + 0.5) / TILE as f32 - 0.5;
+    let fy = (py as f32 + 0.5) / TILE as f32 - 0.5;
+    let i0 = fx.floor() as i32;
+    let j0 = fy.floor() as i32;
+    (i0, j0, fx - i0 as f32, fy - j0 as f32)
+}
+
+/// Seeded Voronoi over a grid of `cw`×`ch` cells. Returns the squared
+/// weighted distances to the nearest and second-nearest sites, the nearest
+/// site's hash and its position. `wx`/`wy` stretch the distance metric.
+fn nearest_sites(px: i32, py: i32, cw: i32, ch: i32, seed: u32, wx: i32, wy: i32) -> (i32, i32, u32, i32, i32) {
+    let (gx, gy) = (px.div_euclid(cw), py.div_euclid(ch));
+    let mut best = (i32::MAX, i32::MAX, 0u32, 0i32, 0i32);
+    for oy in -1..=1 {
+        for ox in -1..=1 {
+            let (cx, cy) = (gx + ox, gy + oy);
+            let h = hash2(cx, cy, seed);
+            let sx = cx * cw + (h % cw as u32) as i32;
+            let sy = cy * ch + ((h >> 8) % ch as u32) as i32;
+            let d = (px - sx).pow(2) * wx + (py - sy).pow(2) * wy;
+            if d < best.0 {
+                best = (d, best.0, h, sx, sy);
+            } else if d < best.1 {
+                best.1 = d;
+            }
+        }
+    }
+    best
 }
 
 /// Cheap value noise for pixel-scale detail.
@@ -67,12 +124,8 @@ fn vnoise(x: f32, y: f32, seed: u32) -> f32 {
 
 /// Bilinearly sample a per-tile field at pixel resolution (no tile seams).
 fn field_at(w: &World, f: &[f32], px: i32, py: i32) -> f32 {
-    let fx = (px as f32 + 0.5) / TILE as f32 - 0.5;
-    let fy = (py as f32 + 0.5) / TILE as f32 - 0.5;
-    let i0 = fx.floor() as i32;
-    let j0 = fy.floor() as i32;
-    let u = smooth(fx - i0 as f32);
-    let v = smooth(fy - j0 as f32);
+    let (i0, j0, u, v) = lattice(px, py);
+    let (u, v) = (smooth(u), smooth(v));
     let g = |x: i32, y: i32| f[w.idx(x.clamp(0, w.w - 1), y.clamp(0, w.h - 1))];
     let a = g(i0, j0) + (g(i0 + 1, j0) - g(i0, j0)) * u;
     let b = g(i0, j0 + 1) + (g(i0 + 1, j0 + 1) - g(i0, j0 + 1)) * u;
@@ -112,13 +165,9 @@ impl Baker {
     }
 
     /// Resolve which terrain a pixel shows, with organic edges.
-    fn surface(&self, w: &World, px: i32, py: i32, tx: i32, ty: i32) -> Surf {
-        let fx = (px as f32 + 0.5) / TILE as f32 - 0.5;
-        let fy = (py as f32 + 0.5) / TILE as f32 - 0.5;
-        let i0 = fx.floor() as i32;
-        let j0 = fy.floor() as i32;
-        let u = fx - i0 as f32;
-        let v = fy - j0 as f32;
+    fn surface(&self, w: &World, p: &Pixel) -> Surf {
+        let Pixel { px, py, tx, ty, .. } = *p;
+        let (i0, j0, u, v) = lattice(px, py);
         let own_lv = w.level(tx, ty);
         let own = self.rank(w, tx, ty);
         let mut ranks = [0u8; 4];
@@ -198,52 +247,41 @@ impl Baker {
     }
 
     fn pixel(&self, w: &World, px: i32, py: i32, season: u8) -> (Rgb, u8) {
-        let tx = px.div_euclid(TILE);
-        let ty = py.div_euclid(TILE);
-        let lx = px.rem_euclid(TILE);
-        let ly = py.rem_euclid(TILE);
-        let f = w.flags(tx, ty);
+        let p = Pixel::new(px, py);
+        let f = w.flags(p.tx, p.ty);
 
-        if w.is_face(tx, ty) {
-            return self.face(w, px, py, tx, ty, lx, ly, f, season);
+        if w.is_face(p.tx, p.ty) {
+            return self.face(w, &p, f, season);
         }
         if f & flag::BRIDGE != 0 {
-            return (self.bridge(w, px, py, tx, ty, lx, ly), 255);
+            return (self.bridge(w, &p), 255);
         }
 
-        let s = self.surface(w, px, py, tx, ty);
-        let (mut col, alpha) = match s.rank {
-            R_DEEP | R_SHALLOW => {
-                let (c, a) = self.water(w, px, py, tx, ty);
-                (c, a)
-            }
-            R_SAND => (self.sand(w, px, py, &s), 255),
-            R_DIRT => (self.dirt(px, py, &s, season), 255),
-            R_COBBLE => (self.cobble(px, py, &s), 255),
-            R_GRASS => (self.grass(w, px, py, tx, ty, &s, season), 255),
-            R_ROCK => (self.rock(w, px, py, &s, season), 255),
-            _ => (self.snow(px, py, &s), 255),
+        let s = self.surface(w, &p);
+        if matches!(s.rank, R_DEEP | R_SHALLOW) {
+            return self.water(w, &p);
+        }
+        let mut col = match s.rank {
+            R_SAND => self.sand(px, py, &s),
+            R_DIRT => self.dirt(px, py, &s, season),
+            R_COBBLE => self.cobble(px, py, &s),
+            R_GRASS => self.grass(w, px, py, &s, season),
+            R_ROCK => self.rock(w, px, py, &s, season),
+            _ => self.snow(px, py, &s),
         };
-        if alpha == 255 && f & flag::TILLED != 0 {
-            col = self.tilled(w, px, py, tx, ty, lx, ly, col, f);
+        if f & flag::TILLED != 0 {
+            col = self.tilled(w, &p, col);
         }
-        if alpha == 255 {
-            // Higher ground catches a touch more warm light, so terraces read.
-            let lv = w.level(tx, ty) as f32;
-            if lv > 0.0 && s.rank >= R_SAND {
-                col = pal::mix(col, hex(0xfff0c0), lv * 0.035);
-            }
-            col = self.cliff_shadows(w, tx, ty, lx, ly, px, py, col);
+        // Higher ground catches a touch more warm light, so terraces read.
+        let lv = w.level(p.tx, p.ty) as f32;
+        if lv > 0.0 {
+            col = pal::mix(col, hex(0xfff0c0), lv * 0.035);
         }
-        (col, alpha)
+        (self.cliff_shadows(w, &p, col), 255)
     }
 
-    fn darken(&self, c: Rgb, amt: f32) -> Rgb {
-        // Shadows shift toward a cool violet instead of grey.
-        pal::mix(c, hex(0x24203c), amt)
-    }
-
-    fn cliff_shadows(&self, w: &World, tx: i32, ty: i32, lx: i32, ly: i32, px: i32, py: i32, c: Rgb) -> Rgb {
+    fn cliff_shadows(&self, w: &World, p: &Pixel, c: Rgb) -> Rgb {
+        let Pixel { px, py, tx, ty, lx, ly } = *p;
         let lv = w.level(tx, ty);
         let mut c = c;
         // Shadow cast at the foot of a cliff face.
@@ -251,16 +289,16 @@ impl Baker {
             let depth = TILE / 4 + (hash2(px, 0, self.seed ^ 9) % 3) as i32;
             if ly < depth {
                 let t = 1.0 - ly as f32 / depth as f32;
-                c = self.darken(c, 0.25 + 0.35 * t);
+                c = darken(c, 0.25 + 0.35 * t);
             }
         }
         // Side shadows where a plateau rises to the east or west.
         let jag = (hash2(0, py / 2, self.seed ^ 5) % 2) as i32;
         if tx > 0 && w.level(tx - 1, ty) > lv && !w.is_face(tx - 1, ty) && lx < TILE / 5 + jag {
-            c = self.darken(c, 0.32);
+            c = darken(c, 0.32);
         }
         if w.level(tx + 1, ty) > lv && !w.is_face(tx + 1, ty) && lx > TILE - 4 - jag {
-            c = self.darken(c, 0.22);
+            c = darken(c, 0.22);
         }
         // Plateau edges: a narrow rocky side wall on east/west drops, a lip
         // on the back (north) edge.
@@ -291,33 +329,16 @@ impl Baker {
     /// Clustered cells (stretched Voronoi) used for grass clumps and
     /// cobbles. Returns (distance-to-edge, light shade, hash, cell centre).
     fn cells(&self, px: i32, py: i32, cw: i32, ch: i32, salt: u32) -> (f32, f32, u32, i32, i32) {
-        let (gx, gy) = (px.div_euclid(cw), py.div_euclid(ch));
-        let mut best = (i32::MAX, i32::MAX, 0u32, 0i32, 0i32);
-        let (sx2, sy2) = (ch * ch, cw * cw);
-        for oy in -1..=1 {
-            for ox in -1..=1 {
-                let (cx, cy) = (gx + ox, gy + oy);
-                let h = hash2(cx, cy, self.seed ^ salt);
-                let sx = cx * cw + (h % cw as u32) as i32;
-                let sy = cy * ch + ((h >> 8) % ch as u32) as i32;
-                let d = (px - sx).pow(2) * sx2 + (py - sy).pow(2) * sy2;
-                if d < best.0 {
-                    best = (d, best.0, h, sx, sy);
-                } else if d < best.1 {
-                    best.1 = d;
-                }
-            }
-        }
-        let (d1, d2, h, sx, sy) = best;
+        // Weighting by the other axis' size makes cells as round as they are wide.
+        let (d1, d2, h, sx, sy) = nearest_sites(px, py, cw, ch, self.seed ^ salt, ch * ch, cw * cw);
         let norm = (cw * ch) as f32;
         let edge = ((d2 as f32).sqrt() - (d1 as f32).sqrt()) / norm * cw.min(ch) as f32;
         let light = ((sx - px) as f32 / cw as f32 * 0.6 + (sy - py) as f32 / ch as f32 * 1.0).clamp(-1.0, 1.0);
         (edge, light, h, sx, sy)
     }
 
-    fn grass(&self, w: &World, px: i32, py: i32, tx: i32, ty: i32, s: &Surf, season: u8) -> Rgb {
+    fn grass(&self, w: &World, px: i32, py: i32, s: &Surf, season: u8) -> Rgb {
         let ramp = season_grass(season);
-        let _ = (tx, ty);
         let forest = field_at(w, &w.forest, px, py);
         let moist = field_at(w, &w.moist, px, py);
         let x = px as f32;
@@ -393,9 +414,9 @@ impl Baker {
         }
         // Shade under the grass lip.
         if s.outer < 1.5 {
-            c = self.darken(c, 0.4);
+            c = darken(c, 0.4);
         } else if s.outer < 3.0 {
-            c = self.darken(c, 0.18);
+            c = darken(c, 0.18);
         }
         c
     }
@@ -414,12 +435,10 @@ impl Baker {
             ramp_at(ramp, ((base + light * 0.22) * ramp.len() as f32).min(ramp.len() as f32 - 1.0) as i32)
         };
         // A curb of darker stones around the plaza edge.
-        let c = if s.outer < 99.0 && s.outer < 3.0 { self.darken(c, 0.3) } else { c };
-        let _ = (hash2f(px, py, 0), s);
-        c
+        if s.outer < 3.0 { darken(c, 0.3) } else { c }
     }
 
-    fn sand(&self, w: &World, px: i32, py: i32, s: &Surf) -> Rgb {
+    fn sand(&self, px: i32, py: i32, s: &Surf) -> Rgb {
         let x = px as f32;
         let y = py as f32;
         let ripple = ((x * 0.25 + y * 0.9 + self.n_mid.get(x / 20.0, y / 20.0) * 6.0).sin() * 0.5 + 0.5) * 0.1;
@@ -430,7 +449,6 @@ impl Baker {
         } else if sp < 0.02 {
             v -= 0.12;
         }
-        let _ = w;
         // Wet sand toward the waterline.
         if s.below <= R_SHALLOW && s.inner < 5.0 {
             if s.inner < 2.5 {
@@ -439,7 +457,7 @@ impl Baker {
             return ramp_dither(pal::SAND, v - 0.25, px, py, 0.3);
         }
         let c = ramp_dither(pal::SAND, v, px, py, 0.3);
-        if s.outer < 1.5 { self.darken(c, 0.3) } else { c }
+        if s.outer < 1.5 { darken(c, 0.3) } else { c }
     }
 
     fn rock(&self, w: &World, px: i32, py: i32, s: &Surf, season: u8) -> Rgb {
@@ -478,14 +496,11 @@ impl Baker {
         if s.inner < 1.3 { ramp_at(pal::SNOW, 2) } else { c }
     }
 
-    fn water(&self, w: &World, px: i32, py: i32, tx: i32, ty: i32) -> (Rgb, u8) {
+    /// Water colour plus its depth code for the shader's alpha channel.
+    fn water(&self, w: &World, p: &Pixel) -> (Rgb, u8) {
+        let Pixel { px, py, tx, ty, .. } = *p;
         // Land weight around this pixel tells us how close the shore is.
-        let fx = (px as f32 + 0.5) / TILE as f32 - 0.5;
-        let fy = (py as f32 + 0.5) / TILE as f32 - 0.5;
-        let i0 = fx.floor() as i32;
-        let j0 = fy.floor() as i32;
-        let u = fx - i0 as f32;
-        let v = fy - j0 as f32;
+        let (i0, j0, u, v) = lattice(px, py);
         let land = |x: i32, y: i32| if w.terrain(x, y).is_water() { 0.0 } else { 1.0 };
         let deep = |x: i32, y: i32| if w.terrain(x, y) == Terrain::Deep { 1.0 } else { 0.0 };
         let bil = |f: &dyn Fn(i32, i32) -> f32| {
@@ -499,41 +514,26 @@ impl Baker {
         if river {
             depth = depth.min(0.45);
         }
-        let ramp = pal::WATER;
-        let c = ramp_dither(ramp, 0.95 - depth * 0.85, px, py, 0.45);
+        let c = ramp_dither(pal::WATER, 0.95 - depth * 0.85, px, py, 0.45);
         let code = (1.0 + depth * 179.0) as u8;
         (c, code.max(1))
     }
 
     /// Voronoi rock chunks shared by cliff faces and side walls. Returns
-    /// (crack, shade) where shade includes upper-left lighting.
+    /// (crack, shade, chunk hash) where shade includes upper-left lighting.
     fn rock_chunks(&self, px: i32, py: i32, cw: i32, ch: i32) -> (bool, f32, u32) {
-        let (gx, gy) = (px.div_euclid(cw), py.div_euclid(ch));
-        let mut best = (i32::MAX, i32::MAX, 0u32, 0i32, 0i32);
-        for oy in -1..=1 {
-            for ox in -1..=1 {
-                let (cx, cy) = (gx + ox, gy + oy);
-                let h = hash2(cx, cy, self.seed ^ 0xc1f);
-                let sx = cx * cw + (h % cw as u32) as i32;
-                let sy = cy * ch + ((h >> 8) % ch as u32) as i32;
-                // Stretch horizontally so chunks read as stacked strata.
-                let d = ((px - sx).pow(2)) + ((py - sy).pow(2)) * 2;
-                if d < best.0 {
-                    best = (d, best.0, h, sx, sy);
-                } else if d < best.1 {
-                    best.1 = d;
-                }
-            }
-        }
-        let (d1, d2, h, sx, sy) = best;
+        // Stretch horizontally so chunks read as stacked strata.
+        let (d1, d2, h, sx, sy) = nearest_sites(px, py, cw, ch, self.seed ^ 0xc1f, 1, 2);
         let edge = (d2 as f32).sqrt() - (d1 as f32).sqrt();
         let light = ((sx - px) as f32 * 0.025 + (sy - py) as f32 * 0.05).clamp(-0.2, 0.2);
         let var = ((h >> 16) % 100) as f32 / 100.0 * 0.12;
         (edge < 1.1, light + var, h)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn face(&self, w: &World, px: i32, py: i32, tx: i32, ty: i32, lx: i32, ly: i32, f: u8, season: u8) -> (Rgb, u8) {
+    /// A two-tile-tall cliff face: rock strata, the plateau's overhanging
+    /// lip, stairs and waterfalls.
+    fn face(&self, w: &World, p: &Pixel, f: u8, season: u8) -> (Rgb, u8) {
+        let Pixel { px, py, tx, ty, lx, ly } = *p;
         let row = w.face_row(tx, ty) as i32;
         let top_ty = ty - row;
         let fy = (row - 1) * TILE + ly; // 0..2*TILE down the face
@@ -597,7 +597,7 @@ impl Baker {
         if fy >= face_h - 1 {
             c = pal::INK_SOFT;
         } else if fy >= face_h - 3 {
-            c = self.darken(c, 0.4);
+            c = darken(c, 0.4);
         }
         // Moss and hanging vines on earthy cliffs.
         if !stone && season != 3 {
@@ -611,7 +611,7 @@ impl Baker {
     }
 
     fn stairs(&self, lx: i32, fy: i32, px: i32, py: i32) -> Rgb {
-        if lx < 3 || lx > TILE - 4 {
+        if !(3..=TILE - 4).contains(&lx) {
             return if lx == 0 || lx == TILE - 1 { pal::INK_SOFT } else if lx == 1 || lx == TILE - 2 { ramp_at(pal::STONE_WALL, 3) } else { ramp_at(pal::STONE_WALL, 1) };
         }
         let step = fy.rem_euclid(6);
@@ -624,9 +624,11 @@ impl Baker {
         }
     }
 
-    fn bridge(&self, w: &World, px: i32, py: i32, tx: i32, ty: i32, lx: i32, ly: i32) -> Rgb {
-        let link = |x: i32, y: i32| w.has(x, y, flag::BRIDGE | flag::ROAD) || !w.terrain(x, y).is_water();
-        let horizontal = link(tx - 1, ty) && link(tx + 1, ty) && w.has(tx - 1, ty, flag::BRIDGE | flag::ROAD) | w.has(tx + 1, ty, flag::BRIDGE | flag::ROAD);
+    fn bridge(&self, w: &World, p: &Pixel) -> Rgb {
+        let Pixel { px, py, tx, ty, lx, ly } = *p;
+        let road = |x: i32, y: i32| w.has(x, y, flag::BRIDGE | flag::ROAD);
+        let link = |x: i32, y: i32| road(x, y) || !w.terrain(x, y).is_water();
+        let horizontal = link(tx - 1, ty) && link(tx + 1, ty) && (road(tx - 1, ty) || road(tx + 1, ty));
         let (along, across) = if horizontal { (lx, ly) } else { (ly, lx) };
         // Rails along both edges.
         if across <= 2 || across >= TILE - 3 {
@@ -640,11 +642,12 @@ impl Baker {
         }
         let v = 0.55 + (h % 100) as f32 / 100.0 * 0.2;
         let c = ramp_dither(pal::WOOD, v, px, py, 0.4);
-        if across == 3 { self.darken(c, 0.3) } else { c }
+        if across == 3 { darken(c, 0.3) } else { c }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn tilled(&self, w: &World, px: i32, py: i32, tx: i32, ty: i32, lx: i32, ly: i32, base: Rgb, f: u8) -> Rgb {
+    /// Furrowed farm soil inset from the field edge, over the `base` ground.
+    fn tilled(&self, w: &World, p: &Pixel, base: Rgb) -> Rgb {
+        let Pixel { px, py, tx, ty, lx, ly } = *p;
         let edge_l = !w.has(tx - 1, ty, flag::TILLED);
         let edge_r = !w.has(tx + 1, ty, flag::TILLED);
         let edge_t = !w.has(tx, ty - 1, flag::TILLED);
@@ -655,8 +658,6 @@ impl Baker {
         if corner || edge_l && lx < inset || edge_r && lx > TILE - 1 - inset || edge_t && ly < inset || edge_b && ly > TILE - 1 - inset {
             return base;
         }
-        let watered = f & flag::WATERED != 0;
-        let shift = if watered { -0.25 } else { 0.0 };
         let furrow = ly.rem_euclid(6);
         let v = match furrow {
             0 => 0.78,
@@ -664,7 +665,7 @@ impl Baker {
             3 => 0.45,
             4 => 0.3,
             _ => 0.15,
-        } + shift + (hash2f(px, py, self.seed ^ 0x7) - 0.5) * 0.15;
+        } + (hash2f(px, py, self.seed ^ 0x7) - 0.5) * 0.15;
         let mut c = ramp_dither(pal::TILLED, v, px, py, 0.4);
         if edge_t && ly == inset || edge_l && lx == inset {
             c = ramp_at(pal::TILLED, 0);

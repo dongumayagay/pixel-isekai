@@ -1,5 +1,7 @@
 //! Village siting and layout: plazas, buildings, farms, and the road network.
 
+use std::f32::consts::TAU;
+
 use serde::{Deserialize, Serialize};
 
 use super::path::PathFinder;
@@ -7,6 +9,7 @@ use super::{flag, Prop, PropKind, Terrain, World};
 use crate::names;
 use crate::rng::Rng;
 
+/// What a house prop is used for; stored in the prop's `state`.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum BuildingKind {
@@ -18,6 +21,18 @@ pub enum BuildingKind {
 }
 
 impl BuildingKind {
+    /// Inverse of `kind as u8`; unknown values are homes.
+    pub fn from_u8(v: u8) -> BuildingKind {
+        match v {
+            1 => BuildingKind::Inn,
+            2 => BuildingKind::Store,
+            3 => BuildingKind::Smithy,
+            4 => BuildingKind::Chapel,
+            _ => BuildingKind::Home,
+        }
+    }
+
+    /// Footprint in tiles (width, depth).
     pub fn size(self) -> (u8, u8) {
         match self {
             BuildingKind::Home => (5, 3),
@@ -25,15 +40,6 @@ impl BuildingKind {
             BuildingKind::Store => (6, 3),
             BuildingKind::Smithy => (6, 3),
             BuildingKind::Chapel => (5, 4),
-        }
-    }
-    pub fn label(self) -> &'static str {
-        match self {
-            BuildingKind::Home => "Home",
-            BuildingKind::Inn => "Inn",
-            BuildingKind::Store => "General Store",
-            BuildingKind::Smithy => "Smithy",
-            BuildingKind::Chapel => "Chapel",
         }
     }
 }
@@ -57,6 +63,18 @@ pub struct Village {
     pub buildings: Vec<Building>,
     /// Farm plots as (x, y, w, h) in tiles.
     pub fields: Vec<(i32, i32, i32, i32)>,
+}
+
+impl Village {
+    /// Prop indices of the family homes.
+    pub fn homes(&self) -> Vec<usize> {
+        self.buildings.iter().filter(|b| b.kind == BuildingKind::Home).map(|b| b.prop).collect()
+    }
+
+    /// Door of the first building of a kind, if the village has one.
+    pub fn door_of(&self, kind: BuildingKind) -> Option<(i32, i32)> {
+        self.buildings.iter().find(|b| b.kind == kind).map(|b| b.door)
+    }
 }
 
 fn site_score(w: &World, cx: i32, cy: i32) -> Option<f32> {
@@ -131,7 +149,7 @@ fn road_step(w: &World, ax: i32, ay: i32, bx: i32, by: i32) -> Option<f32> {
         return None;
     }
     // A staircase needs its whole run free of water and buildings.
-    if face_b && w.face_row(bx, by) == 1 && (w.is_face(bx, by + 1) && w.face_row(bx, by + 1) != 2 || w.terrain(bx, by + 1).is_water()) {
+    if face_b && w.face_row(bx, by) == 1 && ((w.is_face(bx, by + 1) && w.face_row(bx, by + 1) != 2) || w.terrain(bx, by + 1).is_water()) {
         return None;
     }
     if tb.is_water() {
@@ -140,9 +158,6 @@ fn road_step(w: &World, ax: i32, ay: i32, bx: i32, by: i32) -> Option<f32> {
             return None;
         }
         cost += 10.0;
-    }
-    if face_b && w.terrain(bx, by).is_water() {
-        return None;
     }
     let f = w.flags(bx, by);
     if f & (flag::ROAD | flag::PLAZA) != 0 {
@@ -279,24 +294,14 @@ pub fn generate(w: &mut World, rng: &mut Rng) {
     }
 }
 
-fn area_free(w: &World, x0: i32, y0: i32, fw: i32, fh: i32, lv: u8) -> bool {
-    // Footprint grows north from row y0; require a 1-tile margin.
-    for y in (y0 - fh - 2)..=(y0 + 1) {
-        for x in (x0 - 1)..=(x0 + fw) {
-            if !w.free_for_prop(x, y) || w.level(x, y) != lv || w.terrain(x, y) != Terrain::Grass {
-                return false;
-            }
-        }
-    }
-    true
+/// A building's footprint (growing north from row y0) plus a margin: one
+/// tile at the sides and front, two behind for the roof.
+fn lot(x0: i32, y0: i32, fw: i32, fh: i32) -> impl Iterator<Item = (i32, i32)> {
+    ((y0 - fh - 2)..=(y0 + 1)).flat_map(move |y| ((x0 - 1)..=(x0 + fw)).map(move |x| (x, y)))
 }
 
-fn mark_no_props(w: &mut World, x0: i32, y0: i32, fw: i32, fh: i32) {
-    for y in (y0 - fh - 2)..=(y0 + 1) {
-        for x in (x0 - 1)..=(x0 + fw) {
-            w.set_flag(x, y, flag::NO_PROPS, true);
-        }
-    }
+fn lot_free(w: &World, x0: i32, y0: i32, fw: i32, fh: i32, lv: u8) -> bool {
+    lot(x0, y0, fw, fh).all(|(x, y)| w.free_for_prop(x, y) && w.level(x, y) == lv && w.terrain(x, y) == Terrain::Grass)
 }
 
 fn layout(w: &mut World, rng: &mut Rng, pf: &mut PathFinder, v: &mut Village) {
@@ -331,31 +336,28 @@ fn layout(w: &mut World, rng: &mut Rng, pf: &mut PathFinder, v: &mut Village) {
     for _ in 0..homes {
         kinds.push(BuildingKind::Home);
     }
+    // Each building tries spots on a slowly widening ring; one that finds no
+    // room is skipped.
     for kind in kinds {
         let (fw, fh) = kind.size();
         let (fw, fh) = (fw as i32, fh as i32);
-        let mut placed = false;
         for attempt in 0..400 {
             let ring = 7.0 + (attempt as f32 / 25.0).floor() * 1.2 + rng.f32() * 2.5;
-            let ang = rng.f32() * std::f32::consts::TAU;
+            let ang = rng.f32() * TAU;
             let x0 = cx + (ang.cos() * ring) as i32 - fw / 2;
             let y0 = cy + (ang.sin() * ring * 0.85) as i32 + fh / 2;
-            if !area_free(w, x0, y0, fw, fh, lv) {
+            if !lot_free(w, x0, y0, fw, fh, lv) {
                 continue;
             }
             let variant = v.culture * 4 + rng.below(4) as u8;
             let id = w.add_prop(mk(PropKind::House, x0, y0, variant, fw as u8, fh as u8));
             w.props[id].state = kind as u8;
-            mark_no_props(w, x0, y0, fw, fh);
-            let door = (x0 + fw / 2, y0 + 1);
-            v.buildings.push(Building { prop: id, kind, door });
-            v.radius = v.radius.max(((x0 - cx).abs().max((y0 - cy).abs())) + fw);
-            placed = true;
+            for (x, y) in lot(x0, y0, fw, fh) {
+                w.set_flag(x, y, flag::NO_PROPS, true);
+            }
+            v.buildings.push(Building { prop: id, kind, door: w.props[id].door() });
+            v.radius = v.radius.max((x0 - cx).abs().max((y0 - cy).abs()) + fw);
             break;
-        }
-        if !placed && kind != BuildingKind::Home {
-            // Essential buildings get a second chance with a smaller ring
-            // later; for now just skip.
         }
     }
     // Paths from doors to the plaza.
@@ -372,7 +374,7 @@ fn layout(w: &mut World, rng: &mut Rng, pf: &mut PathFinder, v: &mut Village) {
             break;
         }
         let (pw, ph) = (rng.range(5, 8), rng.range(3, 5));
-        let ang = rng.f32() * std::f32::consts::TAU;
+        let ang = rng.f32() * TAU;
         let dist = v.radius as f32 + 2.0 + rng.f32() * 4.0;
         let x0 = cx + (ang.cos() * dist) as i32 - pw / 2;
         let y0 = cy + (ang.sin() * dist) as i32 - ph / 2;
@@ -384,10 +386,8 @@ fn layout(w: &mut World, rng: &mut Rng, pf: &mut PathFinder, v: &mut Village) {
         for y in y0..y0 + ph {
             for x in x0..x0 + pw {
                 w.set_flag(x, y, flag::TILLED, true);
-                if (x - x0) % 1 == 0 && y % 1 == 0 {
-                    let id = w.add_prop(mk(PropKind::Crop, x, y, crop, 1, 1));
-                    w.props[id].state = rng.range(0, 4) as u8;
-                }
+                let id = w.add_prop(mk(PropKind::Crop, x, y, crop, 1, 1));
+                w.props[id].state = rng.range(0, 4) as u8;
             }
         }
         for y in y0 - 1..y0 + ph + 1 {
@@ -414,17 +414,17 @@ fn layout(w: &mut World, rng: &mut Rng, pf: &mut PathFinder, v: &mut Village) {
             let side = if rng.chance(0.5) { bx - 1 } else { bx + bw };
             let y = by - rng.range(0, 2);
             let k = *rng.pick(&decor);
-            if w.walkable(side, y) && w.flags(side, y) & (flag::ROAD | flag::PLAZA) == 0 {
+            if w.walkable(side, y) && !w.has(side, y, flag::ROAD | flag::PLAZA) {
                 w.add_prop(mk(k, side, y, rng.below(4) as u8, 1, 1));
             }
         }
     }
     // A shrine to the goddess at every village edge.
     for _ in 0..40 {
-        let ang = rng.f32() * std::f32::consts::TAU;
+        let ang = rng.f32() * TAU;
         let x = cx + (ang.cos() * 4.5) as i32;
         let y = cy + (ang.sin() * 4.5) as i32;
-        if w.free_for_prop(x, y) || (w.walkable(x, y) && w.flags(x, y) & flag::PLAZA == 0 && w.blocker[w.idx(x, y)] == 0 && !w.has(x, y, flag::ROAD)) {
+        if w.walkable(x, y) && !w.has(x, y, flag::ROAD | flag::PLAZA) {
             w.add_prop(mk(PropKind::Shrine, x, y, 0, 1, 1));
             break;
         }
