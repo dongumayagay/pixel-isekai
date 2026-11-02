@@ -538,16 +538,16 @@ pub(super) fn hat(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) 
             let (hr, vr) = (rx + 1.6, ry + 1.4);
             let cc = v(hc.x - if side { 1.5 } else { 0.0 }, hc.y - 1.0);
             let cyi = hc.y.round() as i32;
-            let bottom = hc.y + ry + 3.0;
+            let bottom = b.shoulder_y + 2.0;
+            let cape_w = (b.shoulder_w * 0.75).max(hr);
             for y in (cc.y - vr - 1.0) as i32..bottom as i32 {
-                for x in (cc.x - hr - 3.0) as i32..=(cc.x + hr + 3.0) as i32 {
-                    let fy = y as f32 + 0.5;
-                    let nx = (x as f32 + 0.5 - cc.x) / hr;
-                    let ny = (fy - cc.y) / vr;
-                    // Round over the head, then flaring a little to the shoulders.
-                    let flare = if ny > 0.3 { 1.0 + (ny - 0.3) * 0.35 } else { 1.0 };
-                    let inside = if ny < 0.0 { nx * nx + ny * ny <= 1.0 } else { nx.abs() <= flare };
-                    if !inside {
+                let fy = y as f32 + 0.5;
+                let ny = (fy - cc.y) / vr;
+                // Round over the crown, then falling in a cone onto the shoulders.
+                let hw = if ny < 0.0 { hr * (1.0 - ny * ny).max(0.0).sqrt() } else { hr + (cape_w - hr) * ((fy - cc.y) / (bottom - cc.y)).powi(2) };
+                for x in (cc.x - hw).floor() as i32..=(cc.x + hw).ceil() as i32 {
+                    let nx = (x as f32 + 0.5 - cc.x) / hw;
+                    if nx.abs() > 1.0 {
                         continue;
                     }
                     let dy = y - cyi;
@@ -560,8 +560,8 @@ pub(super) fn hat(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) 
                         continue;
                     }
                     let rim = open(-1.5);
-                    let i = if rim { 1 } else if nx.abs() > 0.82 || ny > 0.8 { 2 } else { 3 };
-                    cv.fill(x, y, hcol[i]);
+                    let nz = (1.0 - nx * nx).max(0.0).sqrt();
+                    cv.fill(x, y, hcol[if rim { 1 } else { tone(ny.clamp(-0.4, 1.0), nz, -0.08) }]);
                 }
             }
         }

@@ -274,6 +274,12 @@ pub const CUTS: [&str; 3] = ["Modest", "Bold", "Daring"];
 pub const FACIAL: [&str; 8] = ["None", "Stubble", "Hero mustache", "Goatee", "Short beard", "Full beard", "Sage beard", "Crescent mustache"];
 
 impl Look {
+    /// Headwear over the crown (bandana, helmet, hood, cap, chef, miner):
+    /// hair that would rise above it is not drawn.
+    fn covers_crown(&self) -> bool {
+        matches!(self.hat, 2 | 3 | 4 | 5 | 8 | 11)
+    }
+
     /// Facial hair style actually drawn: grown men only; the legacy `beard`
     /// flag means a full beard (a long one on dwarves).
     pub fn facial_style(&self) -> u8 {

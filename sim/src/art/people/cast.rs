@@ -24,7 +24,7 @@ pub fn cast() -> Vec<(&'static str, Look)> {
         ("Maid", Look { figure: 3, build: 1, hair: 0, hair_style: 6, outfit: outfit::MAID, primary: 11, secondary: 10, accent: 1, hat: 10, eyes: 3, skin: 1, ..base }),
         ("Butler", Look { female: false, build: 0, hair: 5, hair_style: 14, outfit: outfit::MAID, primary: 11, secondary: 10, accent: 1, eyes: 1, skin: 1, height: 2, ..base }),
         ("Witch", Look { figure: 2, build: 1, hair: 7, hair_style: 6, outfit: outfit::MAGE, primary: 5, secondary: 11, accent: 6, hat: 6, eyes: 4, skin: 1, held: held::STAFF, cut: 1, ..base }),
-        ("Rogue", Look { female: false, build: 0, hair: 0, hair_style: 13, outfit: outfit::ROGUE, primary: 8, secondary: 11, accent: 6, hat: 4, eyes: 5, skin: 2, held: held::SWORD, ..base }),
+        ("Rogue", Look { female: false, build: 0, hair: 0, hair_style: 13, outfit: outfit::ROGUE, primary: 8, secondary: 11, accent: 8, hat: 4, eyes: 5, skin: 2, held: held::SWORD, ..base }),
         ("Elf Ranger", Look { female: false, build: 0, race: RACE_ELF, hair: 3, hair_style: 14, outfit: outfit::RANGER, primary: 2, secondary: 3, accent: 6, eyes: 1, skin: 0, height: 2, ..base }),
         ("Monk", Look { female: false, build: 2, hair: 0, hair_style: 16, outfit: outfit::MONK, primary: 6, secondary: 3, accent: 1, eyes: 2, skin: 3, ..base }),
         ("Beach Heroine", Look { figure: 3, build: 2, hair: 2, hair_style: 2, outfit: outfit::SWIM, primary: 12, secondary: 10, accent: 10, eyes: 1, skin: 2, ..base }),

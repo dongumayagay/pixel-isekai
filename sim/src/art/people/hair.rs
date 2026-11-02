@@ -361,7 +361,10 @@ pub(super) fn drill(cv: &mut Canvas, h: &R5, top: V2, len: f32, r: f32, lean: f3
 }
 
 /// Ahoge: one antenna strand springing from the crown and curling over.
-pub(super) fn ahoge(cv: &mut Canvas, h: &R5, root: V2, dir: f32) {
+pub(super) fn ahoge(cv: &mut Canvas, look: &Look, h: &R5, root: V2, dir: f32) {
+    if look.covers_crown() {
+        return;
+    }
     cv.begin();
     let pts = [root, v(root.x + dir * 1.0, root.y - 4.0), v(root.x + dir * 3.5, root.y - 6.5), v(root.x + dir * 5.5, root.y - 5.0)];
     curve(cv, &pts, 1.3, 0.5, h);
@@ -530,7 +533,7 @@ pub(super) fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &C
                     for (dx, len) in [(-3.5f32, 3.0f32), (0.0, 4.0), (3.5, 3.0)] {
                         tail_lock(cv, h, v(32.0 + dx, nape - 4.0), v(32.0 + dx * 1.15, nape + len - 2.0), 2.7);
                     }
-                    ahoge(cv, h, v(31.5, cy - 15.0), -1.0);
+                    ahoge(cv, look, h, v(31.5, cy - 15.0), -1.0);
                 }
                 Extra::LowTie => {
                     let at = v(32.0, cy + 8.0);
@@ -642,7 +645,7 @@ pub(super) fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &C
                     for (x, len) in [(20.5f32, 4.0f32), (24.5, 3.5)] {
                         tail_lock(cv, h, v(x + 1.0, nape - 3.0), v(x - 0.5, nape + len - 2.0), 2.0);
                     }
-                    ahoge(cv, h, v(31.5, cy - 15.5), 1.0);
+                    ahoge(cv, look, h, v(31.5, cy - 15.5), 1.0);
                 }
                 Extra::LowTie => {
                     cv.begin();
@@ -788,7 +791,7 @@ pub(super) fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &C
                 Extra::SideBraid => {
                     braid(cv, h, &[v(20.5, cy + 5.0), v(20.5, cy + 13.0), v(22.5, cy + 22.0), v(24.0, cy + 32.0)], 2.9, 2.0, &tie, 1.0);
                 }
-                Extra::Messy => ahoge(cv, h, v(32.5, cy - 15.0), 1.0),
+                Extra::Messy => ahoge(cv, look, h, v(32.5, cy - 15.0), 1.0),
                 // The knot peeks over the crown.
                 Extra::TopKnot => {
                     cv.begin();

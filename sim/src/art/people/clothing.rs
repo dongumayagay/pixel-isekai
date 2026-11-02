@@ -565,7 +565,7 @@ pub(super) fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors
                     let at = if bib { if fig && !side { by - 1.0 } else { sy + 4.0 } } else { b.waist_y + 1.0 };
                     let (ax, aw) = if side { (fwd(b.waist_y) - 1.6, 2.2) } else if bib { (cx, b.chest_w - 3.0) } else { (cx, b.waist_w + 0.5) };
                     cv.begin();
-                    cv.profile(at, bottom, |_| ax, |y| if side { aw } else { aw + (y - at).max(0.0) * 0.06 }, &ap, 0.06);
+                    cv.drape(at, bottom, |_| ax, |y| if side { aw } else { aw + (y - at).max(0.0) * 0.06 }, &ap, 0.06, if side { 0.0 } else { 1.5 });
                     if front && bib {
                         // Straps up to the shoulders.
                         let strap = (cx - aw + 1.0).floor() as i32;
