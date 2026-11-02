@@ -117,6 +117,56 @@ def fill_scalp(body, cls, cell_y0, cell_x0):
     b[sh & new & ~edge] = 4
 
 
+def outline_new(b, new):
+    """Outline + one shade row for freshly filled skin pixels `new` inside cell array b."""
+    full = b > 0
+    p = np.pad(full, 1)
+    edge = full & ~(p[:-2, 1:-1] & p[2:, 1:-1] & p[1:-1, :-2] & p[1:-1, 2:])
+    b[edge & new] = 1
+    sh = np.zeros_like(new); sh[1:] = (edge & new)[:-1]
+    b[sh & new & ~edge] = 4
+
+
+def fill_under_hair(body, cls, cell_y0, cell_x0, direction, down_sil):
+    """Rebuild skin hidden by the baked hair below the skull: trapezius/shoulders (down), back of the neck
+    (sides) and the whole upper back (up). Down/side: fill each row between its outermost drawn pixels.
+    Up: the back has the same outline as the front, so borrow the down cell's silhouette.
+    Sides additionally carry the torso's back line straight up to the skull."""
+    y0, x0 = cell_y0, cell_x0
+    c = cls[y0:y0 + H, x0:x0 + W]
+    b = body[y0:y0 + H, x0:x0 + W]
+    hidden = (c == 2) & (b == 0)
+    rows = np.nonzero((c == 2).any(axis=1))[0]
+    if not len(rows):
+        return
+    ytop = int(rows.min())
+    ya, yb = ytop + 30, ytop + 52                 # chin-ish .. mid torso
+    cand = np.zeros_like(hidden)
+    drawn = (b > 0) | (c == 3) | (c == 4)
+    if direction == 'up':
+        cand[ya:yb] = down_sil[ya:yb]
+    else:
+        for y in range(ya, yb):
+            xs = np.nonzero(drawn[y])[0]
+            if len(xs):
+                cand[y, xs.min():xs.max() + 1] = True
+        if direction in ('left', 'right'):
+            sh = drawn[ytop + 36:ytop + 41]
+            xs = np.nonzero(sh.any(axis=0))[0]
+            if len(xs):
+                lo, hi = int(xs.min()), int(xs.max())
+                for y in range(ya, ytop + 40):
+                    r = np.nonzero(drawn[y])[0]
+                    if len(r):
+                        if direction == 'right':
+                            cand[y, lo:r.max() + 1] = True
+                        else:
+                            cand[y, r.min():hi + 1] = True
+    new = cand & hidden
+    b[new] = 6
+    outline_new(b, new)
+
+
 def save(idx, path, ramp, extras=()):
     im = Image.fromarray(idx.astype(np.uint8), 'P')
     pal = [0, 0, 0]
@@ -150,6 +200,11 @@ def build():
         for r in range(4):
             for c in range(cols):
                 fill_scalp(body, cls, r * H, c * W)
+        drawn = (cls == 1) | (cls == 3) | (cls == 4)
+        for r, d in ((0, 'down'), (1, 'left'), (2, 'right'), (3, 'up')):
+            for c in range(cols):
+                down_sil = drawn[0:H, c * W:(c + 1) * W] | (body[0:H, c * W:(c + 1) * W] > 0)
+                fill_under_hair(body, cls, r * H, c * W, d, down_sil)
         # skin under the eyes/mouth (so other eye sets can replace them) and under the underwear
         # (bust/hip shape stays as a soft mid-tone line where the cloth outline was)
         body[(cls == 4) & (body == 0)] = 6
