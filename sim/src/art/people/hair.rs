@@ -194,7 +194,7 @@ impl Skull {
     fn new(look: &Look, b: &Build, dir: u8) -> Skull {
         let tight = style(look.hair_style).tight;
         let (hx, hy) = b.head_r;
-        Skull { cx: if dir == DIR_SIDE { b.head_c.x - 1.0 } else { b.head_c.x }, cy: b.head_c.y, rx: hx + if tight { 1.0 } else { 1.5 }, ry: hy + if tight { 0.5 } else { 1.0 } }
+        Skull { cx: if dir == DIR_SIDE { b.head_c.x - 1.0 } else { b.head_c.x }, cy: b.head_c.y - 2.0, rx: hx + if tight { 1.0 } else { 1.5 }, ry: hy + if tight { 0.5 } else { 1.0 } }
     }
 
     /// Centre of the cap ellipse (a pixel above the head centre).
@@ -244,10 +244,11 @@ impl Skull {
         let ny = (fy - mc.y + 1.0) / self.ry;
         let e = if ny.abs() <= 1.0 { self.rx * (1.0 - ny * ny).sqrt() } else { f32::NAN };
         let dy = (fy - b.head_c.y).floor() as i32;
-        let (l, r) = match dy {
-            -13..=5 => SIDE_HEAD[(dy + 13) as usize],
-            d if d > 5 => (SIDE_HEAD[18].0 + (d - 5), SIDE_HEAD[18].1),
-            _ => (i32::MAX, i32::MIN),
+        let last = SIDE_HEAD[SIDE_HEAD.len() - 1];
+        let (l, r) = match side_row(dy) {
+            Some(row) => row,
+            None if dy > 11 => (last.0 + (dy - 11), last.1),
+            None => (i32::MAX, i32::MIN),
         };
         let (l, r) = if l == i32::MAX { (f32::NAN, f32::NAN) } else { (b.head_c.x + l as f32 - p.vb, b.head_c.x + r as f32 + p.vf) };
         ((mc.x - e).min(l), (mc.x + e).max(r))
@@ -292,7 +293,7 @@ pub(super) fn back_hair(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Co
             // over the shoulders, then a taper toward the tips.
             let p = sk.profile(b, k.tight);
             let top = cy - 2.0;
-            let len = k.back + 2.0;
+            let len = (k.back + 2.0).min(b.ground - 6.0 - top);
             let back_x = |t: f32| p.back - 1.5 * (std::f32::consts::PI * (t / 0.3).min(1.0)).sin() * (1.0 - t * 0.5) + 4.0 * t * t + t * t * sway * 2.2;
             let front_x = |t: f32| p.ear_x + 3.0 + t * t * sway * 1.2;
             let tt = |y: f32| ((y - top) / len).clamp(0.0, 1.0);
@@ -505,7 +506,7 @@ fn attachments(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, k: 
         // A shine on the bare crown.
         (Bald, DIR_DOWN | DIR_SIDE, false) => {
             let ox = if side { 3 } else { 0 };
-            for (x, y) in [(27, -11), (28, -11), (26, -10)] {
+            for (x, y) in [(27, -9), (28, -9), (26, -8)] {
                 cv.put(x + ox, (cy + y as f32) as i32, c.skin[4]);
             }
         }
@@ -750,15 +751,16 @@ pub(super) fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &C
                 // darker, no stripes across the crown.
                 let under = fy > cy + 5.0 - (d / rx).min(1.0).powi(2) * 6.0;
                 Some(match ex {
-                    // A horseshoe at ear height; the crown stays bare.
-                    Bald if !(cy - 1.0..=cy + 7.0).contains(&fy) => return None,
-                    Bald => h[if nx.abs() > 0.8 { 2 } else { 3 }],
+                    // Bald is bare skin, as in the LPC base head.
+                    Bald => return None,
                     Undercut if fy > cy - 2.0 => clipped[if nx.abs() > 0.8 { 1 } else { 2 }],
                     _ => h[if under || nx.abs() > 0.9 { 2 } else { 3 }],
                 })
             });
             let top = cy + 5.0;
-            let len = (k.back - 5.0).max(0.0);
+            // Floor-length hair stops above the heels so short builds never
+            // clip the frame.
+            let len = (k.back - 5.0).max(0.0).min(b.ground - 6.0 - top);
             if k.long() {
                 hair_sheet(cv, h, top, top + len, false, k.hem, |_| 32.0, |y| sheet_w(rx, ((y - top) / len).clamp(0.0, 1.0)));
             } else if !matches!(ex, Bald | Undercut) {
@@ -784,7 +786,7 @@ pub(super) fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &C
             // Long hair covers the occiput down to the skull's bottom row in
             // profile (the sheet behind the body carries on below); the old
             // cap stopped at the nape and left the lower back of the head bald.
-            let skull_nape = cy + 16.0;
+            let skull_nape = cy + 12.0;
             let bottom = if long { skull_nape } else { nape };
             let ear_top = cy + 3.5;
             for y in (mc.y - ry).floor() as i32 - 1..=bottom.ceil() as i32 {
@@ -825,7 +827,7 @@ pub(super) fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &C
                     let neck = px >= p.ear_x - 2.0 && px < p.ear_x && fy > cy + 1.0;
                     let tone = if neck { 1 } else if back_edge || under || mass { 2 } else { 3 };
                     let c = match ex {
-                        Bald if fy < cy - 3.0 || px > p.ear_x + 2.5 => continue,
+                        Bald => continue,
                         Undercut if fy > cy - 5.0 && px < p.lock_x + 2.0 => clipped[tone.min(2)],
                         _ => h[tone],
                     };
@@ -866,7 +868,6 @@ pub(super) fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &C
                 let temple = dxa > face_w - 1.0 && fy > cy - 4.0;
                 Some(match ex {
                     // A thin fringe hugging the sides of the skull.
-                    Bald if dxa > face_w - 0.6 && dxa < face_w + 1.0 && fy > cy - 4.0 && fy < cy + 3.5 => h[if dxa > face_w { 2 } else { 3 }],
                     Bald => return None,
                     // Clipped sides from the temples down, close to the skull.
                     Undercut if dxa > 9.0 && fy > cy - 6.0 => {

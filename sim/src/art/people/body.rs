@@ -189,8 +189,11 @@ pub(super) fn build(look: &Look, pose: Pose, plant: f32) -> Build {
     let torso0 = if f { 30.0 } else { 31.0 } * torso_k;
     let torso = torso0 + pose.breathe.floor();
     let shoulder_y = crotch_y - torso;
-    let head_r = (13.0, 14.0);
-    let head_c = v(32.0, shoulder_y - 18.0);
+    // LPC base body: the head is 24 wide x 23 tall under the 3/4 top-down
+    // camera and its chin overlaps the shoulder line by two rows, so no
+    // neck shows between the chin and the collar.
+    let head_r = (12.0, 11.0);
+    let head_c = v(32.0, shoulder_y - 9.0);
     let chin_y = head_c.y + head_r.1;
     let (jig, jsq) = jiggle(look.figure, &pose, pose.frame);
     // The highlight trails the bust by another frame: softness without
@@ -221,7 +224,7 @@ pub(super) fn build(look: &Look, pose: Pose, plant: f32) -> Build {
         ground,
         head_r,
         head_c,
-        crown_y: head_c.y - head_r.0,
+        crown_y: head_c.y - head_r.1,
         eye_y: (chin_y - 11.0).round() as i32,
         mouth_y: (chin_y - 1.0).round() as i32,
         neck_top: chin_y - 2.0,

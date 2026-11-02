@@ -6,61 +6,66 @@ use super::*;
 /// (-13..=14). Straight cheeks, then a soft U jaw stepping 1,1,2,2 so the
 /// curve reads clean at 1x. Above the eyes it is covered by hair anyway.
 pub(super) fn face_hw(look: &Look, dy: i32) -> f32 {
-    const SKULL: [f32; 13] = [6.0, 8.0, 9.0, 10.0, 11.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0];
-    const FEMALE: [f32; 15] = [12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 11.0, 10.0, 9.0, 7.0, 5.0];
-    // Men: a lean, angled jaw from below the eyes to a defined chin.
-    const MALE: [f32; 15] = [12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 11.0, 11.0, 10.0, 9.0, 7.0, 5.0];
-    if !(-13..=14).contains(&dy) {
+    // LPC base head, front (skin rows under the outline, 20 wide x 19 tall)
+    // scaled 1.2x to our 24-wide head: a flat-topped dome, widest at the
+    // cheeks just below the eye line, and a short round chin. The 3/4
+    // top-down camera shows the crown, so the head is nearly as wide as
+    // it is tall. Women get a narrower chin (LPC female head).
+    const FRONT: [f32; 23] = [7.0, 8.0, 9.0, 9.5, 10.0, 11.0, 11.0, 11.0, 11.0, 11.0, 11.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 11.0, 10.0, 9.0, 8.0, 7.0, 6.0];
+    if !(-11..=11).contains(&dy) {
         return 0.0;
     }
     let extra = if look.race == RACE_DWARF && !look.female { 1.0 } else { 0.0 };
-    if dy < 0 {
-        return SKULL[(dy + 13) as usize] + extra;
-    }
-    let w = if look.female { FEMALE } else { MALE }[dy as usize];
-    if w > 0.0 { w + extra } else { 0.0 }
+    let soft = if look.female && dy >= 8 { 0.5 } else { 0.0 };
+    FRONT[(dy + 11) as usize] + extra - soft
 }
 
-/// Side-view head rows (left, right) offsets from x=32 for dy -13..=15:
-/// round skull at the back, forehead, a one-pixel nose, lips and chin.
-pub(super) const SIDE_HEAD: [(i32, i32); 29] = [
-    // Cranium (under the hair).
-    (-6, 5),
-    (-9, 8),
-    (-10, 9),
-    (-11, 10),
-    (-12, 11),
-    (-12, 11),
-    (-13, 11),
-    (-13, 12),
-    (-13, 12),
-    (-13, 12),
-    (-13, 12),
-    (-13, 12),
-    (-13, 12),
-    // Profile relief measured off the reference pack's side idle (brow 44,
-    // eye socket 42, nose tip 46, chin 43 -> 41 on a 64-wide frame): brow,
-    // a 1 px eye socket, a 3 px nose over two rows at the eye's bottom,
-    // under-nose, lips, a receding chin. Behind: the nape curves in under
-    // the occiput and the jaw runs as one diagonal from under the ear to
-    // the chin, so the neck shows behind it instead of a skin block.
-    (-13, 12),
-    (-13, 12),
-    (-13, 12),
-    (-12, 11),
-    (-12, 11),
-    (-12, 11),
-    (-12, 12),
-    (-12, 13),
-    (-11, 14),
-    (-11, 14),
-    (-11, 12),
-    (-11, 12),
-    (-10, 12),
+/// Back-view half-widths for dy -10..=11: the LPC back head sits a row
+/// lower at the crown and narrows to the nape over the shoulders.
+pub(super) fn back_hw(look: &Look, dy: i32) -> f32 {
+    const BACK: [f32; 22] = [7.0, 8.0, 9.0, 9.5, 10.0, 11.0, 11.0, 11.0, 11.0, 11.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 11.0, 10.0, 9.0, 8.0, 7.0, 6.0];
+    if !(-10..=11).contains(&dy) {
+        return 0.0;
+    }
+    let extra = if look.race == RACE_DWARF && !look.female { 1.0 } else { 0.0 };
+    BACK[(dy + 10) as usize] + extra
+}
+
+/// Side-view head rows (left, right) offsets from x=32 for dy -11..=11,
+/// facing right. LPC base head, side, scaled 1.2x: the face edge runs
+/// straight from the brow to the chin, the occiput rounds in toward the
+/// nape from the ear line down, the bottom row sits forward under the
+/// chin. Ours adds a one-pixel anime nose at the eye's bottom.
+pub(super) const SIDE_HEAD: [(i32, i32); 23] = [
+    (-5, 5),
+    (-7, 7),
+    (-9, 9),
+    (-9, 9),
+    (-9, 9),
+    (-10, 10),
+    (-10, 10),
+    (-10, 10),
+    (-10, 10),
+    (-10, 10),
+    (-10, 10),
+    (-10, 10),
+    (-10, 10),
+    (-10, 10),
+    (-10, 10),
+    (-10, 10),
     (-9, 11),
+    (-8, 11),
     (-7, 9),
-    (-4, 6),
+    (-7, 9),
+    (-6, 9),
+    (-5, 8),
+    (-4, 8),
 ];
+
+/// Skin row of the profile skull at `dy` from the head centre.
+pub(super) fn side_row(dy: i32) -> Option<(i32, i32)> {
+    (-11..=11).contains(&dy).then(|| SIDE_HEAD[(dy + 11) as usize])
+}
 
 pub(super) fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
     let hc = b.head_c;
@@ -68,43 +73,27 @@ pub(super) fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors)
     cv.begin();
     match dir {
         DIR_SIDE => {
-            // LPC base body, side: the skull's back edge runs straight down
-            // to one row above the shoulders, the chin rounds at the front,
-            // so the neck shows for a row or two only.
-            for dy in -13..=15 {
-                let (l, r) = SIDE_HEAD[(dy + 13) as usize];
+            for dy in -11..=11 {
+                let Some((l, r)) = side_row(dy) else { continue };
                 for x in cx + l..cx + r {
                     // Shadow under the jaw line and under the chin.
-                    let edge = x == cx + r - 1 || (dy >= 11 && x < cx + l + 2) || dy == 15;
+                    let edge = x == cx + r - 1 || (dy >= 8 && x < cx + l + 2) || dy == 11;
                     cv.fill(x, cy + dy, c.skin[if edge { 2 } else { 3 }]);
                 }
             }
         }
         _ => {
-            // From behind, anime heads hide the ears under the hair.
-            for dy in -13..=15 {
-                // From behind there is no jaw: the skull under the hair,
-                // then only the neck.
-                // From behind, the back of the skull and jaw narrow smoothly
-                // into the neck under the hairline.
-                let hw = if dir == DIR_UP && dy > 4 {
-                    // Occiput: the skull's round bottom, a quarter ellipse
-                    // from the ear line down to a row above the shoulders
-                    // (LPC base body, back: skull narrows to ~0.65 width and
-                    // sits on the shoulders, no neck pole).
-                    let nape = b.neck_w + 0.8;
-                    let t = (dy as f32 - 4.0) / 12.0;
-                    (face_hw(look, 4) * (1.0 - t * t).max(0.0).sqrt()).max(nape)
-                } else {
-                    face_hw(look, dy)
-                };
+            // From behind, anime heads hide the ears under the hair and
+            // there is no jaw: the skull under the hair, then the nape.
+            for dy in -11..=11 {
+                let hw = if dir == DIR_UP { back_hw(look, dy) } else { face_hw(look, dy) };
                 if hw <= 0.0 {
                     continue;
                 }
                 let w = hw as i32;
                 for x in cx - w..cx + w {
                     let u = (x as f32 + 0.5 - 32.0).abs() / hw;
-                    let shade = u > 0.84 || (dy >= 10 && u > 0.55);
+                    let shade = u > 0.84 || (dy >= 8 && u > 0.55);
                     cv.fill(x, cy + dy, c.skin[if shade { 2 } else { 3 }]);
                 }
             }
