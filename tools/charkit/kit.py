@@ -93,6 +93,7 @@ class Kit:
                     fr = fr[::2, ::2].copy()  # back to 64 for the layers above; see below
         if scale == 2:
             return self._frame2x(char, anim, direction, col, blink)
+        close_legs(fr, direction)
         return fr
 
     def _frame2x(self, char, anim, direction, col, blink):
@@ -115,10 +116,28 @@ class Kit:
                 ys = np.nonzero(cell)[0]
                 head_dy = (int(ys.min()) - HEAD_TOP) if len(ys) else 0
                 seen_head = True
+        close_legs(below, direction)
         fr = scale2x(below)
         face2x.draw(fr, direction, head_dy * 2, char, blink)
         over(fr, scale2x(above))
         return fr
+
+
+LEG_ROW = 50      # LPC: first row below the hands; legs live in their own half from here down
+LEG_CLOSE = 2     # px each leg moves toward the centre line (LPC stance is 2-4px apart; anime stance touches)
+
+
+def close_legs(fr, direction, k=LEG_CLOSE):
+    """Bring the LPC bow-legged stance together in front/back views (in place, 64px RGBA)."""
+    if direction not in ('down', 'up') or k <= 0:
+        return fr
+    half = CELL // 2
+    rows = fr[LEG_ROW:]
+    left, right = rows[:, :half].copy(), rows[:, half:].copy()
+    rows[:, :half] = 0; rows[:, half:] = 0
+    rows[:, k:half] = left[:, :half - k]
+    rows[:, half:CELL - k] = right[:, k:]
+    return fr
 
 
 def erase_eyes(cell):
