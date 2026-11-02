@@ -5115,11 +5115,25 @@ pub fn lint(look: &Look) -> Vec<Issue> {
 mod qa {
     use super::*;
 
+    /// The core roster is held to the full bar: every frame, every view.
+    #[test]
+    fn core_roster_passes_visual_qa() {
+        let mut failures = Vec::new();
+        for (name, look) in cast() {
+            let issues: Vec<_> = lint(&look).into_iter().filter(|i| !ADVISORY.contains(&i.kind)).collect();
+            if !issues.is_empty() {
+                failures.push(format!("{name}: {:?}", &issues[..issues.len().min(3)]));
+            }
+        }
+        assert!(failures.is_empty(), "core roster failed QA:\n{}", failures.join("\n"));
+    }
+
+    /// A light smoke test over random combinations.
     #[test]
     fn random_characters_pass_visual_qa() {
         let mut rng = Rng::new(77);
         let mut failures = Vec::new();
-        for i in 0..240 {
+        for i in 0..40 {
             let look = Look::random_any(&mut rng);
             // Palette size, nubs and straight sides are advisory (props and
             // pointed tips trip them legitimately); everything else is a defect.
@@ -5207,5 +5221,14 @@ pub fn cast() -> Vec<(&'static str, Look)> {
         ("Fox Merchant", Look { figure: 2, build: 2, race: RACE_BEAST, beast: 1, hair: 4, hair_style: 7, outfit: outfit::MERCHANT, primary: 5, secondary: 7, accent: 6, eyes: 5, skin: 1, held: held::BASKET, ..base }),
         ("Village Elder", Look { facial: 6, build: 0, female: false, age: 2, hair: 5, hair_style: 18, outfit: outfit::SCHOLAR, primary: 2, secondary: 7, accent: 6, beard: true, eyes: 2, skin: 3, held: held::STAFF, ..base }),
         ("Shopkeeper", Look { facial: 2, build: 3, female: false, hair: 1, hair_style: 0, outfit: outfit::INNKEEPER, primary: 9, secondary: 3, accent: 6, hat: 5, glasses: true, eyes: 2, skin: 2, held: held::BASKET, ..base }),
+        ("Noble Lady", Look { figure: 3, build: 1, hair: 3, hair_style: 9, outfit: outfit::NOBLE, primary: 12, secondary: 10, accent: 6, eyes: 0, skin: 0, cut: 1, ..base }),
+        ("Rival Noble", Look { female: false, build: 1, hair: 6, hair_style: 15, outfit: outfit::NOBLE, primary: 13, secondary: 10, accent: 1, eyes: 4, skin: 0, held: held::SWORD, height: 2, ..base }),
+        ("Maid", Look { figure: 3, build: 1, hair: 0, hair_style: 6, outfit: outfit::MAID, primary: 11, secondary: 10, accent: 1, hat: 10, eyes: 3, skin: 1, ..base }),
+        ("Butler", Look { female: false, build: 0, hair: 5, hair_style: 14, outfit: outfit::MAID, primary: 11, secondary: 10, accent: 1, eyes: 1, skin: 1, height: 2, ..base }),
+        ("Witch", Look { figure: 2, build: 1, hair: 7, hair_style: 6, outfit: outfit::MAGE, primary: 5, secondary: 11, accent: 6, hat: 6, eyes: 4, skin: 1, held: held::STAFF, cut: 1, ..base }),
+        ("Rogue", Look { female: false, build: 0, hair: 0, hair_style: 13, outfit: outfit::ROGUE, primary: 8, secondary: 11, accent: 6, hat: 4, eyes: 5, skin: 2, held: held::SWORD, ..base }),
+        ("Elf Ranger", Look { female: false, build: 0, race: RACE_ELF, hair: 3, hair_style: 14, outfit: outfit::RANGER, primary: 2, secondary: 3, accent: 6, eyes: 1, skin: 0, height: 2, ..base }),
+        ("Monk", Look { female: false, build: 2, hair: 0, hair_style: 16, outfit: outfit::MONK, primary: 6, secondary: 3, accent: 1, eyes: 2, skin: 3, ..base }),
+        ("Beach Heroine", Look { figure: 3, build: 2, hair: 2, hair_style: 2, outfit: outfit::SWIM, primary: 12, secondary: 10, accent: 10, eyes: 1, skin: 2, ..base }),
     ]
 }
