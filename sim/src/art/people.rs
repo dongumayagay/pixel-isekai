@@ -71,10 +71,11 @@ pub mod outfit {
     pub const GUILD: u8 = 20;
     pub const DEMON: u8 = 21;
     pub const SWIM: u8 = 22;
-    pub const COUNT: u8 = 23;
+    pub const MICRO: u8 = 23;
+    pub const COUNT: u8 = 24;
 
     pub const NAMES: [&str; COUNT as usize] = [
-        "Peasant", "Labourer", "Fisher", "Smith", "Cook", "Merchant", "Innkeeper", "Guard", "Knight", "Hero", "Adventurer", "Rogue", "Ranger", "Mage", "Scholar", "Priest", "Monk", "Bard", "Maid / Butler", "Noble", "Guild clerk", "Demon lord", "Swimwear",
+        "Peasant", "Labourer", "Fisher", "Smith", "Cook", "Merchant", "Innkeeper", "Guard", "Knight", "Hero", "Adventurer", "Rogue", "Ranger", "Mage", "Scholar", "Priest", "Monk", "Bard", "Maid / Butler", "Noble", "Guild clerk", "Demon lord", "Swimwear", "Micro bikini",
     ];
 
     /// What the primary, secondary and accent dyes colour on each outfit
@@ -109,7 +110,8 @@ pub mod outfit {
             (NOBLE, false) => ["Frock coat", "Shirt", "Sash"],
             (GUILD, _) => ["Vest", "Blouse", "Bow"],
             (SWIM, true) => ["Bikini", "", "Ties"],
-            (SWIM, false) => ["Trunks", "Waistband", ""],
+            (SWIM, false) | (MICRO, false) => ["Trunks", "Waistband", ""],
+            (MICRO, true) => ["Bikini", "", "Strings"],
             _ => ["Gown", "Lining", "Jewel"],
         }
     }
@@ -154,6 +156,7 @@ pub mod outfit {
             NOBLE => if female { (PINK, WHITE, OCHRE) } else { (NAVY, WHITE, RED) },
             GUILD => (NAVY, WHITE, RED),
             SWIM => if female { (PINK, WHITE, WHITE) } else { (BLUE, WHITE, WHITE) },
+            MICRO => if female { (WHITE, WHITE, WHITE) } else { (BLACK, WHITE, WHITE) },
             _ => (BLACK, RED, PURPLE),
         }
     }
@@ -225,7 +228,15 @@ pub struct Look {
     /// Facial hair for grown men (see [`FACIAL`]); 0 falls back to `beard`.
     #[serde(default)]
     pub facial: u8,
+    /// How revealing the outfit is cut (see [`CUTS`]).
+    #[serde(default)]
+    pub cut: u8,
 }
+
+/// Modest as designed; bold: a sweetheart neckline with cleavage and
+/// shorter skirts (an open collar on men); daring: a plunging, off-shoulder
+/// neckline, bare midriff and mini skirts (an open shirt on men).
+pub const CUTS: [&str; 3] = ["Modest", "Bold", "Daring"];
 
 pub const FACIAL: [&str; 8] = ["None", "Stubble", "Hero mustache", "Goatee", "Short beard", "Full beard", "Sage beard", "Crescent mustache"];
 
@@ -300,6 +311,7 @@ impl Look {
             build: *rng.pick(&[0u8, 1, 1, 1, 2, 2, 3]),
             height: *rng.pick(&[0u8, 1, 1, 1, 2]),
             facial: if !female && age >= 1 && rng.chance(if age == 2 { 0.7 } else { 0.4 }) { 1 + rng.below(FACIAL.len() - 1) as u8 } else { 0 },
+            cut: 0,
         }
     }
 }
@@ -1396,6 +1408,9 @@ enum Piece {
     Bikini(Dye, Dye),
     /// Swim trunks with a waistband.
     Trunks(Dye, Dye),
+    /// Micro bikini: small cups over the front of each breast and a tiny
+    /// high-cut bottom on thin strings.
+    Micro(Dye, Dye),
 }
 
 /// A whole outfit: body garment, sleeves, legs, lower garment, footwear and
@@ -1412,6 +1427,8 @@ struct Garb {
     /// Skin showing at an open collar.
     neckline: bool,
     barefoot: bool,
+    /// Revealing cut (0 modest, 1 bold, 2 daring), where the outfit allows.
+    cut: u8,
     pieces: Vec<Piece>,
 }
 
@@ -1419,7 +1436,7 @@ fn garb(look: &Look) -> Garb {
     use Dye::*;
     use Piece::*;
     let f = look.female;
-    let mut g = Garb { shirt: P, sleeve: (Sleeve::Long, P), legs: Drab, lower: (Lower::Pants, Drab), boots: None, wide: false, neckline: false, barefoot: false, pieces: Vec::new() };
+    let mut g = Garb { shirt: P, sleeve: (Sleeve::Long, P), legs: Drab, lower: (Lower::Pants, Drab), boots: None, wide: false, neckline: false, barefoot: false, cut: 0, pieces: Vec::new() };
     let skirt = |len: f32, flare: f32, d: Dye| (Lower::Skirt(len, flare), d);
     match look.outfit {
         outfit::PEASANT => {
@@ -1619,12 +1636,16 @@ fn garb(look: &Look) -> Garb {
             }
             g.pieces = vec![Vest(P, true), Bow(A)];
         }
-        outfit::SWIM => {
+        outfit::SWIM | outfit::MICRO => {
             g.shirt = Skin;
             g.sleeve = (Sleeve::Bare, Skin);
             g.legs = Skin;
             g.barefoot = true;
-            g.pieces = vec![if f { Bikini(P, A) } else { Trunks(P, S) }];
+            g.pieces = vec![match (f, look.outfit == outfit::MICRO) {
+                (false, _) => Trunks(P, S),
+                (true, false) => Bikini(P, A),
+                (true, true) => Micro(P, A),
+            }];
         }
         _ => {
             // Demon lord: floor-length gown or coat, a high collar, a cape
@@ -1632,6 +1653,15 @@ fn garb(look: &Look) -> Garb {
             g.lower = (Lower::Gown(0.36), P);
             g.legs = Skin;
             g.pieces = vec![Cape(P, S), Sash(Gold), Collar(S), Gem(A)];
+        }
+    }
+    // A revealing cut: armour and swimwear stay as they are; skirts rise.
+    if !matches!(look.outfit, outfit::KNIGHT | outfit::GUARD | outfit::SWIM | outfit::MICRO) {
+        g.cut = look.cut.min(2);
+        if f {
+            if let Lower::Skirt(len, flare) = g.lower.0 {
+                g.lower.0 = Lower::Skirt(len * [1.0, 0.78, 0.58][g.cut as usize], flare);
+            }
         }
     }
     g
@@ -1936,6 +1966,11 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     }
                 }
             }
+        }
+        if pass == 1 && g.cut > 0 && !back {
+            // Only a separate top can be cropped; dresses and gowns stay whole.
+            let crop = !matches!(lower_kind, Lower::Gown(_)) && (lower_kind == Lower::Pants || lower_dye != g.shirt);
+            reveal(cv, look, b, dir, by, g.cut, &[shirt, bust_ramp], c, &width, &fwd, crop);
         }
         for p in list {
             match p {
@@ -2269,7 +2304,8 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                     }
                 }
                 Piece::Bikini(d, ties) => swim_top(cv, b, c, dir, by, &dye(c, d), &dye(c, ties), fwd),
-                Piece::Trunks(d, band) => swim_trunks(cv, b, c, dir, &dye(c, d), &dye(c, band), aft, fwd),
+                Piece::Micro(d, strings) => micro_bikini(cv, b, c, dir, by, &dye(c, d), &dye(c, strings), fwd, aft),
+            Piece::Trunks(d, band) => swim_trunks(cv, b, c, dir, &dye(c, d), &dye(c, band), aft, fwd),
                 Piece::Ridge if front => {
                     for y in (sy + 2.0) as i32..(b.waist_y + 2.0) as i32 {
                         hspan(cv, 0.5, y, c.metal[3]);
@@ -2313,26 +2349,40 @@ fn cover(cv: &mut Canvas, y0: f32, y1: f32, mut inside: impl FnMut(i32, f32) -> 
 fn swim_top(cv: &mut Canvas, b: &Build, c: &Colors, dir: u8, by: f32, cloth: &R5, ties: &R5, fwd: impl Fn(f32) -> f32) {
     let (cx, sy) = (b.cx, b.shoulder_y);
     let r = b.bust.max(2.5);
-    let (top, bottom) = (by - r * 0.75, by + r * 0.85);
-    let tone = |fy: f32| cloth[if fy > bottom - 1.0 { 1 } else if fy > by + r * 0.3 { 2 } else { 3 }];
+    let bottom = by + r * 0.85;
     match dir {
         DIR_DOWN => {
-            // One cup on the left, mirrored: apex up at the strap, widening
-            // to the underline; the band joins them.
-            let ax = cx - (r * 0.85).max(3.0);
+            // One cup on the left, mirrored. It wraps the breast's own
+            // shading, stops short of its outer side (side curve shows) and
+            // of its underside (a crescent of under-bust shows), and ties
+            // with strings instead of a solid band.
+            let ry = r * 0.9;
+            let bc = cx - r * 0.92;
+            let (ctop, cbase) = (by - ry * 0.7, by + ry * 0.62);
             let first = cv.cur + 1;
             cv.begin();
-            cover(cv, top, bottom, |x, fy| {
-                let half = ((fy - top) * 0.8 + 0.6).min(r * 0.95 + 0.5);
-                (x < 32 && (x as f32 + 0.5 - ax).abs() <= half).then(|| tone(fy))
-            });
-            cv.mirror_from(first);
-            for y in (bottom - 1.0) as i32..=bottom as i32 {
-                hspan(cv, 2.0, y, cloth[1]);
+            for y in ctop.floor() as i32..=cbase.ceil() as i32 {
+                let fy = y as f32 + 0.5;
+                if fy < ctop || fy > cbase {
+                    continue;
+                }
+                let half = ((fy - ctop) * 0.85 + 0.6).min(r * 0.78 + 0.3);
+                for x in 0..32 {
+                    if (x as f32 + 0.5 - bc).abs() <= half {
+                        wrap_skin(cv, x, y, &c.skin, cloth);
+                    }
+                }
             }
-            // Halter strings up to the neck.
-            cv.line(v(ax, top), v(cx - 3.0, sy - 1.0), |_| Some(ties[2]));
-            cv.line(v(64.0 - ax, top), v(cx + 3.0, sy - 1.0), |_| Some(ties[2]));
+            cv.mirror_from(first);
+            let y0 = cbase.floor() as i32;
+            // Strings: halter to the neck, round the ribs, a knot between.
+            cv.line(v(bc, ctop), v(cx - 3.0, sy - 1.0), |_| Some(ties[2]));
+            cv.line(v(64.0 - bc, ctop), v(cx + 3.0, sy - 1.0), |_| Some(ties[2]));
+            for x in (cx - b.chest_w + 0.5) as i32..(bc - r * 0.78) as i32 {
+                cv.put(x, y0, ties[2]);
+                cv.put(FW - 1 - x, y0, ties[2]);
+            }
+            hspan(cv, (r * 0.92 - r * 0.78).max(1.0), y0, ties[2]);
             navel(cv, b, c);
         }
         DIR_UP => {
@@ -2347,11 +2397,29 @@ fn swim_top(cv: &mut Canvas, b: &Build, c: &Colors, dir: u8, by: f32, cloth: &R5
             }
         }
         _ => {
-            let front = fwd(by);
+            // The cup over the front of the near breast, ending above its
+            // underside; a string round the ribs.
+            let ry = r * 0.9;
+            let front = fwd(by) + r * 0.6;
+            let (ctop, cbase) = (by - ry * 0.7, by + ry * 0.62);
             cv.begin();
-            cover(cv, top, bottom, |x, fy| (x as f32 + 0.5 >= front - 2.5 - (fy - top) * 0.35).then(|| tone(fy)));
-            cv.line(v(front - 1.0, top), v(cx - 2.5, sy - 1.5), |_| Some(ties[2]));
-            cv.line(v(front - 2.5, bottom - 1.0), v(fwd(by) - 8.0, bottom - 1.0), |_| Some(cloth[1]));
+            for y in ctop.floor() as i32..=cbase.ceil() as i32 {
+                let fy = y as f32 + 0.5;
+                if fy < ctop || fy > cbase {
+                    continue;
+                }
+                let depth = ((fy - ctop) * 0.8 + 1.0).min(r * 1.05);
+                for x in 0..FW {
+                    if x as f32 + 0.5 >= front - depth {
+                        wrap_skin(cv, x, y, &c.skin, cloth);
+                    }
+                }
+            }
+            cv.line(v(front - 1.0, ctop), v(cx - 2.5, sy - 1.5), |_| Some(ties[2]));
+            let y0 = cbase.floor() as i32;
+            for x in (fwd(by) - 2.0 * (fwd(by) - cx)) as i32..(front - r * 1.05) as i32 {
+                cv.put(x, y0, ties[2]);
+            }
         }
     }
     // Bottoms: high-cut in front, fuller behind, tied at the hips.
@@ -2402,6 +2470,219 @@ fn swim_trunks(cv: &mut Canvas, b: &Build, c: &Colors, dir: u8, cloth: &R5, band
         let ok = if dir == DIR_SIDE { px >= aft(fy) - 1.5 && px <= fwd(fy) + 1.5 } else { (px - 32.0).abs() <= b.hip_w + 1.0 };
         ok.then(|| if fy < top + 1.5 { band[2] } else { cloth[if fy > low - 1.0 { 2 } else { 3 }] })
     });
+}
+
+/// Turn fabric back into the skin underneath, keeping its shade step.
+fn unwrap_to_skin(cv: &mut Canvas, x: i32, y: i32, fabrics: &[R5], skin: &R5) -> bool {
+    if !cv.img.inside(x, y) {
+        return false;
+    }
+    let i = (y * cv.img.w + x) as usize;
+    let r = cv.rid[i] as usize;
+    if r < cv.ramps.len() && fabrics.contains(&cv.ramps[r]) {
+        let k = (cv.ridx[i] as usize).clamp(1, 4);
+        cv.put(x, y, skin[k]);
+        return true;
+    }
+    false
+}
+
+/// The revealing cut: a neckline that shows the top of the bust and the
+/// cleavage (deeper and off the shoulders when daring), a bare midriff on
+/// daring tops; on men an open collar or shirt. The fabric edge along the
+/// neckline gets a darker hem.
+#[allow(clippy::too_many_arguments)]
+fn reveal(cv: &mut Canvas, look: &Look, b: &Build, dir: u8, by: f32, cut: u8, fabrics: &[R5], c: &Colors, width: &impl Fn(f32) -> f32, fwd: &impl Fn(f32) -> f32, crop: bool) {
+    let sy = b.shoulder_y;
+    let skin = c.skin;
+    let daring = cut >= 2;
+    let side = dir == DIR_SIDE;
+    if !look.female || !b.woman {
+        // Men: an open collar, or the shirt open to the sternum.
+        let depth = if daring { 9.0 } else { 4.0 };
+        for y in sy as i32..(sy + depth) as i32 {
+            let t = (y as f32 + 0.5 - sy) / depth;
+            if side {
+                let x = fwd(y as f32 + 0.5) as i32 - 1;
+                for k in 0..2 {
+                    unwrap_to_skin(cv, x - k, y, fabrics, &skin);
+                }
+            } else {
+                let half = (if daring { 4.5 } else { 3.5 }) * (1.0 - t) + 0.6;
+                for x in 0..FW {
+                    if (x as f32 + 0.5 - 32.0).abs() <= half {
+                        unwrap_to_skin(cv, x, y, fabrics, &skin);
+                    }
+                }
+            }
+        }
+        return;
+    }
+    let r = b.bust.max(3.0);
+    let ry = r * 0.9;
+    // The neckline: a sweetheart over each breast dipping into a V at the
+    // cleavage; daring sits lower and runs off the shoulders.
+    let base = if daring { by - ry * 0.15 } else { by - ry * 0.5 };
+    let neck = |x: i32| {
+        let d = (x as f32 + 0.5 - 32.0).abs();
+        base + (if daring { 4.0 } else { 3.0 } - d).max(0.0) * if daring { 1.1 } else { 0.8 }
+    };
+    let edge = if daring { 0.6 } else { 2.2 };
+    for x in 0..FW {
+        let ny = if side { base } else { neck(x) };
+        let mut last = None;
+        for y in (sy - 1.0) as i32..=ny.floor() as i32 {
+            let fy = y as f32 + 0.5;
+            let px = x as f32 + 0.5;
+            let inside = if side { px >= b.cx } else { (px - 32.0).abs() <= width(fy) - edge };
+            if inside && unwrap_to_skin(cv, x, y, fabrics, &skin) {
+                last = Some(y);
+            }
+        }
+        // Hem the neckline one pixel below the last bared row.
+        if let Some(y) = last {
+            let i = ((y + 1) * cv.img.w + x) as usize;
+            if cv.img.inside(x, y + 1) {
+                let rid = cv.rid[i] as usize;
+                if rid < cv.ramps.len() && fabrics.contains(&cv.ramps[rid]) {
+                    let ramp = cv.ramps[rid];
+                    cv.put(x, y + 1, ramp[1]);
+                }
+            }
+        }
+    }
+    if daring && crop && !side {
+        // A crop top: the midriff from under the bust to the waist.
+        let (top, low) = ((by + ry + 1.5).floor() as i32, (b.waist_y + 1.0) as i32);
+        for y in top..low {
+            for x in 0..FW {
+                if (x as f32 + 0.5 - 32.0).abs() <= width(y as f32 + 0.5) - 0.5 {
+                    unwrap_to_skin(cv, x, y, &fabrics[..1], &skin);
+                }
+            }
+        }
+        navel(cv, b, c);
+    }
+}
+
+/// Recolour a bare-skin pixel in fabric, keeping its shade step, so a cup
+/// follows the curve already shaded underneath it.
+fn wrap_skin(cv: &mut Canvas, x: i32, y: i32, skin: &R5, cloth: &R5) {
+    if !cv.img.inside(x, y) {
+        return;
+    }
+    let i = (y * cv.img.w + x) as usize;
+    let r = cv.rid[i] as usize;
+    if r < cv.ramps.len() && cv.ramps[r] == *skin {
+        let k = (cv.ridx[i] as usize).clamp(1, 4);
+        cv.fill(x, y, cloth[k]);
+    }
+}
+
+/// Micro bikini: small triangle cups over the front of each breast (the
+/// breast's own shading shows through the fabric), thin strings round the
+/// neck and ribs, and a tiny high-cut bottom on hip strings.
+#[allow(clippy::too_many_arguments)]
+fn micro_bikini(cv: &mut Canvas, b: &Build, c: &Colors, dir: u8, by: f32, cloth: &R5, strings: &R5, fwd: impl Fn(f32) -> f32, aft: impl Fn(f32) -> f32) {
+    let (cx, sy) = (b.cx, b.shoulder_y);
+    let r = b.bust.max(2.6);
+    let ry = r * 0.9;
+    let (apex_y, base_y) = (by - ry * 0.32, by + ry * 0.45);
+    let string = strings[2];
+    match dir {
+        DIR_DOWN => {
+            // Left cup, mirrored; the breast centres sit at cx -/+ r*0.92.
+            let bc = cx - r * 0.92;
+            let first = cv.cur + 1;
+            cv.begin();
+            for y in apex_y.floor() as i32..=base_y.ceil() as i32 {
+                let fy = y as f32 + 0.5;
+                if fy < apex_y || fy > base_y {
+                    continue;
+                }
+                let half = ((fy - apex_y) * 0.8 + 0.5).min(r * 0.42 + 0.4);
+                for x in 0..32 {
+                    if (x as f32 + 0.5 - bc).abs() <= half {
+                        wrap_skin(cv, x, y, &c.skin, cloth);
+                    }
+                }
+            }
+            cv.mirror_from(first);
+            // Halter strings to the neck, a string under the bust round the
+            // ribs, and a little knot between the cups.
+            let by0 = base_y.floor();
+            cv.line(v(bc, apex_y), v(cx - 3.0, sy - 1.0), |_| Some(string));
+            cv.line(v(64.0 - bc, apex_y), v(cx + 3.0, sy - 1.0), |_| Some(string));
+            for x in (cx - b.chest_w + 0.5) as i32..(bc - r * 0.42) as i32 {
+                cv.put(x, by0 as i32, string);
+                cv.put(FW - 1 - x, by0 as i32, string);
+            }
+            hspan(cv, (r * 0.92 - r * 0.42).max(1.0), by0 as i32, string);
+            navel(cv, b, c);
+        }
+        DIR_UP => {
+            // A single string across the back and a bow at the nape.
+            hspan(cv, b.chest_w - 0.4, base_y.floor() as i32, string);
+            cv.begin();
+            for s in [-1.0f32, 1.0] {
+                cv.ellipse(v(cx + s * 1.5, sy - 1.5), 1.2, 0.8, strings, 0.05);
+            }
+        }
+        _ => {
+            // The cup on the front of the near breast, its string round the
+            // ribs to the back.
+            let front = fwd(by) + r * 0.6;
+            cv.begin();
+            for y in apex_y.floor() as i32..=base_y.ceil() as i32 {
+                let fy = y as f32 + 0.5;
+                if fy < apex_y || fy > base_y {
+                    continue;
+                }
+                let depth = ((fy - apex_y) * 0.7 + 0.8).min(r * 0.55);
+                for x in 0..FW {
+                    if x as f32 + 0.5 >= front - depth {
+                        wrap_skin(cv, x, y, &c.skin, cloth);
+                    }
+                }
+            }
+            cv.line(v(front - 1.0, apex_y), v(cx - 2.0, sy - 1.5), |_| Some(string));
+            let y0 = base_y.floor() as i32;
+            for x in aft(by) as i32..(front - r * 0.7) as i32 {
+                cv.put(x, y0, string);
+            }
+        }
+    }
+    // Bottoms: a small triangle, low on the hips, on strings.
+    let (top, low) = (b.hip_y + 0.5, b.crotch_y + 1.5);
+    let span = low - top;
+    cv.begin();
+    match dir {
+        DIR_SIDE => {
+            let f0 = fwd(top);
+            cover(cv, top, low, |x, fy| {
+                let t = (fy - top) / span;
+                let px = x as f32 + 0.5;
+                (px >= f0 - 2.5 - t * 1.5 && px <= f0 + 0.5).then(|| cloth[if t > 0.7 { 2 } else { 3 }])
+            });
+            let y0 = top.floor() as i32;
+            for x in aft(top) as i32..(f0 - 2.0) as i32 {
+                cv.put(x, y0, string);
+            }
+        }
+        _ => {
+            // Front: a narrow V; behind: a small cheeky triangle.
+            let (w0, w1) = if dir == DIR_UP { (b.hip_w * 0.42, 1.2) } else { (b.hip_w * 0.4, 0.8) };
+            cover(cv, top, low, |x, fy| {
+                let t = (fy - top) / span;
+                let half = w0 + (w1 - w0) * t;
+                ((x as f32 + 0.5 - 32.0).abs() <= half).then(|| cloth[if t > 0.7 { 2 } else { 3 }])
+            });
+            // Hip strings rising to the hip bones.
+            let y0 = top.floor();
+            cv.line(v(32.0 - w0, y0 + 0.5), v(32.0 - b.hip_w + 0.3, y0 - 1.0), |_| Some(string));
+            cv.line(v(32.0 + w0, y0 + 0.5), v(32.0 + b.hip_w - 0.3, y0 - 1.0), |_| Some(string));
+        }
+    }
 }
 
 fn navel(cv: &mut Canvas, b: &Build, c: &Colors) {
@@ -4500,6 +4781,7 @@ impl Look {
         l.hair_style = rng.below(HAIR_STYLES as usize) as u8;
         l.hair = rng.below(pal::HAIR.len()) as u8;
         l.outfit = rng.below(outfit::COUNT as usize) as u8;
+        l.cut = rng.below(CUTS.len()) as u8;
         l.hat = if rng.chance(0.4) { rng.below(HATS as usize) as u8 } else { 0 };
         l.held = if rng.chance(0.4) { rng.below(held::COUNT as usize) as u8 } else { held::NONE };
         l.glasses = rng.chance(0.15);
@@ -4780,7 +5062,7 @@ mod motion {
 /// The hand-tuned core cast: the faces a typical isekai story is built on.
 /// Each is curated for quality first; procedural villagers come later.
 pub fn cast() -> Vec<(&'static str, Look)> {
-    let base = Look { skin: 1, hair: 0, hair_style: 1, primary: 0, secondary: 0, outfit: outfit::PEASANT, hat: 0, accent: 1, female: true, age: 1, beard: false, eyes: 0, mature: true, race: RACE_HUMAN, beast: 0, held: held::NONE, glasses: false, figure: 2, build: 1, height: 1, facial: 0 };
+    let base = Look { skin: 1, hair: 0, hair_style: 1, primary: 0, secondary: 0, outfit: outfit::PEASANT, hat: 0, accent: 1, female: true, age: 1, beard: false, eyes: 0, mature: true, race: RACE_HUMAN, beast: 0, held: held::NONE, glasses: false, figure: 2, build: 1, height: 1, facial: 0, cut: 0 };
     vec![
         ("Reincarnated Hero", Look { build: 1, female: false, hair: 0, hair_style: 13, outfit: outfit::HERO, primary: 11, secondary: 4, accent: 9, eyes: 2, skin: 1, held: held::SWORD, height: 1, ..base }),
         ("Guild Receptionist", Look { figure: 3, build: 1, hair: 1, hair_style: 1, outfit: outfit::GUILD, primary: 13, secondary: 10, accent: 1, hat: 9, eyes: 1, skin: 1, held: held::BOOK, ..base }),

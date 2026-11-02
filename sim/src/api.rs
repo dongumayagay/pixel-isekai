@@ -174,7 +174,7 @@ pub fn creator_info() -> String {
         // Per outfit: what each dye colours ([women, men]) and the default dyes.
         "outfitSlots": (0..people::outfit::COUNT).map(|o| [people::outfit::slots(o, true), people::outfit::slots(o, false)]).collect::<Vec<_>>(),
         "outfitDefaults": (0..people::outfit::COUNT).map(|o| [people::outfit::defaults(o, true), people::outfit::defaults(o, false)]).collect::<Vec<_>>(),
-        "figures": people::FIGURES, "heights": people::HEIGHTS, "facial": people::FACIAL, "buildsF": people::BUILDS_F, "buildsM": people::BUILDS_M,
+        "figures": people::FIGURES, "heights": people::HEIGHTS, "facial": people::FACIAL, "cuts": people::CUTS, "buildsF": people::BUILDS_F, "buildsM": people::BUILDS_M,
         "swatch": {
             "skin": crate::palette::SKIN.iter().map(|r| r[2]).collect::<Vec<_>>(),
             "demon": crate::palette::DEMON_SKIN.iter().map(|r| r[2]).collect::<Vec<_>>(),

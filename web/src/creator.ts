@@ -10,11 +10,11 @@ interface Look {
   skin: number; hair: number; hair_style: number; primary: number; secondary: number; outfit: number;
   hat: number; accent: number; female: boolean; age: number; beard: boolean; eyes: number;
   mature: boolean; race: number; beast: number; held: number; glasses: boolean;
-  figure: number; build: number; height: number; facial: number;
+  figure: number; build: number; height: number; facial: number; cut?: number;
 }
 interface Info {
   fw: number; fh: number; pivot: [number, number]; framesPerDir: number; sheetFrames: number;
-  races: string[]; hairStyles: string[]; outfits: string[]; outfitSlots: [string[], string[]][]; outfitDefaults: [number[], number[]][]; figures: string[]; heights: string[]; facial: string[]; buildsF: string[]; buildsM: string[];
+  races: string[]; hairStyles: string[]; outfits: string[]; outfitSlots: [string[], string[]][]; outfitDefaults: [number[], number[]][]; figures: string[]; heights: string[]; facial: string[]; cuts: string[]; buildsF: string[]; buildsM: string[];
   swatch: { skin: number[]; demon: number[]; hair: number[]; cloth: number[]; eyes: number[] };
 }
 
@@ -146,6 +146,7 @@ function renderControls() {
     <h3>Hair style</h3><div class="row" id="c-style"></div>
     <h3>Hair colour</h3><div class="row" id="c-hair"></div>
     <h3>Outfit</h3><div class="row" id="c-outfit"></div>
+    <h3>Cut</h3><div class="row" id="c-cut"></div>
     <div id="c-p-wrap"><h3 id="c-p-label"></h3><div class="row" id="c-p"></div></div>
     <div id="c-s-wrap"><h3 id="c-s-label"></h3><div class="row" id="c-s"></div></div>
     <h3>Headwear</h3><div class="row" id="c-hat"></div>
@@ -170,6 +171,7 @@ function renderControls() {
     const [p, s, a] = info.outfitDefaults[i][look.female ? 0 : 1];
     set({ outfit: i, primary: p, secondary: s, accent: a });
   });
+  buttons($('#c-cut'), info.cuts, (s) => s, (i) => (look.cut ?? 0) === i, (i) => set({ cut: i }));
   // Each colour row is named after the piece it dyes on this outfit; the
   // accent also colours the headwear.
   const [pl, sl, al] = info.outfitSlots[look.outfit][look.female ? 0 : 1];

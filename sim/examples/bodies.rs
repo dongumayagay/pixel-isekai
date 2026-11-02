@@ -8,7 +8,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let out = args.next().unwrap_or("bodies.png".into());
     let outfit: u8 = args.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let base = Look { skin: 1, hair: 3, hair_style: 2, primary: 1, secondary: 0, outfit, hat: 0, accent: 1, female: true, age: 1, beard: false, eyes: 0, mature: true, race: 0, beast: 0, held: held::NONE, glasses: false, figure: 2, build: 1, height: 1, facial: 0 };
+    let base = Look { skin: 1, hair: 3, hair_style: 2, primary: 1, secondary: 0, outfit, hat: 0, accent: 1, female: true, age: 1, beard: false, eyes: 0, mature: true, race: 0, beast: 0, held: held::NONE, glasses: false, figure: 2, build: 1, height: 1, facial: 0, cut: 0 };
     let mut looks = vec![];
     for figure in 1..=4 {
         looks.push(Look { figure, ..base });
