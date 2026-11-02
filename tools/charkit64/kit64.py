@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compose characters from the 64x128 kit (assets/charkit64, built by extract.py).
 
-char = dict(skin='light', hair='hair_long', hair_color='blue', eyes='blue', wear=[('underwear','white'), ...])
+char = dict(body='male'|None, skin='light', hair='hair_long', hair_color='blue', eyes='blue', wear=[('underwear','white'), ...])
 Kit64().frame(char, anim, direction, col) -> 64x128 RGBA uint8.
 """
 import json, os, sys
@@ -57,9 +57,13 @@ class Kit64:
     def frame(self, c, anim, direction, col):
         row = self.rows[direction]
         fr = np.zeros((self.H, self.W, 4), np.uint8)
+        variant = c.get('body')          # 'male' -> assets/charkit64/male/<part>/..., falls back per part
         for part, pal in self.layers(c):
             a = self.parts[part]['anims'].get(anim) or self.parts[part]['anims']['idle']
-            idx = self.sheet(a['file'])
+            file = a['file']
+            if variant and os.path.exists(os.path.join(self.dir, variant, file)):
+                file = os.path.join(variant, file)
+            idx = self.sheet(file)
             col_ = col % a['cols']
             cell = idx[row * self.H:(row + 1) * self.H, col_ * self.W:(col_ + 1) * self.W]
             px = pal[cell]

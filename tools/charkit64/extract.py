@@ -32,9 +32,10 @@ def rgb(h):
 
 # ramp index = position in these lists (1-based). Ordered dark -> light like the LPC kit.
 SKIN = ['#45212d', '#954a51', '#cb7173', '#f5a489', '#f9bf99', '#ffe0b1']
-HAIR = ['#222034', '#333a6c', '#46426c', '#4f5aa5', '#616fcb', '#a6aee1']
-HAIR_ALIAS = {'#3c447c': '#333a6c', '#6a78ac': '#616fcb', '#7c8db5': '#a6aee1', '#9ca2cc': '#a6aee1'}
-CLOTH = ['#222034', '#6a78ac', '#7c8db5', '#a6aee1', '#e1eafd', '#ffffff']
+# Measured over every opaque pixel of the three sheets: the head region only ever uses the five dark
+# blues (hair), the body only ever uses #46426c and the light blues (cloth outline + shading).
+HAIR = ['#222034', '#333a6c', '#3c447c', '#4f5aa5', '#616fcb', '#9ca2cc']
+CLOTH = ['#46426c', '#6a78ac', '#7c8db5', '#a6aee1', '#e1eafd', '#ffffff']
 EYE_EXTRAS = ['#222034', '#000000', '#639bff', '#fff3ab', '#8f563b', '#9c859f', '#3f3f74']  # lash, pupil, iris, glint, mouth, lip, sclera shade
 IRIS = '#639bff'
 
@@ -46,9 +47,9 @@ def classify(a):
     col = np.zeros(a.shape[:2], np.int32)
     for h in SKIN:
         m = opaque & np.all(a[..., :3] == rgb(h), axis=2); cls[m] = 1; col[m] = SKIN.index(h) + 1
-    for h in HAIR[1:] + list(HAIR_ALIAS):
-        m = opaque & np.all(a[..., :3] == rgb(h), axis=2); cls[m] = 2; col[m] = HAIR.index(HAIR_ALIAS.get(h, h)) + 1
-    for h in ('#ffffff', '#e1eafd'):
+    for h in HAIR[1:]:
+        m = opaque & np.all(a[..., :3] == rgb(h), axis=2); cls[m] = 2; col[m] = HAIR.index(h) + 1
+    for h in CLOTH:
         m = opaque & np.all(a[..., :3] == rgb(h), axis=2); cls[m] = 3; col[m] = CLOTH.index(h) + 1
     for h in ('#000000', IRIS, '#fff3ab', '#8f563b', '#9c859f', '#3f3f74'):
         m = opaque & np.all(a[..., :3] == rgb(h), axis=2); cls[m] = 4; col[m] = 7 + EYE_EXTRAS.index(h)
@@ -62,13 +63,6 @@ def classify(a):
     lash = dark & near
     cls[dark] = 2; col[dark] = 1
     cls[lash] = 4; col[lash] = 7
-    # light blues next to white cloth are cloth shading, not hair highlight
-    cloth = cls == 3
-    p = np.pad(cloth, 1)
-    nearc = p[:-2, 1:-1] | p[2:, 1:-1] | p[1:-1, :-2] | p[1:-1, 2:]
-    for h in ('#a6aee1', '#7c8db5', '#6a78ac'):
-        m = opaque & np.all(a[..., :3] == rgb(h), axis=2) & nearc
-        cls[m] = 3; col[m] = CLOTH.index(h) + 1
     return cls, col
 
 
@@ -127,7 +121,7 @@ def outline_new(b, new):
     b[sh & new & ~edge] = 4
 
 
-def fill_under_hair(body, cls, cell_y0, cell_x0, direction, down_sil):
+def fill_under_hair(body, cls, cell_y0, cell_x0, direction, down_sil, down_idx=None):
     """Rebuild skin hidden by the baked hair below the skull: trapezius/shoulders (down), back of the neck
     (sides) and the whole upper back (up). Down/side: fill each row between its outermost drawn pixels.
     Up: the back has the same outline as the front, so borrow the down cell's silhouette.
@@ -164,6 +158,10 @@ def fill_under_hair(body, cls, cell_y0, cell_x0, direction, down_sil):
                             cand[y, r.min():hi + 1] = True
     new = cand & hidden
     b[new] = 6
+    if direction == 'up' and down_idx is not None:
+        # the front's arm/torso outline lines are the back's too
+        line = new & (down_idx == 1)
+        b[line] = 1
     outline_new(b, new)
 
 
@@ -203,8 +201,17 @@ def build():
         drawn = (cls == 1) | (cls == 3) | (cls == 4)
         for r, d in ((0, 'down'), (1, 'left'), (2, 'right'), (3, 'up')):
             for c in range(cols):
-                down_sil = drawn[0:H, c * W:(c + 1) * W] | (body[0:H, c * W:(c + 1) * W] > 0)
-                fill_under_hair(body, cls, r * H, c * W, d, down_sil)
+                down_idx = body[0:H, c * W:(c + 1) * W]
+                down_sil = drawn[0:H, c * W:(c + 1) * W] | (down_idx > 0)
+                fill_under_hair(body, cls, r * H, c * W, d, down_sil, down_idx)
+        # the hair hid the outline of whatever it covered: re-outline the full body+cloth+face
+        # silhouette and plug 1px holes left by unclassified pixels
+        full = (body > 0) | (cls == 3) | (cls == 4)
+        p = np.pad(full, 1)
+        inner = p[:-2, 1:-1] & p[2:, 1:-1] & p[1:-1, :-2] & p[1:-1, 2:]
+        body[full & ~inner & (body > 1)] = 1
+        hole = ~full & p[:-2, 1:-1] & p[2:, 1:-1] & p[1:-1, :-2] & p[1:-1, 2:]
+        body[hole] = 6
         # skin under the eyes/mouth (so other eye sets can replace them) and under the underwear
         # (bust/hip shape stays as a soft mid-tone line where the cloth outline was)
         body[(cls == 4) & (body == 0)] = 6
