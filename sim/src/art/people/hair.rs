@@ -45,6 +45,7 @@
 //! | profile tones (3/4 camera)      | light crown, mid mass, dark at neck  | h3 crown + fringe, h2 mass, h1 at neck |
 //! | tail hangs, never fins out      | tied at the occiput, falls to the    | tie at skull back, cy-4; tail straight |
 //! |                                 | shoulders behind the neck            | down to neck.y + 8                     |
+//! | profile shows a crown sliver    | hair top 1 row above front and back  | side dome ellipse raised 1 row         |
 //! | back view: crown seen from above| light top 55% in a U to ear level,   | h3 above U (cy+5 centre, cy-1 sides),  |
 //! |                                 | mid below, no stripes on the dome    | h2 below; no flow lines                |
 //! | back view: splits only low down | darker clump lines in bottom 10 rows | hair_sheet lower clumps only           |
@@ -786,6 +787,9 @@ pub(super) fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &C
             for y in (mc.y - ry).floor() as i32 - 1..=bottom.ceil() as i32 {
                 let fy = y as f32 + 0.5;
                 let (xl, xr) = sk.side_span(b, &p, fy);
+                if xl.is_nan() {
+                    continue;
+                }
                 for x in xl.floor() as i32..=xr.ceil() as i32 {
                     let px = x as f32 + 0.5;
                     if px < xl || px > xr {
@@ -1004,8 +1008,8 @@ fn spikes(cv: &mut Canvas, h: &R5, cy: f32, dir: u8) {
     };
     if dir == DIR_SIDE {
         // Profile: swept back over the crown.
-        for (k, (x, ang, len)) in [(36.0f32, -0.35f32, 6.0f32), (31.0, -0.6, 7.5), (26.0, -0.85, 7.5), (21.5, -1.15, 6.0)].into_iter().enumerate() {
-            let y = cy - 12.5 + (k as f32 - 0.5).abs() * 1.2;
+        for (k, (x, ang, len)) in [(36.0f32, -0.35f32, 7.0f32), (31.0, -0.6, 8.5), (25.5, -0.85, 8.5), (20.5, -1.15, 7.0)].into_iter().enumerate() {
+            let y = cy - 13.5 + (k as f32 - 0.5).abs() * 1.2;
             spike(cv, v(x, y), ang, len, 3.0);
         }
     } else {
