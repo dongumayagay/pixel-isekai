@@ -441,7 +441,10 @@ pub fn make_race(id: u32, rng: &mut Rng, culture: usize, family: &str, female: b
         people::RACE_BEAST => look.beast = rng.below(4) as u8,
         people::RACE_DEMON => look.skin = rng.below(3) as u8,
         people::RACE_DWARF => {
-            look.beard = !female && stage > 0 && rng.chance(0.9);
+            // Dwarf men nearly always wear a beard; a long one if nothing else was rolled.
+            if !female && stage > 0 && rng.chance(0.9) && look.facial == 0 {
+                look.facial = 6;
+            }
         }
         people::RACE_ELF => {
             if rng.chance(0.4) {

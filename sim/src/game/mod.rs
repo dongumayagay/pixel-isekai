@@ -123,7 +123,7 @@ impl Game {
         look.outfit = outfit::HERO;
         (look.primary, look.secondary, look.accent) = outfit::defaults(outfit::HERO, false);
         look.eyes = 0;
-        look.beard = false;
+        look.facial = 0;
         let sheet = sprites.add_sheet(&look);
         let (sx, sy) = world.spawn;
         let mut actor = Actor::new((sx * TILE + TILE / 2) as f32, (sy * TILE + TILE / 2 + 6) as f32, sheet, 4.2);

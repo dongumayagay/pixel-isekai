@@ -10,6 +10,7 @@ header .grow { flex: 1; }
 button, input { font: inherit; color: var(--ink); background: var(--panel); border: 2px solid var(--line); border-radius: 4px; padding: 5px 9px; }
 button { cursor: pointer; }
 button:hover { border-color: var(--dim); }
+button:disabled { opacity: 0.35; cursor: not-allowed; border-color: var(--line); }
 button.primary { background: #6a4f1e; border-color: var(--gold); }
 button.on { background: var(--sel); border-color: #9b88d8; }
 input[type=number] { width: 110px; }

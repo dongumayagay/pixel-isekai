@@ -287,22 +287,41 @@ mod traits {
         for _ in 0..200 {
             let l = Look::random_any(&mut rng);
             // Asking for a beard on a woman or child changes nothing.
-            let mut bearded = l;
-            bearded.beard = true;
-            bearded.facial = 5;
             if l.female || !l.mature {
-                assert_eq!(frame(&bearded, DIR_DOWN, 0).px, frame(&Look { beard: false, facial: 0, ..l }, DIR_DOWN, 0).px);
+                assert_eq!(frame(&Look { facial: 5, ..l }, DIR_DOWN, 0).px, frame(&Look { facial: 0, ..l }, DIR_DOWN, 0).px);
             }
             // Figure has no effect on men, teens or children.
             if !l.female || !l.mature {
                 assert_eq!(frame(&Look { figure: 4, ..l }, DIR_DOWN, 0).px, frame(&Look { figure: 0, ..l }, DIR_DOWN, 0).px);
             }
             let n = l.normalized();
-            assert!(!(n.beard && (n.female || !n.mature)));
+            assert!(!(n.facial != 0 && (n.female || !n.mature)));
             assert!(!n.mature || n.age >= 1);
             // A teen (adult stage, not yet 18) gets neither.
-            let teen = Look { mature: false, age: 1, beard: true, figure: 4, ..l }.normalized();
-            assert!(!teen.beard && teen.figure == default_figure());
+            let teen = Look { mature: false, age: 1, facial: 5, figure: 4, ..l }.normalized();
+            assert!(teen.facial == 0 && teen.figure == default_figure());
+        }
+    }
+
+    /// The lock table is complete and idempotent: the cast breaks no rule as
+    /// written, and any look, however wild, is clean after one pass.
+    #[test]
+    pub(super) fn normalized_looks_never_clash() {
+        for (name, look) in cast() {
+            assert!(look.compatible(), "{name}: {}", look.clash().unwrap().why);
+        }
+        let mut rng = Rng::new(31);
+        for _ in 0..2000 {
+            let mut l = Look::random_any(&mut rng);
+            l.hat = rng.below(HATS as usize) as u8;
+            l.held = rng.below(held::COUNT as usize) as u8;
+            l.hair_style = rng.below(HAIR_STYLES as usize) as u8;
+            l.race = rng.below(RACE_NAMES.len()) as u8;
+            l.beast = rng.below(6) as u8;
+            l.age = rng.below(3) as u8;
+            let n = l.normalized();
+            assert!(n.compatible(), "{l:?} -> {n:?}: {}", n.clash().unwrap().why);
+            assert_eq!(n, n.normalized());
         }
     }
 }

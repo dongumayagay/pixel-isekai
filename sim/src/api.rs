@@ -171,6 +171,7 @@ pub fn creator_info() -> String {
         "hairs": crate::palette::HAIR.len(), "cloths": crate::palette::CLOTH.len(),
         "hairStyles": people::HAIR_STYLE_NAMES,
         "outfits": people::outfit::NAMES,
+        "hats": people::hat_names(), "held": people::HELD_NAMES, "beasts": people::BEAST_NAMES,
         // Per outfit: what each dye colours ([women, men]) and the default dyes.
         "outfitSlots": (0..people::outfit::COUNT).map(|o| [people::outfit::slots(o, true), people::outfit::slots(o, false)]).collect::<Vec<_>>(),
         "outfitDefaults": (0..people::outfit::COUNT).map(|o| [people::outfit::defaults(o, true), people::outfit::defaults(o, false)]).collect::<Vec<_>>(),
@@ -182,6 +183,30 @@ pub fn creator_info() -> String {
             "cloth": crate::palette::CLOTH.iter().map(|r| r[2]).collect::<Vec<_>>(),
             "eyes": people::EYE_COLORS.iter().map(|r| r[1]).collect::<Vec<_>>(),
         },
+    })
+    .to_string()
+}
+
+/// The look with every lock rule applied (see `people::LOCKS`), as JSON.
+#[wasm_bindgen]
+pub fn normalize_look(look_json: &str) -> String {
+    serde_json::to_string(&look_from(look_json).normalized()).unwrap()
+}
+
+/// Per creator option, which values the lock table allows with the rest of
+/// this look (`false` = grey it out), as JSON.
+#[wasm_bindgen]
+pub fn look_options(look_json: &str) -> String {
+    let l = look_from(look_json);
+    let each = |n: usize, set: fn(&mut Look, u8)| (0..n as u8).map(|v| l.allows(|x| set(x, v))).collect::<Vec<bool>>();
+    serde_json::json!({
+        "race": each(people::RACE_NAMES.len(), |x, v| x.race = v),
+        "sex": [l.allows(|x| x.female = true), l.allows(|x| x.female = false)],
+        "hairStyle": each(people::HAIR_STYLES as usize, |x, v| x.hair_style = v),
+        "outfit": each(people::outfit::COUNT as usize, |x, v| x.outfit = v),
+        "hat": each(people::HATS as usize, |x, v| x.hat = v),
+        "held": each(people::held::COUNT as usize, |x, v| x.held = v),
+        "beast": each(people::BEAST_NAMES.len(), |x, v| x.beast = v),
     })
     .to_string()
 }
@@ -229,5 +254,5 @@ pub fn dress_look(look_json: &str, job: usize, seed: f64) -> String {
     let jobs = crate::game::villager::Job::WORKING;
     let mut rng = crate::rng::Rng::new(seed as u64);
     jobs[job % jobs.len()].dress(&mut look, &mut rng);
-    serde_json::to_string(&look).unwrap()
+    serde_json::to_string(&look.normalized()).unwrap()
 }
