@@ -3,6 +3,9 @@
 
 use super::*;
 
+/// Profile key points: (y, half-width or edge offset).
+type Keys = Vec<(f32, f32)>;
+
 /// Where a garment piece takes its colour from: one of the look's three
 /// dyes, or a fixed material.
 #[derive(Clone, Copy, PartialEq)]
@@ -358,10 +361,8 @@ pub(super) fn garb(look: &Look) -> Garb {
     // A revealing cut: armour and swimwear stay as they are; skirts rise.
     if !matches!(look.outfit, outfit::KNIGHT | outfit::GUARD | outfit::SWIM | outfit::MICRO) {
         g.cut = look.cut.min(2);
-        if f {
-            if let Lower::Skirt(len, flare) = g.lower.0 {
-                g.lower.0 = Lower::Skirt(len * [1.0, 0.78, 0.58][g.cut as usize], flare);
-            }
+        if let (true, Lower::Skirt(len, flare)) = (f, g.lower.0) {
+            g.lower.0 = Lower::Skirt(len * [1.0, 0.78, 0.58][g.cut as usize], flare);
         }
     }
     g
@@ -391,7 +392,7 @@ pub(super) fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors
     // chest forward, the small of the back curving in, the seat curving
     // out, belly and pelvis flat in front.
     let hk = b.hip_w / 11.2;
-    let (front_keys, back_keys): (Vec<(f32, f32)>, Vec<(f32, f32)>) = if look.female {
+    let (front_keys, back_keys): (Keys, Keys) = if look.female {
         (
             vec![(sy - 0.5, 4.0), (sy + 4.0, 5.8), (sy + 10.0, 5.6), (b.waist_y, 5.0), (b.hip_y, 5.6), (cy + 1.0, 5.0)],
             vec![(sy - 0.5, -4.2), (sy + 4.0, -5.8), (b.waist_y - 1.0, -4.6), (b.hip_y + 1.0, -4.4 - 3.6 * hk), (cy + 1.0, -5.6 * hk)],
@@ -425,9 +426,8 @@ pub(super) fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors
     let aft = move |y: f32| lean(y) - width(y);
     // Neck: its own part so the chin and collar line it.
     cv.begin();
-    let nw = if look.female { 3.4 } else { 4.2 };
     // From behind the nape sits in the hair's shadow.
-    cv.profile(sy - 6.0, sy + 1.5, |_| b.cx + if side { 0.5 } else { 0.0 }, |_| nw, &c.skin, if back { -0.3 } else { -0.06 });
+    cv.profile(b.neck_top, sy + 1.5, |_| b.neck.x + if side { 0.5 } else { 0.0 }, |_| b.neck_w, &c.skin, if back { -0.3 } else { -0.06 });
     let (lower_kind, lower_dye) = g.lower;
     let skirted = lower_kind != Lower::Pants;
     let lower = dye(c, g.legs);
@@ -466,8 +466,7 @@ pub(super) fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors
             cv.lighten_on(x, sy.ceil() as i32, &shirt);
         }
     }
-    // Fuller busts sit a little lower.
-    let by = (sy + 9.5 + (b.bust - 5.4).max(0.0) * 0.6).round() + b.jig;
+    let by = b.bust_y;
     let cx = b.cx;
     // Neckline: a little skin under the collarbone for open-necked tops.
     if front && g.neckline {
@@ -692,10 +691,10 @@ pub(super) fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors
                     let sc = dye(c, d);
                     cv.begin();
                     let ncx = b.cx + if side { 0.5 } else { 0.0 };
-                    cv.profile(sy - 3.0, sy + 1.0, |_| ncx, |_| nw + 2.2, &sc, 0.05);
+                    cv.profile(sy - 3.0, sy + 1.0, |_| ncx, |_| b.neck_w + 2.2, &sc, 0.05);
                     cv.begin();
                     if side {
-                        let a0 = v(ncx - nw - 0.5, sy - 0.5);
+                        let a0 = v(ncx - b.neck_w - 0.5, sy - 0.5);
                         cv.capsule(a0, a0.add(v(-2.5 - sway * 2.0, 8.0)), 1.6, 1.2, &sc, 0.0);
                     } else if back {
                         cv.capsule(v(cx - 1.0, sy), v(cx - 1.5 + sway, sy + 9.0), 1.5, 1.2, &sc, 0.0);
@@ -715,7 +714,7 @@ pub(super) fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors
                             cv.put(x - k / 2, sy as i32 + k, kc[2]);
                         }
                     } else {
-                        hspan(cv, nw, sy as i32 - 1, kc[2]);
+                        hspan(cv, b.neck_w, sy as i32 - 1, kc[2]);
                     }
                 }
                 Piece::Stole(d) => {
@@ -879,13 +878,11 @@ pub(super) fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors
             }
         }
     }
-    if back {
-        if let Some((outside, _)) = g.cape() {
-            cloak_back(cv, b, &dye(c, outside), false, false);
-            // A quiver is slung over the cloak.
-            if g.pieces.contains(&Piece::Quiver) {
-                quiver_back(cv, b, c);
-            }
+    if let (true, Some((outside, _))) = (back, g.cape()) {
+        cloak_back(cv, b, &dye(c, outside), false, false);
+        // A quiver is slung over the cloak.
+        if g.pieces.contains(&Piece::Quiver) {
+            quiver_back(cv, b, c);
         }
     }
 }
@@ -899,10 +896,8 @@ pub(super) fn cover(cv: &mut Canvas, y0: f32, y1: f32, mut inside: impl FnMut(i3
             continue;
         }
         for x in 0..FW {
-            if cv.get(x, y).is_some() {
-                if let Some(col) = inside(x, fy) {
-                    cv.fill(x, y, col);
-                }
+            if let (true, Some(col)) = (cv.get(x, y).is_some(), inside(x, fy)) {
+                cv.fill(x, y, col);
             }
         }
     }

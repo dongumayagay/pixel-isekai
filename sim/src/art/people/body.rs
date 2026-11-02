@@ -1,5 +1,33 @@
-//! Poses and the body: measurements per build, the skeleton for each
-//! frame, limbs and the bust with its secondary motion.
+//! Poses and the body: one parametric skeleton per frame. `build` turns a
+//! `Look` and a pose into joints in pixels (head, neck, chest, waist, hips,
+//! crotch) and `limbs` hangs the arms and legs off it. Every other module
+//! reads its heights from here; nothing else owns a y offset of the body.
+//!
+//! Proportions, from pixel-dissecting the 64x128 reference idle/walk sheets
+//! (study only) and three drawing guides:
+//!
+//! | source                     | heads | head | torso | legs | legs/h | shoulders |
+//! |----------------------------|-------|------|-------|------|--------|-----------|
+//! | ref sheet front (89px)     | 2.9   | 30px | 33px  | 23px | 26%    | 33px      |
+//! | ref sheet side             | 2.9   | 30px | 33px  | 23px | 26%    | depth 13  |
+//! | chibi 3-head guide (Clip)  | 3.0   | 1.0  | 1.0   | 1.0  | 33%    | ~1 head   |
+//! | pixel sprite guide (pixnote)| 4-6  | -    | -     | -    | ~45%   | > head    |
+//! | classical adult (lifedraw) | 7.5   | 1.0  | 3.0   | 3.5  | 47%    | 2 head-w  |
+//! | ours, average              | 3.0   | 31px | 33px  | 31px | 32%    | 24px      |
+//! | ours, petite / tall        | 2.8/3.2 | 31 | 31/35 | 26/35 | 29%/35% | 23/25px |
+//!
+//! Chibi guides agree: the head is fixed, height lives in the legs (longer
+//! legs read older and taller, longer torso cuter), the knee sits halfway
+//! down the leg, women's hips match their shoulders, men's hips are ~0.55
+//! of theirs. Our head (31px with hair) matches the reference; the torso
+//! and legs are read off it per height step so petite/average/tall differ
+//! by a clear 5-6px per step at 1x. All bodies are adults.
+//!
+//! The joint set is the one proven rigs use (SpriteKiln's humanoid bones,
+//! pixelfx's pixel-unit rig): head, neck, chest, waist, pelvis/hips,
+//! shoulders, elbows, hands, knees, feet, with segment lengths in pixels and
+//! feet placed from the ground up (two-bone IK from a foot target in the
+//! front and back views; authored gait angles in profile).
 
 use super::*;
 
@@ -74,13 +102,26 @@ pub(super) fn jiggle_at(figure: u8, pose: &Pose, frame: u16, back: u16) -> Jig {
     }
 }
 
-/// Body measurements in pixels, derived from race, age and sex.
+/// The skeleton: joints in pixels for one frame, derived from race, sex,
+/// height, build and figure plus the pose.
 pub(super) struct Build {
     pub(super) cx: f32,
     pub(super) ground: f32,
     /// Skull radii used by hats and ears.
     pub(super) head_r: (f32, f32),
     pub(super) head_c: V2,
+    /// Top of the skull; ears and horns root a few rows below it.
+    pub(super) crown_y: f32,
+    /// Face landmarks (rows): eyes, mouth. Nose and blush sit above the mouth.
+    pub(super) eye_y: i32,
+    pub(super) mouth_y: i32,
+    /// Neck: under the chin down to the shoulder line, and its half-width.
+    pub(super) neck_top: f32,
+    pub(super) neck: V2,
+    pub(super) neck_w: f32,
+    /// Chest joint (bust centre at rest) and the bust row this frame.
+    pub(super) chest: V2,
+    pub(super) bust_y: f32,
     pub(super) shoulder_y: f32,
     pub(super) shoulder_w: f32,
     pub(super) chest_w: f32,
@@ -102,9 +143,8 @@ pub(super) struct Build {
     pub(super) woman: bool,
     /// Lag applied to soft parts (hair, skirts) this frame.
     pub(super) lag: f32,
-    /// Bust offset this frame (whole px, down positive) and shape step
-    /// (-1 squash, +1 stretch).
-    pub(super) jig: f32,
+    /// Bust shape step this frame (-1 squash, +1 stretch); its offset is in
+    /// `bust_y`.
     pub(super) jsq: f32,
     /// Highlight lag relative to the bust (whole px).
     pub(super) jhl: f32,
@@ -116,23 +156,21 @@ pub(super) struct Build {
 }
 
 pub(super) fn build(look: &Look, pose: Pose, plant: f32) -> Build {
-    let child = look.age == 0;
     let dwarf = look.race == RACE_DWARF;
     let elf = look.race == RACE_ELF;
     let f = look.female;
-    let (leg_k, torso_k, width_k) = if child {
-        (0.62, 0.66, 0.84)
-    } else if dwarf {
+    let (leg_k, torso_k, width_k) = if dwarf {
         (0.66, 0.92, 1.22)
     } else if elf {
-        (1.1, 1.02, 0.94)
+        (1.08, 1.02, 0.94)
     } else {
         (1.0, 1.0, 1.0)
     };
-    // Height: legs carry most of it, the torso a little.
-    let (hl, ht) = if child { (1.0, 1.0) } else { [(0.92, 0.96), (1.0, 1.0), (1.07, 1.03)][look.height.min(2) as usize] };
-    let (leg_k, torso_k) = (leg_k * hl, torso_k * ht);
-    // Long legs: just under half the standing height for adults.
+    // Height: legs carry most of it, the torso some, the frame a touch
+    // (see the table above). The head never changes.
+    let (hl, ht, hw) = [(0.86, 0.94, 0.96), (1.0, 1.0, 1.0), (1.1, 1.05, 1.03)][look.height.min(2) as usize];
+    let (leg_k, torso_k, width_k) = (leg_k * hl, torso_k * ht, width_k * hw);
+    // Long legs: about a third of the standing height.
     let thigh = 14.0 * leg_k;
     let calf = 13.5 * leg_k;
     let ground = 116.0;
@@ -148,14 +186,17 @@ pub(super) fn build(look: &Look, pose: Pose, plant: f32) -> Build {
     let hip_joint_y = ground - 3.0 - calf - thigh + (bob + plant).round();
     let crotch_y = hip_joint_y + 2.0;
     // Breathing lifts the chest and head; hips and feet stay put.
-    let torso = if f { 30.0 } else { 31.0 } * torso_k + pose.breathe.floor();
+    let torso0 = if f { 30.0 } else { 31.0 } * torso_k;
+    let torso = torso0 + pose.breathe.floor();
     let shoulder_y = crotch_y - torso;
+    let head_r = (13.0, 14.0);
     let head_c = v(32.0, shoulder_y - 18.0);
+    let chin_y = head_c.y + head_r.1;
     let (jig, jsq) = jiggle(look.figure, &pose, pose.frame);
     // The highlight trails the bust by another frame: softness without
     // moving the outline.
     let jhl = jiggle_at(look.figure, &pose, pose.frame, 1).0 - jig;
-    let fig = f && look.mature && !child;
+    let fig = f && look.mature;
     let bd = look.build.min(3) as usize;
     // Hourglass for women (waist about 0.6 of the hips), V-taper for men;
     // each build scales shoulders, chest, waist, hips, thighs and arms.
@@ -169,12 +210,25 @@ pub(super) fn build(look: &Look, pose: Pose, plant: f32) -> Build {
     } else {
         0.0
     };
+    let jig = if bust > 0.0 { jig as f32 } else { 0.0 };
+    // The chest joint sits a third of the way down the torso; fuller busts
+    // hang a little lower. Rounded so the bust never re-rasterises between
+    // frames: the jiggle tables move it in whole pixels.
+    let chest_j = v(32.0, (shoulder_y + torso0 * 0.317 + (bust - 5.4).max(0.0) * 0.6).round());
 
     Build {
         cx: 32.0,
         ground,
-        head_r: (13.0, 14.0),
+        head_r,
         head_c,
+        crown_y: head_c.y - head_r.0,
+        eye_y: (chin_y - 11.0).round() as i32,
+        mouth_y: (chin_y - 1.0).round() as i32,
+        neck_top: chin_y - 2.0,
+        neck: v(32.0, shoulder_y),
+        neck_w: if f { 3.4 } else { 4.2 },
+        chest: chest_j,
+        bust_y: chest_j.y + jig,
         shoulder_y,
         shoulder_w: sw * width_k,
         chest_w: chest * width_k,
@@ -186,17 +240,16 @@ pub(super) fn build(look: &Look, pose: Pose, plant: f32) -> Build {
         hip_joint_y,
         thigh,
         calf,
-        thigh_r: if child { 4.4 } else if f && !fig { thr - 0.6 } else { thr } * width_k.max(0.9),
-        calf_r: if child { 3.2 } else if f { 3.7 } else { 4.0 } * width_k.max(0.9),
+        thigh_r: if f && !fig { thr - 0.6 } else { thr } * width_k.max(0.9),
+        calf_r: if f { 3.7 } else { 4.0 } * width_k.max(0.9),
         // Dwarves are broad, but their arms stay in proportion to their
         // short legs: hands at mid-thigh, not the knee.
         upper_arm: 12.0 * torso_k * if dwarf { 0.86 } else { 1.0 },
         forearm: 11.0 * torso_k * if dwarf { 0.86 } else { 1.0 },
-        arm_r: if child { 2.6 } else { arm } * width_k.clamp(0.9, 1.06),
+        arm_r: arm * width_k.clamp(0.9, 1.06),
         bust,
         woman: fig,
         lag,
-        jig: if bust > 0.0 { jig as f32 } else { 0.0 },
         jsq: if bust > 0.0 { jsq as f32 } else { 0.0 },
         jhl: if bust > 0.0 { jhl as f32 } else { 0.0 },
         sway: 0.0,

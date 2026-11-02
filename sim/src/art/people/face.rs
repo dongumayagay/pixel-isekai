@@ -10,7 +10,6 @@ pub(super) fn face_hw(look: &Look, dy: i32) -> f32 {
     const FEMALE: [f32; 15] = [12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 11.0, 10.0, 9.0, 7.0, 5.0];
     // Men: a lean, angled jaw from below the eyes to a defined chin.
     const MALE: [f32; 15] = [12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 11.0, 11.0, 10.0, 9.0, 7.0, 5.0];
-    const CHILD: [f32; 15] = [12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 11.0, 10.0, 8.0, 6.0, 0.0];
     if !(-13..=14).contains(&dy) {
         return 0.0;
     }
@@ -18,14 +17,7 @@ pub(super) fn face_hw(look: &Look, dy: i32) -> f32 {
     if dy < 0 {
         return SKULL[(dy + 13) as usize] + extra;
     }
-    let t = if look.age == 0 {
-        &CHILD
-    } else if look.female {
-        &FEMALE
-    } else {
-        &MALE
-    };
-    let w = t[dy as usize];
+    let w = if look.female { FEMALE } else { MALE }[dy as usize];
     if w > 0.0 { w + extra } else { 0.0 }
 }
 
@@ -191,9 +183,9 @@ pub(super) fn face(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors,
     };
     let blush = mix(c.skin[3], hex(0xf2707e), 0.38);
     let lip = mix(c.skin[1], hex(0xa83448), 0.45);
-    let soft = look.female || look.age == 0;
+    let soft = look.female;
     if dir == DIR_DOWN {
-        let ey = cy + 3;
+        let ey = b.eye_y;
         let rows: &[&str] = if pose.blink {
             &EYE_CLOSED
         } else if soft {
@@ -206,21 +198,21 @@ pub(super) fn face(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors,
         stamp(cv, ex, ey, rows, false, &eye_pal);
         stamp(cv, ex, ey, rows, true, &eye_pal);
         // Nose: one soft shadow pixel, light from the left.
-        cv.put(32, cy + 11, c.skin[2]);
+        cv.put(32, b.mouth_y - 2, c.skin[2]);
         // Mouth, on the second-to-last row of the face.
         if soft {
-            cv.put(31, cy + 13, lip);
-            cv.put(32, cy + 13, lip);
+            cv.put(31, b.mouth_y, lip);
+            cv.put(32, b.mouth_y, lip);
         } else {
-            cv.put(30, cy + 13, c.skin[1]);
-            cv.put(31, cy + 13, lip);
-            cv.put(32, cy + 13, lip);
-            cv.put(33, cy + 13, c.skin[1]);
+            cv.put(30, b.mouth_y, c.skin[1]);
+            cv.put(31, b.mouth_y, lip);
+            cv.put(32, b.mouth_y, lip);
+            cv.put(33, b.mouth_y, c.skin[1]);
         }
         if soft {
             for x in [22, 23, 24] {
-                cv.put(x, cy + 11, blush);
-                cv.put(FW - 1 - x, cy + 11, blush);
+                cv.put(x, b.mouth_y - 2, blush);
+                cv.put(FW - 1 - x, b.mouth_y - 2, blush);
             }
         }
         if look.glasses {
@@ -245,14 +237,14 @@ pub(super) fn face(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors,
         facial_hair(cv, look, dir, cy, c);
     } else if dir == DIR_SIDE {
         let ex = 36;
-        let ey = cy + 3;
+        let ey = b.eye_y;
         stamp(cv, ex, ey, if pose.blink { &EYE_SIDE_CLOSED } else { &EYE_SIDE }, false, &eye_pal);
         if soft {
             for k in 0..3 {
-                cv.put(ex - 1 + k, cy + 11, blush);
+                cv.put(ex - 1 + k, b.mouth_y - 2, blush);
             }
         }
-        cv.put(32 + 9, cy + 13, lip);
+        cv.put(32 + 9, b.mouth_y, lip);
         facial_hair(cv, look, dir, cy, c);
         if look.glasses {
             let g = hex(0x4a3a30);

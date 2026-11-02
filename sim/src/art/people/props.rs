@@ -230,109 +230,102 @@ pub(super) const HORN: [&str; 12] = [
 /// Beast ears grow out of the hair: drawn before it, so the hair mass covers
 /// their base and only the ear itself shows above the crown.
 pub(super) fn beast_ears(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
-    let hc = b.head_c;
-    let cy = hc.y.round() as i32;
     let back = dir == DIR_UP;
-    match look.race {
-        RACE_BEAST => {
-            let inner = if look.beast == 1 || look.beast == 2 {
-                [hex(0xb09a88), hex(0xd8c4b0), hex(0xf0e2d0), hex(0xfaf2e6), hex(0xfffaf2)]
-            } else {
-                [hex(0xa8606a), hex(0xd08890), hex(0xf0a8b0), hex(0xf8c8cc), hex(0xffe0e4)]
-            };
-            let h = c.hair;
-            let tip = mix(h[0], pal::INK, 0.35);
-            let pal = |ch: char| -> Option<Rgb> {
-                match ch {
-                    'H' => Some(h[4]),
-                    'L' => Some(h[3]),
-                    'M' => Some(h[2]),
-                    'D' => Some(h[1]),
-                    // From behind there is no inner fur, only the ear's back.
-                    'I' => Some(if back { h[3] } else { inner[2] }),
-                    'J' => Some(if back { h[2] } else { inner[1] }),
-                    'T' => Some(if look.beast == 1 { tip } else { h[3] }),
-                    _ => None,
-                }
-            };
-            let art: &[&str] = match look.beast {
-                1 => &FOX_EAR,
-                2 => &WOLF_EAR,
-                3 => &RABBIT_EAR,
-                _ => &CAT_EAR,
-            };
-            let (w, hgt) = (art[0].len() as i32, art.len() as i32);
-            // Upper-side of the crown, bases sunk three rows into the hair.
-            let base_y = cy - 9;
-            cv.begin();
-            match dir {
-                DIR_SIDE => {
-                    // Profile: on top of the crown, leaning slightly forward;
-                    // the far ear peeks just behind the near one.
-                    let near = 33 - w / 2;
-                    let far = near - 5;
-                    stamp_at(cv, far, base_y - hgt + 2, art, true, &|ch| pal(ch).map(|p| mix(p, h[1], 0.3)));
-                    cv.begin();
-                    stamp_at(cv, near, base_y - hgt + 1, art, true, &pal);
-                }
-                _ => {
-                    let x0 = 32 - 9 - w / 2;
-                    stamp_fill(cv, x0, base_y - hgt + 1, art, false, &pal);
-                    stamp_fill(cv, x0, base_y - hgt + 1, art, true, &pal);
-                }
-            }
+    if look.race != RACE_BEAST {
+        return;
+    }
+    let inner = if look.beast == 1 || look.beast == 2 {
+        [hex(0xb09a88), hex(0xd8c4b0), hex(0xf0e2d0), hex(0xfaf2e6), hex(0xfffaf2)]
+    } else {
+        [hex(0xa8606a), hex(0xd08890), hex(0xf0a8b0), hex(0xf8c8cc), hex(0xffe0e4)]
+    };
+    let h = c.hair;
+    let tip = mix(h[0], pal::INK, 0.35);
+    let pal = |ch: char| -> Option<Rgb> {
+        match ch {
+            'H' => Some(h[4]),
+            'L' => Some(h[3]),
+            'M' => Some(h[2]),
+            'D' => Some(h[1]),
+            // From behind there is no inner fur, only the ear's back.
+            'I' => Some(if back { h[3] } else { inner[2] }),
+            'J' => Some(if back { h[2] } else { inner[1] }),
+            'T' => Some(if look.beast == 1 { tip } else { h[3] }),
+            _ => None,
         }
-        _ => {}
+    };
+    let art: &[&str] = match look.beast {
+        1 => &FOX_EAR,
+        2 => &WOLF_EAR,
+        3 => &RABBIT_EAR,
+        _ => &CAT_EAR,
+    };
+    let (w, hgt) = (art[0].len() as i32, art.len() as i32);
+    let base_y = b.crown_y.round() as i32 + 4;
+    cv.begin();
+    match dir {
+        DIR_SIDE => {
+            // Profile: on top of the crown, leaning slightly forward;
+            // the far ear peeks just behind the near one.
+            let near = 33 - w / 2;
+            let far = near - 5;
+            stamp_at(cv, far, base_y - hgt + 2, art, true, &|ch| pal(ch).map(|p| mix(p, h[1], 0.3)));
+            cv.begin();
+            stamp_at(cv, near, base_y - hgt + 1, art, true, &pal);
+        }
+        _ => {
+            let x0 = 32 - 9 - w / 2;
+            stamp_fill(cv, x0, base_y - hgt + 1, art, false, &pal);
+            stamp_fill(cv, x0, base_y - hgt + 1, art, true, &pal);
+        }
     }
 }
 
 pub(super) fn horns(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, _c: &Colors) {
     let cy = b.head_c.y.round() as i32;
-    match look.race {
-        RACE_DEMON => {
-            let horn = [hex(0x1e1622), hex(0x3a2e40), hex(0x5a4a62), hex(0x857590), hex(0xb0a0ba)];
-            let pal = |ch: char| -> Option<Rgb> {
-                match ch {
-                    'H' => Some(horn[4]),
-                    'L' => Some(horn[3]),
-                    'M' => Some(horn[2]),
-                    'D' => Some(horn[1]),
-                    'R' => Some(horn[1]),
-                    _ => None,
-                }
-            };
-            if look.beast == 1 {
-                // Ram horns: curling back and around beside the head.
-                let cyf = cy as f32;
-                let left = [v(25.0, cyf - 11.0), v(21.0, cyf - 15.0), v(16.0, cyf - 14.0), v(13.5, cyf - 9.5), v(15.0, cyf - 5.5), v(18.0, cyf - 4.5)];
-                let hr = [horn[0], horn[1], horn[2], horn[3], horn[4]];
-                cv.begin();
-                match dir {
-                    DIR_SIDE => {
-                        let pts = [v(31.0, cyf - 12.0), v(27.0, cyf - 16.0), v(22.5, cyf - 14.5), v(20.5, cyf - 10.0), v(22.0, cyf - 6.0), v(25.0, cyf - 5.0)];
-                        curve(cv, &pts, 2.8, 1.0, &hr);
-                    }
-                    _ => {
-                        let right: Vec<V2> = left.iter().map(|p| v(64.0 - p.x, p.y)).collect();
-                        curve(cv, &left, 2.8, 1.0, &hr);
-                        curve(cv, &right, 2.8, 1.0, &hr);
-                    }
-                }
-                return;
+    if look.race != RACE_DEMON {
+        return;
+    }
+    let horn = [hex(0x1e1622), hex(0x3a2e40), hex(0x5a4a62), hex(0x857590), hex(0xb0a0ba)];
+    let pal = |ch: char| -> Option<Rgb> {
+        match ch {
+            'H' => Some(horn[4]),
+            'L' => Some(horn[3]),
+            'M' => Some(horn[2]),
+            'D' => Some(horn[1]),
+            'R' => Some(horn[1]),
+            _ => None,
+        }
+    };
+    if look.beast == 1 {
+        // Ram horns: curling back and around beside the head.
+        let cyf = cy as f32;
+        let left = [v(25.0, cyf - 11.0), v(21.0, cyf - 15.0), v(16.0, cyf - 14.0), v(13.5, cyf - 9.5), v(15.0, cyf - 5.5), v(18.0, cyf - 4.5)];
+        let hr = [horn[0], horn[1], horn[2], horn[3], horn[4]];
+        cv.begin();
+        match dir {
+            DIR_SIDE => {
+                let pts = [v(31.0, cyf - 12.0), v(27.0, cyf - 16.0), v(22.5, cyf - 14.5), v(20.5, cyf - 10.0), v(22.0, cyf - 6.0), v(25.0, cyf - 5.0)];
+                curve(cv, &pts, 2.8, 1.0, &hr);
             }
-            let hgt = HORN.len() as i32;
-            let base_y = cy - 11;
-            cv.begin();
-            match dir {
-                // Profile: the horn sweeps forward over the brow.
-                DIR_SIDE => stamp_at(cv, 31, base_y - hgt + 1, &HORN, true, &pal),
-                _ => {
-                    stamp_fill(cv, 32 - 6 - 8, base_y - hgt + 1, &HORN, false, &pal);
-                    stamp_fill(cv, 32 - 6 - 8, base_y - hgt + 1, &HORN, true, &pal);
-                }
+            _ => {
+                let right: Vec<V2> = left.iter().map(|p| v(64.0 - p.x, p.y)).collect();
+                curve(cv, &left, 2.8, 1.0, &hr);
+                curve(cv, &right, 2.8, 1.0, &hr);
             }
         }
-        _ => {}
+        return;
+    }
+    let hgt = HORN.len() as i32;
+    let base_y = b.crown_y.round() as i32 + 2;
+    cv.begin();
+    match dir {
+        // Profile: the horn sweeps forward over the brow.
+        DIR_SIDE => stamp_at(cv, 31, base_y - hgt + 1, &HORN, true, &pal),
+        _ => {
+            stamp_fill(cv, 32 - 6 - 8, base_y - hgt + 1, &HORN, false, &pal);
+            stamp_fill(cv, 32 - 6 - 8, base_y - hgt + 1, &HORN, true, &pal);
+        }
     }
 }
 
@@ -352,7 +345,6 @@ pub(super) fn elf_ears(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Col
             _ => None,
         }
     };
-    let cy = b.head_c.y.round() as i32;
     cv.begin();
     match dir {
         // In profile the ear pokes out through the hair behind the side
@@ -360,13 +352,13 @@ pub(super) fn elf_ears(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Col
         DIR_SIDE => {
             if after_hair {
                 let trimmed: Vec<&str> = ELF_EAR_SIDE.iter().map(|r| &r[..8]).collect();
-                stamp_fill(cv, 20, cy - 2, &trimmed, false, &pal);
+                stamp_fill(cv, 20, b.eye_y - 5, &trimmed, false, &pal);
             }
         }
         _ if after_hair => {}
         _ => {
-            stamp_fill(cv, 10, cy - 1, &ELF_EAR, false, &pal);
-            stamp_fill(cv, 10, cy - 1, &ELF_EAR, true, &pal);
+            stamp_fill(cv, 10, b.eye_y - 4, &ELF_EAR, false, &pal);
+            stamp_fill(cv, 10, b.eye_y - 4, &ELF_EAR, true, &pal);
         }
     }
 }

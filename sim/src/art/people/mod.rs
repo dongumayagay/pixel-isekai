@@ -425,11 +425,9 @@ fn colors(look: &Look) -> Colors {
 
 // ---------------------------------------------------------------- drawing
 
-pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
-    let look = &look.normalized();
-    let mut img = Img::new(FW, FH);
-    let pose = pose_for(frame_idx);
-    // Solve the body bob so the lowest foot always rests on the ground.
+/// The skeleton for one frame: the body solved so the lowest foot rests on
+/// the ground, plus the limbs hung off it.
+fn solve(look: &Look, pose: Pose, dir: u8) -> (Build, Limbs) {
     let b0 = build(look, pose, 0.0);
     let l0 = limbs(&b0, pose, dir);
     let low = l0.ankle_l.y.max(l0.ankle_r.y);
@@ -444,6 +442,46 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     let mut b = build(look, pose, plant);
     b.sway = if dir == DIR_SIDE { b.lag } else { 0.0 };
     let l = limbs(&b, pose, dir);
+    (b, l)
+}
+
+/// Named joints of a frame in sprite pixels, for overlays and tests.
+pub fn skeleton(look: &Look, dir: u8, frame_idx: u16) -> Vec<(&'static str, f32, f32)> {
+    let look = &look.normalized();
+    let (b, l) = solve(look, pose_for(frame_idx), dir);
+    let p = |n, j: V2| (n, j.x, j.y);
+    vec![
+        p("head", b.head_c),
+        ("crown", b.cx, b.crown_y),
+        ("eye", b.cx, b.eye_y as f32 + 0.5),
+        ("mouth", b.cx, b.mouth_y as f32 + 0.5),
+        ("neck_top", b.cx, b.neck_top),
+        p("neck", b.neck),
+        p("chest", b.chest),
+        ("bust", b.cx, b.bust_y),
+        ("waist", b.cx, b.waist_y),
+        ("hip", b.cx, b.hip_y),
+        ("crotch", b.cx, b.crotch_y),
+        p("sh_l", l.sh_l),
+        p("sh_r", l.sh_r),
+        p("el_l", l.el_l),
+        p("el_r", l.el_r),
+        p("wr_l", l.wr_l),
+        p("wr_r", l.wr_r),
+        p("hip_l", l.hip_l),
+        p("hip_r", l.hip_r),
+        p("knee_l", l.knee_l),
+        p("knee_r", l.knee_r),
+        p("ankle_l", l.ankle_l),
+        p("ankle_r", l.ankle_r),
+    ]
+}
+
+pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
+    let look = &look.normalized();
+    let mut img = Img::new(FW, FH);
+    let pose = pose_for(frame_idx);
+    let (b, l) = solve(look, pose, dir);
     let c = colors(look);
     let mut cv = Canvas::new(&mut img);
     for r in [c.skin, c.hair, c.primary, c.secondary, c.accent, c.white, c.drab, c.metal, c.leather, c.linen, c.shoe, c.stocking, c.navy, gold5()] {
@@ -575,6 +613,8 @@ impl Look {
     /// traits that only exist for some bodies are dropped. Every render goes
     /// through this, so no combination can break a rule.
     pub fn normalized(mut self) -> Look {
+        // No children in this game: every body is an adult.
+        self.age = self.age.max(1);
         for lock in LOCKS {
             if (lock.clash)(&self) {
                 (lock.fix)(&mut self);
