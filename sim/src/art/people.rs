@@ -577,6 +577,52 @@ impl Canvas<'_> {
         }
     }
 
+    /// Hanging cloth (capes, gowns, skirts): like `profile`, but with
+    /// `folds` soft vertical folds that deepen toward the hem (a shadowed
+    /// valley and a lit ridge per fold, mirrored about the centre) and a
+    /// gently scalloped hem instead of a ruler-straight one.
+    #[allow(clippy::too_many_arguments)]
+    fn drape(&mut self, y0: f32, y1: f32, cx: impl Fn(f32) -> f32, hw: impl Fn(f32) -> f32, ramp: &R5, bias: f32, folds: f32) {
+        self.register(ramp);
+        for y in y0.floor() as i32..=y1.ceil() as i32 {
+            let fy = y as f32 + 0.5;
+            if fy < y0 || fy > y1 {
+                continue;
+            }
+            let c = cx(fy);
+            let w = hw(fy);
+            if w <= 0.2 {
+                continue;
+            }
+            let t = (fy - y0) / (y1 - y0);
+            for x in (c - w).floor() as i32..=(c + w).ceil() as i32 {
+                let dx = x as f32 + 0.5 - c;
+                let nx = dx / w;
+                if nx.abs() > 1.0 + EPS {
+                    continue;
+                }
+                // Scalloped hem: each fold's valley lifts the hem a little.
+                let u = dx.abs() / w * folds * std::f32::consts::PI;
+                if fy > y1 - (1.0 - u.cos()) * 0.75 {
+                    continue;
+                }
+                let nz = (1.0 - nx * nx).max(0.0).sqrt();
+                let ny = (t - 0.5) * 0.4;
+                let mut k = tone(ny, nz, bias) as i32;
+                // Folds fade in below the top quarter.
+                if t > 0.22 && folds > 0.0 {
+                    let cu = u.cos();
+                    if cu < -0.72 {
+                        k -= 1;
+                    } else if cu > 0.9 && t > 0.4 {
+                        k += 1;
+                    }
+                }
+                self.fill(x, y, ramp[k.clamp(0, 4) as usize]);
+            }
+        }
+    }
+
     fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, c: Rgb) {
         for yy in y..y + h {
             for xx in x..x + w {
@@ -1920,8 +1966,7 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             cv.begin();
             let (w0, k) = skirt_shape(side, b.waist_w + 1.2, flare);
             let sc = if side { cx - 0.5 } else { cx };
-            cv.profile(top, top + len, |y| sc + (y - top) / len * sway * 0.8, |y| w0 + (y - top) * k, &ramp, -0.02);
-            hem_folds(cv, top, top + len, sc, w0, k, &ramp, sway);
+            cv.drape(top, top + len, |y| sc + (y - top) / len * sway * 0.8, |y| w0 + (y - top) * k, &ramp, -0.02, if side { 1.5 } else { 2.5 });
             // The skirt shades the legs just under its hem.
             let hy = (top + len).ceil() as i32 + 1;
             let (hc, hw) = (sc + sway * 0.8, w0 + len * k);
@@ -1936,8 +1981,7 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
             let ramp = dye(c, lower_dye);
             cv.begin();
             let (w0, k) = skirt_shape(side, b.waist_w + 1.4, flare);
-            cv.profile(top, bottom, |y| cx + (y - top) / len * sway * 0.7, |y| w0 + (y - top) * k, &ramp, 0.0);
-            hem_folds(cv, top, bottom, cx, w0, k, &ramp, sway);
+            cv.drape(top, bottom, |y| cx + (y - top) / len * sway * 0.7, |y| w0 + (y - top) * k, &ramp, 0.0, if side { 2.0 } else { 3.5 });
         }
         Lower::Pants => {}
     }
@@ -2845,7 +2889,8 @@ fn cloak_back(cv: &mut Canvas, b: &Build, ramp: &R5, side: bool, behind: bool) {
     let lag = b.sway;
     let sw = b.shoulder_w;
     cv.begin();
-    cv.profile(top, bottom, |y| cx - (y - top) / (bottom - top) * lag * 1.5, |y| if side { 5.5 + (y - top) * 0.14 } else if behind { sw + 1.0 + (y - top) * 0.1 } else { sw + 2.0 + (y - top) * 0.2 }, ramp, -0.1);
+    let folds = if side || behind { 1.5 } else { 3.5 };
+    cv.drape(top, bottom, |y| cx - (y - top) / (bottom - top) * lag * 1.5, |y| if side { 5.5 + (y - top) * 0.14 } else if behind { sw + 1.0 + (y - top) * 0.1 } else { sw + 2.0 + (y - top) * 0.2 }, ramp, -0.1, folds);
 }
 
 fn held_item(cv: &mut Canvas, look: &Look, hand: V2, dir: u8, raised: bool, c: &Colors) {
@@ -3553,7 +3598,10 @@ fn hair_sheet(cv: &mut Canvas, h: &R5, top: f32, end: f32, lit: bool, vdepth: f3
             }
             let edge = u.abs() > 0.88;
             let lower = t > 0.6 && (uc < 0.3 || uc > 0.75);
-            let tone = if edge || lower { base - 1 } else { base };
+            // A blunt-cut sheet has no tips to break it up, so its clumps
+            // are parted by shadow lines down the length.
+            let parted = vdepth <= 0.0 && t > 0.12 && uc < 0.13;
+            let tone = if edge || lower || parted { base - 1 } else { base };
             cv.fill(x, y, h[tone]);
         }
     }
@@ -3781,7 +3829,9 @@ fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
                 _ => nape - 2.0,
             };
             if ex != Extra::Bald {
-                flow_lines(cv, h, 32.0, cy - 12.0, cy + 4.0, bottom, &[4.0, 9.5]);
+                // Long sheets get more strands so they don't read as a slab.
+                let offsets: &[f32] = if k.back > 20.0 { &[2.5, 6.0, 10.0] } else { &[4.0, 9.5] };
+                flow_lines(cv, h, 32.0, cy - 12.0, cy + 4.0, bottom, offsets);
                 highlight_ring(cv, h, shine, v(32.0, cy - 1.0), rx, ry, &[]);
             }
             match ex {
@@ -4837,6 +4887,15 @@ pub struct Issue {
 
 /// Automated visual QA for one character: renders every frame and checks
 /// for the defects a pixel artist would reject.
+/// Thresholds for the visual checks, calibrated on the cast and thousands of
+/// random looks so they flag real outliers.
+/// Check kinds that are reported but don't fail QA.
+pub const ADVISORY: [&str; 3] = ["palette", "nubs", "boxy"];
+const NUB_LIMIT: usize = 9;
+const FLAT_LIMIT: usize = 1100;
+const BOXY_LIMIT: i32 = 40;
+const POP_LIMIT: usize = 260;
+
 pub fn lint(look: &Look) -> Vec<Issue> {
     let mut out = Vec::new();
     let mut push = |kind: &'static str, dir: u8, frame: u16, detail: String| out.push(Issue { kind, dir, frame, detail });
@@ -4891,6 +4950,66 @@ pub fn lint(look: &Look) -> Vec<Issue> {
             let debris: Vec<_> = sizes.iter().skip(1).filter(|&&s| s < 24).collect();
             if !debris.is_empty() {
                 push("debris", dir, f, format!("{} islands {:?}", debris.len(), debris));
+            }
+            // A big separate island: a prop or piece floating off the body.
+            if let Some(&s2) = sizes.get(1) {
+                if s2 >= 24 {
+                    push("detached", dir, f, format!("separate part of {s2} px"));
+                }
+            }
+            // Nubs: single pixels jutting out of the silhouette (one
+            // opaque neighbour), beyond the few legitimate pointed tips.
+            let nubs = (0..h)
+                .flat_map(|y| (0..w).map(move |x| (x, y)))
+                .filter(|&(x, y)| a(x, y) && [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().filter(|(dx, dy)| a(x + dx, y + dy)).count() == 1)
+                .count();
+            if nubs > NUB_LIMIT {
+                push("nubs", dir, f, format!("{nubs} one-pixel spurs"));
+            }
+            // Flat panels: a large patch of one exact colour reads as an
+            // unshaded cut-out (big white aprons, slab capes).
+            let mut region = vec![false; (w * h) as usize];
+            let mut flat = 0;
+            for y in 0..h {
+                for x in 0..w {
+                    let i = (y * w + x) as usize;
+                    if region[i] || !a(x, y) {
+                        continue;
+                    }
+                    let col = img.get(x, y);
+                    let mut stack = vec![(x, y)];
+                    region[i] = true;
+                    let mut n = 0;
+                    while let Some((cx, cy)) = stack.pop() {
+                        n += 1;
+                        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                            let (nx, ny) = (cx + dx, cy + dy);
+                            if img.inside(nx, ny) && !region[(ny * w + nx) as usize] && img.get(nx, ny) == col {
+                                region[(ny * w + nx) as usize] = true;
+                                stack.push((nx, ny));
+                            }
+                        }
+                    }
+                    flat = flat.max(n);
+                }
+            }
+            if flat > FLAT_LIMIT {
+                push("flat", dir, f, format!("unshaded patch of {flat} px"));
+            }
+            // Boxy: a silhouette side running ruler-straight for many rows.
+            let mut run = (0, 0, i32::MIN, i32::MIN);
+            let mut longest = 0;
+            for y in 0..h {
+                let l = (0..w).find(|&x| a(x, y)).unwrap_or(i32::MIN);
+                let r = (0..w).rev().find(|&x| a(x, y)).unwrap_or(i32::MIN);
+                run.0 = if l != i32::MIN && l == run.2 { run.0 + 1 } else { 1 };
+                run.1 = if r != i32::MIN && r == run.3 { run.1 + 1 } else { 1 };
+                run.2 = l;
+                run.3 = r;
+                longest = longest.max(run.0).max(run.1);
+            }
+            if longest > BOXY_LIMIT {
+                push("boxy", dir, f, format!("straight side {longest} rows"));
             }
             // Pinholes: tiny transparent regions enclosed by the sprite.
             let mut outside = vec![false; (w * h) as usize];
@@ -4977,6 +5096,17 @@ pub fn lint(look: &Look) -> Vec<Issue> {
                 push("jitter", dir, 0, format!("head top varies {mn}..{mx}"));
             }
         }
+        // Popping: neighbouring idle frames should differ by a breath (the
+        // upper body rising a pixel), not a redraw. Compare after allowing
+        // that one-pixel shift, row by row.
+        for f in 0..IDLE_FRAMES {
+            let (p, q) = (frame(look, dir, f), frame(look, dir, (f + 1) % IDLE_FRAMES));
+            let row_diff = |y: i32, dy: i32| (0..p.w).filter(|&x| p.get(x, y) != q.get(x, y + dy)).count();
+            let diff: usize = (0..p.h).map(|y| (-1..=1).map(|dy| row_diff(y, dy)).min().unwrap_or(0)).sum();
+            if diff > POP_LIMIT {
+                push("pop", dir, f, format!("{diff} px change to the next idle frame"));
+            }
+        }
     }
     out
 }
@@ -4991,8 +5121,9 @@ mod qa {
         let mut failures = Vec::new();
         for i in 0..240 {
             let look = Look::random_any(&mut rng);
-            // Palette size is advisory; everything else is a defect.
-            let issues: Vec<_> = lint(&look).into_iter().filter(|i| i.kind != "palette").collect();
+            // Palette size, nubs and straight sides are advisory (props and
+            // pointed tips trip them legitimately); everything else is a defect.
+            let issues: Vec<_> = lint(&look).into_iter().filter(|i| !ADVISORY.contains(&i.kind)).collect();
             if !issues.is_empty() {
                 failures.push(format!("#{i} {:?}: {:?}", look, &issues[..issues.len().min(3)]));
             }

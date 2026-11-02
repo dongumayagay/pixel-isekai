@@ -64,7 +64,7 @@ fn main() {
                 println!("#{i} race {} style {} outfit {} hat {} held {} age {} f {}: {} d{} f{} {}", l.race, l.hair_style, l.outfit, l.hat, l.held, l.age, l.female, is.kind, is.dir, is.frame, is.detail);
             }
         }
-        if issues.iter().any(|i| i.kind != "palette") {
+        if issues.iter().any(|i| !people::ADVISORY.contains(&i.kind)) {
             failing.push(*l);
         }
     }
