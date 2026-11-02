@@ -134,7 +134,6 @@ fn main() {
     h.bytes(serde_json::to_string(&atlas.sprites).unwrap().as_bytes());
     h.bytes(format!("{:?}", atlas.dirty).as_bytes());
     let mut tree = flora::deciduous(0, 0, 1).0.flipped();
-    tree.clear_px(40, 60);
     tree.outline_solid(pal::INK);
     h.sprite(&(tree, (0, 0)));
     println!("{:<10} {:>5} sprites  {:016x}", "atlas", atlas.sprites.len(), h.0);

@@ -2,7 +2,7 @@
 //! generators need. Every write is clipped, so generators can draw freely
 //! past the edges without bounds checks of their own.
 
-use crate::palette::{hex, Rgb};
+use crate::palette::Rgb;
 
 /// The four edge neighbours, in the order outlines probe them.
 const NEIGHBOURS: [(i32, i32); 4] = [(0, 1), (0, -1), (1, 0), (-1, 0)];
@@ -61,13 +61,6 @@ impl Img {
             return 0;
         }
         self.px[self.offset(x, y) + 3]
-    }
-
-    pub fn clear_px(&mut self, x: i32, y: i32) {
-        if self.inside(x, y) {
-            let i = self.offset(x, y);
-            self.px[i..i + 4].fill(0);
-        }
     }
 
     pub fn rect(&mut self, x: i32, y: i32, w: i32, h: i32, c: Rgb) {
@@ -155,7 +148,7 @@ impl Img {
                     // shape's lit top-left edge.
                     let lit = dx > 0 || dy > 0;
                     let amt = if lit { 0.62 } else { 0.8 };
-                    self.set(x, y, mix_dark(c, ink, amt));
+                    self.set(x, y, crate::palette::mix(c, ink, amt));
                 }
             }
         }
@@ -195,12 +188,3 @@ impl Img {
     }
 }
 
-/// Blend a colour toward an ink colour by `t` (0 keeps `c`, 1 gives `ink`).
-pub fn mix_dark(c: Rgb, ink: Rgb, t: f32) -> Rgb {
-    crate::palette::mix(c, ink, t)
-}
-
-/// Short alias of `hex` for dense colour tables.
-pub const fn c(v: u32) -> Rgb {
-    hex(v)
-}
