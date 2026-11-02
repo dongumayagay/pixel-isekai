@@ -49,16 +49,16 @@ pub(super) const SIDE_HEAD: [(i32, i32); 28] = [
     (-13, 12),
     (-12, 11),
     (-12, 11),
-    (-11, 11),
+    (-12, 11),
+    (-12, 12),
+    (-12, 13),
+    (-11, 14),
+    (-11, 14),
+    (-10, 12),
     (-9, 12),
-    (-8, 13),
-    (-6, 14),
-    (-4, 14),
-    (-2, 12),
-    (0, 12),
-    (2, 12),
-    (4, 11),
-    (6, 9),
+    (-7, 12),
+    (-5, 11),
+    (-2, 9),
 ];
 
 pub(super) fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
@@ -71,7 +71,7 @@ pub(super) fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors)
                 let (l, r) = SIDE_HEAD[(dy + 13) as usize];
                 for x in cx + l..cx + r {
                     // Shadow under the jaw line and under the chin.
-                    let edge = x == cx + r - 1 || (dy >= 6 && x < cx + l + 2) || dy == 14;
+                    let edge = x == cx + r - 1 || (dy >= 10 && x < cx + l + 2) || dy == 14;
                     cv.fill(x, cy + dy, c.skin[if edge { 2 } else { 3 }]);
                 }
             }
@@ -84,12 +84,12 @@ pub(super) fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors)
                 // From behind, the back of the skull and jaw narrow smoothly
                 // into the neck under the hairline.
                 let hw = if dir == DIR_UP && dy > 4 {
-                    // Occiput: the skull's round bottom (a quarter ellipse
-                    // from the ear line to the nape, 6 rows), then only the
-                    // neck. The old trapezoid to the chin read as a huge
-                    // neck block from behind.
+                    // Occiput: the skull's round bottom, a quarter ellipse
+                    // from the ear line down to the chin row (ref back sheet:
+                    // the skull hangs to the chin row, three rows of neck
+                    // show). The old trapezoid read as a neck block.
                     let nape = b.neck_w + 0.8;
-                    let t = (dy as f32 - 4.0) / 6.0;
+                    let t = (dy as f32 - 4.0) / 10.0;
                     (face_hw(look, 4) * (1.0 - t * t).max(0.0).sqrt()).max(nape)
                 } else {
                     face_hw(look, dy)

@@ -1,7 +1,7 @@
 //! Fast loop for the core roster: lint every frame of every character and
 //! write one sheet (front, side, back at idle and mid-stride).
 //! cargo run --release --example roster -- [out.png] [name filter, e.g. Dwarf,Rogue]
-//! SCALE=4 enlarges the sheet (default 2).
+//! SCALE=4 enlarges the sheet (default 2). HAIR=<style id> forces one hairstyle (e.g. bald, 255) to check the skull.
 use sim::art::canvas::Img;
 use sim::art::people;
 use sim::palette::hex;
@@ -9,7 +9,17 @@ use sim::palette::hex;
 fn main() {
     let out = std::env::args().nth(1).unwrap_or("../.context/review/roster.png".into());
     let only: Vec<String> = std::env::args().nth(2).map(|v| v.split(',').map(str::to_owned).collect()).unwrap_or_default();
-    let cast: Vec<_> = people::cast().into_iter().filter(|(n, _)| only.is_empty() || only.iter().any(|o| n.contains(o.as_str()))).collect();
+    let hair: Option<u8> = std::env::var("HAIR").ok().and_then(|v| v.parse().ok());
+    let cast: Vec<_> = people::cast()
+        .into_iter()
+        .filter(|(n, _)| only.is_empty() || only.iter().any(|o| n.contains(o.as_str())))
+        .map(|(n, mut l)| {
+            if let Some(h) = hair {
+                l.hair_style = h;
+            }
+            (n, l)
+        })
+        .collect();
     let views = [(0u8, 0u16), (2, 0), (1, 0), (0, 5), (2, 5), (1, 5)];
     let (cw, ch) = (people::FW, people::FH);
     let per_row = cast.len().min(2);

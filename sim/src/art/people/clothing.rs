@@ -431,7 +431,9 @@ pub(super) fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors
     // Neck: its own part so the chin and collar line it.
     cv.begin();
     // From behind the nape sits in the hair's shadow.
-    cv.profile(b.neck_top, sy + 1.5, |_| b.neck.x + if side { 0.5 } else { 0.0 }, |_| b.neck_w, &c.skin, if back { -0.3 } else { -0.06 });
+    // In profile the neck stands under the ear, behind the jaw (ref side
+    // sheet: neck columns under the skull centre, not under the face).
+    cv.profile(b.neck_top, sy + 1.5, |_| b.neck.x - if side { 3.0 } else { 0.0 }, |_| b.neck_w, &c.skin, if back { -0.3 } else { -0.06 });
     let (lower_kind, lower_dye) = g.lower;
     let skirted = lower_kind != Lower::Pants;
     let lower = dye(c, g.legs);

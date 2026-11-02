@@ -226,7 +226,7 @@ pub(super) fn build(look: &Look, pose: Pose, plant: f32) -> Build {
         mouth_y: (chin_y - 1.0).round() as i32,
         neck_top: chin_y - 2.0,
         neck: v(32.0, shoulder_y),
-        neck_w: if f { 3.4 } else { 4.2 },
+        neck_w: if f { 3.0 } else { 3.6 },
         chest: chest_j,
         bust_y: chest_j.y + jig,
         shoulder_y,
