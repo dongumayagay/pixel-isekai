@@ -79,6 +79,8 @@ class Kit:
             if col >= a['cols'] or row >= a['rows']:
                 continue
             cell = idx[row * CELL:(row + 1) * CELL, col * CELL:(col + 1) * CELL]
+            if part.startswith('head_'):
+                cell = erase_eyes(cell)
             over(fr, pal[cell])
             if part.startswith('head_'):
                 ys = np.nonzero(cell)[0]
@@ -106,6 +108,8 @@ class Kit:
             if col >= a['cols'] or row >= a['rows']:
                 continue
             cell = idx[row * CELL:(row + 1) * CELL, col * CELL:(col + 1) * CELL]
+            if part.startswith('head_'):
+                cell = erase_eyes(cell)
             over(above if seen_head else below, pal[cell])
             if part.startswith('head_'):
                 ys = np.nonzero(cell)[0]
@@ -115,6 +119,23 @@ class Kit:
         face2x.draw(fr, direction, head_dy * 2, char, blink)
         over(fr, scale2x(above))
         return fr
+
+
+def erase_eyes(cell):
+    """LPC heads ship with eyes baked in (extra colours, index >= 7). Fill them
+    with the surrounding skin so our own face is the only face."""
+    cell = cell.copy()
+    for _ in range(8):
+        ys, xs = np.nonzero(cell >= 7)
+        if len(ys) == 0:
+            break
+        src = cell.copy()
+        for y, x in zip(ys, xs):
+            nb = src[max(0, y - 1):y + 2, max(0, x - 1):x + 2]
+            skin = nb[(nb >= 1) & (nb <= 6)]
+            if len(skin):
+                cell[y, x] = np.bincount(skin).argmax()
+    return cell
 
 
 def over(dst, src):

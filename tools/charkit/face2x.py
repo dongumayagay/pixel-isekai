@@ -1,12 +1,25 @@
-"""Anime face drawn at 128px over a Scale2x'd LPC head.
+"""Anime face drawn at 128px over a Scale2x'd LPC head (3/4 top-down).
 
-Prior art: RPG Maker MV/MZ walkers (eyes ~1/3 of face width, two highlights),
-Stardew portraits (lash line heavier than lower lid), LPC Revised eye rows.
-At 2x the head is ~44px wide: eyes are 12x9, with brows, lashes, a 3-tone
-iris, two highlights, a mouth shape and blush.
+Eye anatomy copied from three references and then adapted to our 44px head:
+  * .context/ref_free/Free/64X128_Idle_Free.png (32px head, 7x7 eye)
+  * Sun Haven NPC walkers (3/4 top-down, 24px head, 4x4 eye)
+  * Fields of Mistria walkers (3/4 top-down, 2x2 eye)
+All three agree on the same rules, which are what the old eyes broke:
+  1. no outline around the eye: the dark lash mass sits straight on the skin
+  2. the lash is the heaviest element, 2 rows, thickest at the outer corner,
+     with a warm red-brown end pixel where it meets the skin
+  3. the iris hangs directly under the lash, a dark pupil column runs down its
+     middle, the iris gets lighter toward the bottom, one highlight upper-inner
+  4. white sclera shows only on the outer side and as a sliver on the inner
+     side; a grey "sclera shadow" pixel sits just under the lash
+  5. the lower lid is not a line: one or two soft dark-skin pixels at the outer
+     bottom corner, the rest of the bottom is the light iris on the skin
+  6. the eye is about as tall as it is wide, never a wide oval
+See .context/research/anime_eyes.md for the pixel dumps.
 
-Glyph key: . none  L line  W white  d dark iris  m mid  l light  H highlight
-           B blush  k lash (darker line)  p pupil
+Glyph key: . none  k lash  r lash end (red-brown)  S sclera shadow  W white
+           d dark iris  m mid iris  l light iris  P pupil  H highlight
+           t lower lid  B blush  L line (brows/mouth)  p mouth inside
 """
 EYE_RAMPS = {  # dark, mid, light
     'blue': ((28, 50, 110), (58, 110, 200), (140, 200, 250)),
@@ -18,91 +31,103 @@ EYE_RAMPS = {  # dark, mid, light
     'grey': ((50, 50, 60), (120, 120, 135), (200, 200, 210)),
 }
 LINE = (40, 24, 32)
-LASH = (24, 12, 20)
+LASH = (28, 22, 38)
+LASH_END = (122, 50, 64)
+SCLERA_SHADOW = (168, 152, 168)
 WHITE = (250, 248, 245)
 HI = (255, 255, 255)
+LID = (138, 74, 82)
 BLUSH = (236, 150, 140)
 MOUTH_IN = (160, 60, 70)
 
-EYE_Y = 58  # top row of the eye at standing height (LPC eye rows 29-31 doubled)
-EYE_L_X, EYE_R_X = 47, 69  # left edge of each 12-wide eye; face centre is x=64
+EYE_W = 10
+EYE_Y = 56  # top lash row at standing height (LPC eye rows 29-31 doubled = 58-62)
+EYE_L_X, EYE_R_X = 50, 68  # face centre is x=64; 8px gap between the eyes
+SIDE_W = 8
 SIDE_X = 66  # profile eye left edge when facing right
 
-# Front eyes, 12 wide. Outer corner is on the left for the character's right eye
-# (viewer's left); the other eye is mirrored.
+# Front eyes, 10 wide. Outer corner on the left (character's right eye, viewer's
+# left); the other eye is mirrored.
 FRONT = {
     'round': [
-        '.kkkkkkkkkk.',
-        'kkkkkkkkkkkk',
-        'LWWdddddWWWL',
-        'LWdHHdddmWWL',
-        'LWdHHmmlmWWL',
-        'LWddmllllWWL',
-        '.LWdmlllWWL.',
-        '..LWddddWL..',
-        '...LLLLLL...',
+        '..kkkkkk..',
+        '.kkkkkkkkk',
+        'rSSkkkkkkr',
+        'rWWdPPHddW',
+        '.WWdPPdddW',
+        '.SWmdPPdmW',
+        '..WmlddlmW',
+        '..tllddll.',
+        '...tllll..',
     ],
-    'sharp': [
-        '.kkkkkkkkk..',
-        'kkkkkkkkkkkk',
-        'LWWdddddWWWL',
-        'LWdHHdddmWWL',
-        'LWdHHmmlmWWL',
-        '.LWdmllldWL.',
-        '..LWddddWL..',
-        '...LLLLLL...',
+    'sharp': [  # flatter top, lash sweeps up to the outer corner, shorter
+        'kkkkkkkk..',
+        'rkkkkkkkkk',
+        'rSSdPPkkkr',
+        '.WWdPPHddW',
+        '.SWmdPPdmW',
+        '..WmlddlmW',
+        '..tllddll.',
+        '...tlll...',
     ],
-    'droopy': [
-        'kkkkkkkk....',
-        'kkkkkkkkkkk.',
-        'LWWdddddWWWL',
-        'LWdHHdddmWWL',
-        'LWdHHmmlmWWL',
-        'LWddmllllWWL',
-        '.LWdmlllWWL.',
-        '..LWddddWL..',
-        '...LLLLLL...',
+    'droopy': [  # outer corner lower than the inner one
+        '....kkkkk.',
+        '..kkkkkkkk',
+        'rkkkkkkkkr',
+        'rSSdPPHddW',
+        'rWWdPPdddW',
+        '.SWmdPPdmW',
+        '..WmlddlmW',
+        '..tllddll.',
+        '...tllll..',
     ],
-    'cat': [
-        '.kkkkkkkkkk.',
-        'kkkkkkkkkkkk',
-        'LWWdddddWWWL',
-        'LWdHHdpdmWWL',
-        'LWdHHmpmmWWL',
-        'LWdmmlplllWL',
-        '.LWdmlpllWL.',
-        '..LWddddWL..',
-        '...LLLLLL...',
+    'cat': [  # vertical slit pupil, lighter iris, lash flicks up at the outer end
+        'k.kkkkkk..',
+        'kkkkkkkkkk',
+        'rSSkkkkkkr',
+        'rWWmdPmHmW',
+        '.WWmdPmmmW',
+        '.SWlmdPmlW',
+        '..WllPllmW',
+        '..tllPlll.',
+        '...tllll..',
     ],
 }
 CLOSED = [
-    '............',
-    '............',
-    '............',
-    '............',
-    '.kkkkkkkkkk.',
-    'kk........kk',
+    '..........',
+    '..........',
+    '..........',
+    '..........',
+    '..........',
+    '.kkkkkkkk.',
+    'k........k',
 ]
-SIDE = {  # 8 wide, facing right; outer corner on the right
-    'round': ['kkkkkkk.', 'kkkkkkkk', 'LddWWWWL', 'LdHHmWWL', 'LddmlWWL', 'LdmllWWL', '.LdllWL.', '..LLLL..'],
-    'sharp': ['.kkkkkk.', 'kkkkkkkk', 'LddWWWWL', 'LdHHmWWL', 'LddmlWWL', '.LdllWL.', '..LLLL..'],
-    'droopy': ['kkkkkk..', 'kkkkkkk.', 'LddWWWWL', 'LdHHmWWL', 'LddmlWWL', 'LdmllWWL', '.LdllWL.', '..LLLL..'],
-    'cat': ['kkkkkkk.', 'kkkkkkkk', 'LddWWWWL', 'LdHpmWWL', 'LddplWWL', 'LdmplWWL', '.LdllWL.', '..LLLL..'],
+# Profile eye, 8 wide, facing right: outer corner (front of the face) on the
+# right. The iris is foreshortened to 4 wide with the white behind it.
+SIDE = {
+    'round': ['...kkkkk', '.kkkkkkk', 'Skkkkkkr', 'WdPPHddr', 'WdPPddd.', 'WmdPPdm.', '.mlddl..', '..llt...'],
+    'sharp': ['..kkkkkk', '.kkkkkkr', 'SdPPkkkr', 'WdPPHdd.', 'WmdPPdm.', '.mlddl..', '..llt...'],
+    'droopy': ['.kkkkk..', '.kkkkkkk', 'Skkkkkkr', 'WdPPHddr', 'WdPPdddr', 'WmdPPdm.', '.mlddl..', '..llt...'],
+    'cat': ['...kkkkk', '.kkkkkkk', 'Skkkkkkr', 'WmdPmHmr', 'WmdPmmm.', 'WlmPlml.', '.llPll..', '..lPt...'],
 }
-SIDE_CLOSED = ['........', '........', '........', '........', 'kkkkkkk.', '......kk']
-BROWS = {  # 12 wide, 2 rows, drawn 4 rows above the eye; per expression
-    'neutral': ['..LLLLLLL...', '.LL.......L.'],
-    'angry': ['.......LLLL.', '....LLLL....'],
-    'soft': ['...LLLLLL...', '..LL......L.'],
+SIDE_CLOSED = ['........', '........', '........', '........', '........', 'kkkkkkk.', '.......k']
+BROWS = {  # 10 wide, 2 rows, drawn above the eye; per expression
+    'neutral': ['..LLLLLL..', '.LL.....L.'],
+    'angry': ['......LLL.', '...LLLL...'],
+    'soft': ['...LLLLL..', '..LL....L.'],
     'none': [],
 }
-MOUTHS = {  # drawn with the character's centre at x=64, top row at EYE_Y + 20
+MOUTHS = {  # drawn with the character's centre at x=64
     'smile': ['L......L', '.LLLLLL.'],
     'neutral': ['..LLLL..'],
     'grin': ['L......L', 'LppppppL', '.LLLLLL.'],
     'open': ['..LLLL..', '.LppppL.', '..LLLL..'],
     'frown': ['.LLLLLL.', 'L......L'],
 }
+
+
+def pupil(dk):
+    return tuple(int(c * 0.45) for c in dk)
 
 
 def stamp(fr, x0, y0, rows, colors):
@@ -124,7 +149,8 @@ def draw(fr, direction, dy, char, blink=False):
     dk, m, l = EYE_RAMPS.get(eye, EYE_RAMPS['brown'])
     shape = char.get('eye_shape', 'round' if char.get('sex', 'f') == 'f' else 'sharp')
     female = char.get('sex', 'f') == 'f'
-    C = {'L': LINE, 'k': LASH, 'W': WHITE, 'd': dk, 'm': m, 'l': l, 'H': HI, 'p': LASH, 'B': BLUSH}
+    C = {'L': LINE, 'k': LASH, 'r': LASH_END, 'S': SCLERA_SHADOW, 'W': WHITE, 'd': dk, 'm': m, 'l': l,
+         'P': pupil(dk), 'H': HI, 't': LID, 'B': BLUSH}
     y = EYE_Y + dy
     if direction == 'down':
         e = CLOSED if blink else FRONT[shape]
@@ -134,10 +160,10 @@ def draw(fr, direction, dy, char, blink=False):
         stamp(fr, EYE_L_X, y - 4, brow, C)
         stamp(fr, EYE_R_X, y - 4, mirror(brow), C)
         mouth = MOUTHS[char.get('mouth', 'smile')]
-        stamp(fr, 60, y + 10, mouth, {'L': LINE, 'p': MOUTH_IN})
+        stamp(fr, 60, y + 12, mouth, {'L': LINE, 'p': MOUTH_IN})
         if female:
-            stamp(fr, 43, y + 7, ['BBBB', '.BBB'], C)
-            stamp(fr, 81, y + 7, ['BBBB', 'BBB.'], C)
+            stamp(fr, 45, y + 9, ['BBBB', '.BBB'], C)
+            stamp(fr, 79, y + 9, ['BBBB', 'BBB.'], C)
     elif direction in ('right', 'left'):
         e = SIDE_CLOSED if blink else SIDE[shape]
         brow = ['.LLLLL.', 'L.....L'] if not blink else []
@@ -145,10 +171,10 @@ def draw(fr, direction, dy, char, blink=False):
             stamp(fr, SIDE_X, y, e, C)
             stamp(fr, SIDE_X, y - 4, brow, C)
             if female:
-                stamp(fr, SIDE_X + 8, y + 7, ['BBB', 'BB.'], C)
+                stamp(fr, SIDE_X + 8, y + 9, ['BBB', 'BB.'], C)
         else:
-            x0 = 128 - SIDE_X - 8
+            x0 = 128 - SIDE_X - SIDE_W
             stamp(fr, x0, y, mirror(e), C)
             stamp(fr, x0, y - 4, mirror(brow), C)
             if female:
-                stamp(fr, x0 - 3, y + 7, ['BBB', '.BB'], C)
+                stamp(fr, x0 - 3, y + 9, ['BBB', '.BB'], C)

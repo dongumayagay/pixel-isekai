@@ -3,3 +3,4 @@
 /dist
 /web/src/pkg
 .DS_Store
+__pycache__/
