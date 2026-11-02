@@ -6,9 +6,12 @@ female base's; the torso (trapezius -> crotch) is a hand-drawn template fitted p
 are moved 2px outward to sit on the wider shoulders, idle legs get a gap opened between them.
 Side views cut the bust back to a male chest profile.
 
-The female run (hands tucked up at the chest, dainty kick) reads wrong on a man, so the male run
-sheet is the walk cycle resampled to 8 frames with a forward lean; the game plays it faster. A
-proper male run is still to be drawn.
+STOPGAP. Editing the female sheets into a man never reads right in motion (the run in particular:
+hands tucked at the chest, dainty kick, forearm drawn into the bra). The proper male base is
+Angeler's paid "Basic Character Ver 64" pack (USD 10, angeler1234.itch.io/basic-character-ver-64):
+Base_Male_64.png, 12 rows x 8 cols = idle / walk / run x 4 dirs, same licence as the free pack.
+Once Body.zip is in .context/ref_free/, extract it like the female sheets and delete this script.
+Until then the run sheet here is the walk cycle resampled to 8 frames with a forward lean.
 
 Design language from Angeler's own male promo (standby_male_frames.png, reference only): square
 shoulders wider than the head, collarbone ticks, two shallow pec arcs, a sternum/ab centre line with
@@ -19,13 +22,12 @@ import os
 import numpy as np
 from PIL import Image
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-KIT = os.path.join(os.path.dirname(os.path.dirname(HERE)), 'assets', 'charkit64')
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from sheet import KIT, W, H, ROWS, CX, load, save, cell_top, outline_fix
+
 OUT = os.path.join(KIT, 'male')
-W, H = 64, 128
-ROWS = {'down': 0, 'left': 1, 'right': 2, 'up': 3}
 ANIMS = {'idle': 8, 'walk': 10}
-CX = 32
 TONES = {'.': 0, 'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6}
 
 # Female idle frame 0 landmarks (head top 19): trapezius top 48, shoulder line 52, chest 56-62,
@@ -108,20 +110,8 @@ def expand(tpl):
     return out
 
 
-def load(part, anim):
-    return np.array(Image.open(os.path.join(KIT, part, f'{anim}.png')))
 
 
-def save(idx, src_path, path):
-    src = Image.open(src_path)
-    im = Image.fromarray(idx.astype(np.uint8), 'P')
-    im.putpalette(src.getpalette())
-    im.save(path, transparency=0, optimize=True)
-
-
-def cell_top(b):
-    rows = np.nonzero((b > 0).any(axis=1))[0]
-    return int(rows.min()) if len(rows) else None
 
 
 def centre_run(row, cx=CX):
@@ -259,13 +249,6 @@ def male_side(b, u, ytop, direction):
                 nb[y, fx - sign] = 5
     nu[:ytop + 51] = 0
     return nb, nu
-
-
-def outline_fix(b):
-    full = b > 0
-    p = np.pad(full, 1)
-    edge = full & ~(p[:-2, 1:-1] & p[2:, 1:-1] & p[1:-1, :-2] & p[1:-1, 2:])
-    b[edge & (b > 1)] = 1
 
 
 RUN_FROM_WALK = [0, 1, 3, 4, 5, 6, 8, 9]   # 10-frame walk resampled to the run sheet's 8 columns
