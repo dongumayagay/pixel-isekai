@@ -4,10 +4,25 @@
 
 import * as S from './shaders';
 
-export const SPRITE_STRIDE = 11; // x, y, rx, ry, rw, rh, pivx, pivy, layer, flags, alpha
-export const SHADOW_STRIDE = 5; // x, y, rx, ry, alpha
-export const LIGHT_STRIDE = 7; // x, y, r, red, green, blue, intensity
-export const COLOR_STRIDE = 8; // x, y, w, h, r, g, b, a
+const SPRITE_STRIDE = 11; // x, y, rx, ry, rw, rh, pivx, pivy, layer, flags, alpha
+const SHADOW_STRIDE = 5; // x, y, rx, ry, alpha
+const LIGHT_STRIDE = 7; // x, y, r, red, green, blue, intensity
+const COLOR_STRIDE = 8; // x, y, w, h, r, g, b, a
+
+// Instance attributes per batch layout: [location, size].
+const SPRITE_ATTRS: [number, number][] = [[1, 2], [2, 4], [3, 2], [4, 1], [5, 1], [6, 1]];
+const COLOR_ATTRS: [number, number][] = [[1, 4], [2, 4]];
+
+/** Terrain chunk textures kept resident; the least recently drawn go first. */
+const CHUNK_BUDGET = 24;
+
+/** Fixed 9:16 portrait frame (540×960 logical px), integer-scaled. At this
+ *  framing an adult (~88px) stands about a tenth of the screen tall, close
+ *  to Eastward and Sea of Stars, and maps 2× onto 1080-wide phones. */
+const LOGICAL_W = 540;
+const LOGICAL_H = 960;
+
+type VaoName = 'sprite' | 'overlay' | 'casters' | 'shadow' | 'light' | 'color' | 'colorTop' | 'plain';
 
 interface Program {
   p: WebGLProgram;
@@ -40,23 +55,21 @@ export interface FrameParams {
   windDir: [number, number];
 }
 
-class Batch {
+/** Growable array of per-instance floats, uploaded once per frame. */
+export class Batch {
   data: Float32Array;
   n = 0;
-  constructor(public stride: number, cap = 1024) {
+  constructor(
+    readonly stride: number,
+    cap: number,
+  ) {
     this.data = new Float32Array(stride * cap);
   }
   reset() {
     this.n = 0;
   }
   push(...v: number[]) {
-    if ((this.n + 1) * this.stride > this.data.length) {
-      const d = new Float32Array(this.data.length * 2);
-      d.set(this.data);
-      this.data = d;
-    }
-    this.data.set(v, this.n * this.stride);
-    this.n++;
+    this.data.set(v, this.slot());
   }
   /** Reserve one slot and return its offset for direct writes. */
   slot(): number {
@@ -69,13 +82,25 @@ class Batch {
   }
 }
 
+function pixelSampling(gl: WebGL2RenderingContext, target: number) {
+  gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(target, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(target, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+
+export const chunkKey = (cx: number, cy: number) => `${cx},${cy}`;
+
 export class Renderer {
-  gl: WebGL2RenderingContext;
-  scale = 3;
-  viewW = 320;
-  viewH = 180;
-  fboW = 322;
-  fboH = 182;
+  private readonly gl: WebGL2RenderingContext;
+  private scale = 1;
+  readonly viewW = LOGICAL_W;
+  readonly viewH = LOGICAL_H;
+  // One spare pixel on each side lets the composite pass shift by the
+  // camera's sub-pixel offset.
+  private readonly fboW = LOGICAL_W + 2;
+  private readonly fboH = LOGICAL_H + 2;
+  private cssW = 360;
   private quad!: WebGLBuffer;
   private progs!: Record<'ground' | 'sprite' | 'shadow' | 'light' | 'color' | 'composite', Program>;
   private scene!: Target;
@@ -83,8 +108,8 @@ export class Renderer {
   private atlas!: WebGLTexture;
   private pageSize = 2048;
   private chunks = new Map<string, { tex: WebGLTexture; used: number; season: number }>();
-  private vaos: Record<string, WebGLVertexArrayObject> = {};
-  private bufs: Record<string, WebGLBuffer> = {};
+  private vaos = {} as Record<VaoName, WebGLVertexArrayObject>;
+  private bufs = {} as Record<VaoName, WebGLBuffer>;
   sprites = new Batch(SPRITE_STRIDE, 4096);
   casters = new Batch(SPRITE_STRIDE, 2048);
   overlay = new Batch(SPRITE_STRIDE, 256);
@@ -93,7 +118,7 @@ export class Renderer {
   particles = new Batch(COLOR_STRIDE, 2048);
   particlesTop = new Batch(COLOR_STRIDE, 2048);
 
-  constructor(public canvas: HTMLCanvasElement) {
+  constructor(readonly canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, premultipliedAlpha: false, powerPreference: 'high-performance' });
     if (!gl) throw new Error('WebGL2 is not supported on this device.');
     this.gl = gl;
@@ -136,18 +161,18 @@ export class Renderer {
         'u_fog', 'u_fogColor', 'u_flash', 'u_sat', 'u_tint', 'u_vignette', 'u_wind',
       ]),
     };
-    // Instanced VAOs: [location, size] per attribute.
-    this.makeVao('sprite', SPRITE_STRIDE, [[1, 2], [2, 4], [3, 2], [4, 1], [5, 1], [6, 1]]);
-    this.makeVao('overlay', SPRITE_STRIDE, [[1, 2], [2, 4], [3, 2], [4, 1], [5, 1], [6, 1]]);
-    this.makeVao('casters', SPRITE_STRIDE, [[1, 2], [2, 4], [3, 2], [4, 1], [5, 1], [6, 1]]);
+    this.makeVao('sprite', SPRITE_STRIDE, SPRITE_ATTRS);
+    this.makeVao('overlay', SPRITE_STRIDE, SPRITE_ATTRS);
+    this.makeVao('casters', SPRITE_STRIDE, SPRITE_ATTRS);
     this.makeVao('shadow', SHADOW_STRIDE, [[1, 4], [2, 1]]);
     this.makeVao('light', LIGHT_STRIDE, [[1, 3], [2, 4]]);
-    this.makeVao('color', COLOR_STRIDE, [[1, 4], [2, 4]]);
-    this.makeVao('colorTop', COLOR_STRIDE, [[1, 4], [2, 4]]);
+    this.makeVao('color', COLOR_STRIDE, COLOR_ATTRS);
+    this.makeVao('colorTop', COLOR_STRIDE, COLOR_ATTRS);
     this.makeVao('plain', 0, []);
   }
 
-  private makeVao(name: string, stride: number, attrs: [number, number][]) {
+  /** A VAO over the shared unit quad, plus an instance buffer when `stride` > 0. */
+  private makeVao(name: VaoName, stride: number, attrs: [number, number][]) {
     const gl = this.gl;
     const vao = gl.createVertexArray()!;
     gl.bindVertexArray(vao);
@@ -180,10 +205,7 @@ export class Renderer {
     const tex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    pixelSampling(gl, gl.TEXTURE_2D);
     const fb = gl.createFramebuffer()!;
     gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
@@ -198,20 +220,12 @@ export class Renderer {
     return { fb, tex, rb };
   }
 
-  /** Fixed 9:16 portrait frame (540×960 logical px), integer-scaled. At
-   *  this framing an adult (~88px) stands about a tenth of the screen tall,
-   *  close to Eastward and Sea of Stars, and maps 2× onto 1080-wide phones. */
-  static readonly LOGICAL_W = 540;
-  static readonly LOGICAL_H = 960;
+  /** Fits the fixed logical frame to the window and (re)allocates the offscreen targets. */
   resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 4);
     const sw = window.innerWidth * dpr;
     const sh = window.innerHeight * dpr;
-    this.viewW = Renderer.LOGICAL_W;
-    this.viewH = Renderer.LOGICAL_H;
     this.scale = Math.max(1, Math.floor(Math.min(sw / this.viewW, sh / this.viewH)));
-    this.fboW = this.viewW + 2;
-    this.fboH = this.viewH + 2;
     this.canvas.width = this.viewW * this.scale;
     this.canvas.height = this.viewH * this.scale;
     // CSS size: fill the window at 9:16 (pixelated sampling keeps it crisp).
@@ -225,9 +239,7 @@ export class Renderer {
     this.light = this.target(this.fboW, this.fboH, this.light);
   }
 
-  cssW = 360;
-
-  /** Device px per CSS px, for converting pointer events to logical px. */
+  /** Logical px per CSS px, for converting pointer events to world px. */
   cssToLogical(): number {
     return this.viewW / this.cssW;
   }
@@ -242,10 +254,7 @@ export class Renderer {
     pages.forEach((px, i) => {
       gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, i, size, size, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
     });
-    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    pixelSampling(gl, gl.TEXTURE_2D_ARRAY);
   }
 
   updateAtlas(page: number, x: number, y: number, w: number, h: number, px: Uint8Array) {
@@ -256,22 +265,18 @@ export class Renderer {
   }
 
   hasChunk(cx: number, cy: number, season: number): boolean {
-    const c = this.chunks.get(`${cx},${cy}`);
-    return !!c && c.season === season;
+    return this.chunks.get(chunkKey(cx, cy))?.season === season;
   }
 
   setChunk(cx: number, cy: number, season: number, size: number, px: Uint8Array) {
     const gl = this.gl;
-    const key = `${cx},${cy}`;
+    const key = chunkKey(cx, cy);
     let c = this.chunks.get(key);
     if (!c) {
       const tex = gl.createTexture()!;
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, size, size);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      pixelSampling(gl, gl.TEXTURE_2D);
       c = { tex, used: performance.now(), season };
       this.chunks.set(key, c);
     }
@@ -280,8 +285,7 @@ export class Renderer {
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, size, size, gl.RGBA, gl.UNSIGNED_BYTE, px);
     c.season = season;
     c.used = performance.now();
-    // Evict the least recently used chunks beyond the budget.
-    if (this.chunks.size > 24) {
+    if (this.chunks.size > CHUNK_BUDGET) {
       let oldest: string | null = null;
       let t = Infinity;
       for (const [k, v] of this.chunks) {
@@ -297,19 +301,44 @@ export class Renderer {
     }
   }
 
-  private upload(name: string, b: Batch) {
+  /** Binds a program and points its camera at the scene buffer's top-left world pixel. */
+  private use(p: Program, camIX: number, camIY: number): Program {
+    const gl = this.gl;
+    gl.useProgram(p.p);
+    gl.uniform2f(p.u.u_cam, camIX, camIY);
+    gl.uniform2f(p.u.u_size, this.fboW, this.fboH);
+    return p;
+  }
+
+  private useSprites(fp: FrameParams, camIX: number, camIY: number): Program {
+    const gl = this.gl;
+    const p = this.use(this.progs.sprite, camIX, camIY);
+    gl.uniform1f(p.u.u_time, fp.time);
+    gl.uniform1f(p.u.u_wind, fp.wind);
+    gl.uniform1f(p.u.u_page, this.pageSize);
+    gl.uniform1i(p.u.u_atlas, 1);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.atlas);
+    return p;
+  }
+
+  /** Uploads a batch and draws one quad per instance with the bound program. */
+  private drawBatch(name: VaoName, b: Batch) {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.bufs[name]);
     gl.bufferData(gl.ARRAY_BUFFER, b.data.subarray(0, b.n * b.stride), gl.STREAM_DRAW);
+    gl.bindVertexArray(this.vaos[name]);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, b.n);
   }
 
   frame(fp: FrameParams, chunkPx: number) {
     const gl = this.gl;
+    // The scene buffer starts one pixel up-left of the camera; the composite
+    // pass then shifts by the sub-pixel remainder.
     const camIX = Math.floor(fp.camX) - 1;
     const camIY = Math.floor(fp.camY) - 1;
     const fracX = fp.camX - Math.floor(fp.camX);
     const fracY = fp.camY - Math.floor(fp.camY);
-    const size = [this.fboW, this.fboH] as const;
 
     // ---- Scene ----
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.scene.fb);
@@ -319,11 +348,8 @@ export class Renderer {
     gl.disable(gl.BLEND);
 
     // Terrain
-    const g = this.progs.ground;
-    gl.useProgram(g.p);
+    const g = this.use(this.progs.ground, camIX, camIY);
     gl.bindVertexArray(this.vaos.plain);
-    gl.uniform2f(g.u.u_cam, camIX, camIY);
-    gl.uniform2f(g.u.u_size, ...size);
     gl.uniform1f(g.u.u_chunk, chunkPx);
     gl.uniform1f(g.u.u_time, fp.time);
     gl.uniform1f(g.u.u_night, fp.night);
@@ -336,7 +362,7 @@ export class Renderer {
     const now = performance.now();
     for (let cy = cy0; cy <= cy1; cy++) {
       for (let cx = cx0; cx <= cx1; cx++) {
-        const c = this.chunks.get(`${cx},${cy}`);
+        const c = this.chunks.get(chunkKey(cx, cy));
         if (!c) continue;
         c.used = now;
         gl.bindTexture(gl.TEXTURE_2D, c.tex);
@@ -346,7 +372,6 @@ export class Renderer {
     }
 
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     // Shadows: multiply-blended, each pixel darkened once (stencil), in a
     // cool tint so shaded ground reads blue against warm sunlight.
@@ -357,35 +382,18 @@ export class Renderer {
     gl.stencilOp(gl.KEEP, gl.KEEP, gl.INCR);
     gl.blendFunc(gl.DST_COLOR, gl.ZERO);
     const tint = fp.shadowTint;
-    if (fp.sun[2] > 0.01 && this.casters.n) {
-      const p = this.progs.sprite;
-      gl.useProgram(p.p);
-      gl.uniform2f(p.u.u_cam, camIX, camIY);
-      gl.uniform2f(p.u.u_size, ...size);
-      gl.uniform1f(p.u.u_time, fp.time);
-      gl.uniform1f(p.u.u_wind, fp.wind);
-      gl.uniform1f(p.u.u_page, this.pageSize);
-      gl.uniform1i(p.u.u_atlas, 1);
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.atlas);
-      gl.uniform3f(p.u.u_cast, fp.sun[0], fp.sun[1], 1);
-      const k = fp.sun[2];
-      gl.uniform4f(p.u.u_shadowColor, 1 - (1 - tint[0]) * k, 1 - (1 - tint[1]) * k, 1 - (1 - tint[2]) * k, 1);
-      this.upload('casters', this.casters);
-      gl.bindVertexArray(this.vaos.casters);
-      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.casters.n);
-      gl.uniform3f(p.u.u_cast, 0, 0, 0);
-      gl.uniform4f(p.u.u_shadowColor, 1, 1, 1, 0);
+    const [shearX, squashY, strength] = fp.sun;
+    if (strength > 0.01 && this.casters.n) {
+      const p = this.useSprites(fp, camIX, camIY);
+      const shade = (t: number) => 1 - (1 - t) * strength;
+      gl.uniform3f(p.u.u_cast, shearX, squashY, 1);
+      gl.uniform4f(p.u.u_shadowColor, shade(tint[0]), shade(tint[1]), shade(tint[2]), 1);
+      this.drawBatch('casters', this.casters);
     }
     if (this.shadows.n) {
-      const p = this.progs.shadow;
-      gl.useProgram(p.p);
-      gl.uniform2f(p.u.u_cam, camIX, camIY);
-      gl.uniform2f(p.u.u_size, ...size);
+      const p = this.use(this.progs.shadow, camIX, camIY);
       gl.uniform3f(p.u.u_tint, ...tint);
-      this.upload('shadow', this.shadows);
-      gl.bindVertexArray(this.vaos.shadow);
-      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.shadows.n);
+      this.drawBatch('shadow', this.shadows);
     }
     gl.disable(gl.STENCIL_TEST);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -394,31 +402,16 @@ export class Renderer {
     if (this.particles.n) this.drawColor('color', this.particles, camIX, camIY);
 
     // Sprites
-    const sp = this.progs.sprite;
-    gl.useProgram(sp.p);
-    gl.uniform2f(sp.u.u_cam, camIX, camIY);
-    gl.uniform2f(sp.u.u_size, ...size);
-    gl.uniform1f(sp.u.u_time, fp.time);
-    gl.uniform1f(sp.u.u_wind, fp.wind);
-    gl.uniform1f(sp.u.u_page, this.pageSize);
-    gl.uniform1i(sp.u.u_atlas, 1);
+    const sp = this.useSprites(fp, camIX, camIY);
     gl.uniform3f(sp.u.u_cast, 0, 0, 0);
     gl.uniform4f(sp.u.u_shadowColor, 1, 1, 1, 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.atlas);
-    if (this.sprites.n) {
-      this.upload('sprite', this.sprites);
-      gl.bindVertexArray(this.vaos.sprite);
-      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.sprites.n);
-    }
+    if (this.sprites.n) this.drawBatch('sprite', this.sprites);
     // Weather and airborne particles above sprites.
     if (this.particlesTop.n) this.drawColor('colorTop', this.particlesTop, camIX, camIY);
     // Overlays (emote bubbles) on top of everything.
     if (this.overlay.n) {
       gl.useProgram(sp.p);
-      this.upload('overlay', this.overlay);
-      gl.bindVertexArray(this.vaos.overlay);
-      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.overlay.n);
+      this.drawBatch('overlay', this.overlay);
     }
 
     // ---- Lights ----
@@ -428,13 +421,8 @@ export class Renderer {
     gl.clear(gl.COLOR_BUFFER_BIT);
     if (this.lights.n) {
       gl.blendFunc(gl.ONE, gl.ONE);
-      const p = this.progs.light;
-      gl.useProgram(p.p);
-      gl.uniform2f(p.u.u_cam, camIX, camIY);
-      gl.uniform2f(p.u.u_size, ...size);
-      this.upload('light', this.lights);
-      gl.bindVertexArray(this.vaos.light);
-      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, this.lights.n);
+      this.use(this.progs.light, camIX, camIY);
+      this.drawBatch('light', this.lights);
     }
 
     // ---- Composite ----
@@ -467,14 +455,8 @@ export class Renderer {
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
-  private drawColor(name: string, b: Batch, camIX: number, camIY: number) {
-    const gl = this.gl;
-    const p = this.progs.color;
-    gl.useProgram(p.p);
-    gl.uniform2f(p.u.u_cam, camIX, camIY);
-    gl.uniform2f(p.u.u_size, this.fboW, this.fboH);
-    this.upload(name, b);
-    gl.bindVertexArray(this.vaos[name]);
-    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, b.n);
+  private drawColor(name: 'color' | 'colorTop', b: Batch, camIX: number, camIY: number) {
+    this.use(this.progs.color, camIX, camIY);
+    this.drawBatch(name, b);
   }
 }

@@ -1,6 +1,8 @@
 // GLSL ES 3.0 shaders. Everything renders at the game's logical pixel
 // resolution, then a composite pass upscales by an integer factor.
 
+import { EF } from '../protocol';
+
 const common = /* glsl */ `#version 300 es
 precision highp float;
 precision highp int;
@@ -114,11 +116,11 @@ out float v_flash;
 out float v_alpha;
 void main() {
   int f = int(a_flags + 0.5);
-  bool flip = (f & 1) != 0;
+  bool flip = (f & ${EF.FLIP}) != 0;
   vec2 c = a_corner;
   float pivx = flip ? (a_rect.z - a_piv.x) : a_piv.x;
   vec2 local = vec2(c.x * a_rect.z - pivx, c.y * a_rect.w - a_piv.y);
-  if ((f & 16) != 0) {
+  if ((f & ${EF.SWAY}) != 0) {
     float h = 1.0 - c.y;
     float amp = clamp(a_rect.w / 45.0, 0.6, 2.4) * (0.5 + u_wind);
     float s = sin(u_time * 1.4 + a_pos.x * 0.023 + a_pos.y * 0.011) + 0.4 * sin(u_time * 3.1 + a_pos.x * 0.05);
@@ -134,7 +136,7 @@ void main() {
   gl_Position = toClip(world - u_cam, u_size);
   float u = flip ? 1.0 - c.x : c.x;
   v_uv = vec3((a_rect.x + u * a_rect.z) / u_page, (a_rect.y + c.y * a_rect.w) / u_page, a_layer);
-  v_flash = float((f & 4) != 0);
+  v_flash = float((f & ${EF.FLASH}) != 0);
   v_alpha = a_alpha;
 }
 `;

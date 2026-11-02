@@ -1,6 +1,6 @@
 // Time-of-day lighting and weather grading.
 
-import { Weather } from './protocol';
+import { Season, Weather } from './protocol';
 
 type RGB = [number, number, number];
 
@@ -84,9 +84,9 @@ export function atmosphere(minute: number, weather: number, intensity: number, s
       break;
   }
   // Season grading: warm summers, crisp blue winters.
-  if (season === 1) tint = [tint[0] * 1.03, tint[1] * 1.01, tint[2] * 0.97];
-  if (season === 2) tint = [tint[0] * 1.04, tint[1] * 0.99, tint[2] * 0.94];
-  if (season === 3) tint = [tint[0] * 0.97, tint[1] * 0.99, tint[2] * 1.05];
+  if (season === Season.Summer) tint = [tint[0] * 1.03, tint[1] * 1.01, tint[2] * 0.97];
+  if (season === Season.Autumn) tint = [tint[0] * 1.04, tint[1] * 0.99, tint[2] * 0.94];
+  if (season === Season.Winter) tint = [tint[0] * 0.97, tint[1] * 0.99, tint[2] * 1.05];
   // Daylight exposure: a gentle lift so midday reads bright and sunny.
   const exposure = 1 + 0.1 * (1 - night) * (weather === Weather.Clear ? 1 : 0.4);
   tint = [tint[0] * exposure, tint[1] * exposure, tint[2] * exposure];

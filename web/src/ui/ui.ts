@@ -1,14 +1,31 @@
 // HTML overlay UI: title & isekai prologue, HUD, dialogue, villager
 // profiles, chronicle, people list and world map.
 
-import { H, type Cmd, type FromWorker, type ToWorker } from '../protocol';
-import { icon, iconImg } from './icons';
+import {
+  H,
+  type Cmd,
+  type DialogueOpen,
+  type FromWorker,
+  type Relation,
+  type Status,
+  type ToWorker,
+  type UiUpdate,
+  type VillagerProfile,
+  type VillagerSummary,
+  type WorldEvent,
+} from '../protocol';
+import { $, randomSeed } from '../util';
+import { icon, iconImg, type IconName } from './icons';
 
-const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
-const WEATHER_ICON = ['sun', 'cloud', 'rain', 'storm', 'snow', 'fog'];
+// Indexed by the engine's Weather and Season values.
+const WEATHER_ICON: IconName[] = ['sun', 'cloud', 'rain', 'storm', 'snow', 'fog'];
 const WEATHER_NAME = ['Clear', 'Cloudy', 'Rain', 'Storm', 'Snow', 'Fog'];
 const SEASON = ['Spring', 'Summer', 'Autumn', 'Winter'];
+const DAYS_PER_SEASON = 12;
 const SPEEDS = [1, 2, 4, 8];
+const LOADING = '<div class="loading-dots">Loading…</div>';
+
+type PanelKind = '' | 'profile' | 'chronicle' | 'people' | 'map' | 'bag';
 
 const PROLOGUE = [
   { art: 'city', text: 'Tokyo, 11:58 PM. Another overtime shift. Another empty train home.' },
@@ -22,6 +39,7 @@ function esc(s: string) {
   return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 }
 
+/** 12-hour clock, rounded down to ten minutes. */
 function clock(minute: number) {
   const h = Math.floor(minute / 60) % 24;
   const m = Math.floor(minute % 60 / 10) * 10;
@@ -30,32 +48,41 @@ function clock(minute: number) {
   return `${hh}:${String(m).padStart(2, '0')} ${ap}`;
 }
 
+/** Five hearts, one per 20 points of a villager's opinion of the player. */
+function hearts(opinion: number) {
+  const n = Math.max(0, Math.min(5, Math.round(opinion / 20)));
+  return Array.from({ length: 5 }, (_, i) => `<img class="heart${i < n ? '' : ' off'}" src="${icon('heart', 2)}">`).join('');
+}
+
 export class UI {
   onSend: (m: ToWorker) => void = () => {};
   onCmd: (c: Cmd) => void = () => {};
   onStart: (seed: number) => void = () => {};
   private worldReady = false;
   private introDone = false;
+  private prologueIdx = -1;
+  private typeTimer = 0;
   private speedIdx = 0;
-  private dialogue: { lines: string[]; i: number; data: any } | null = null;
+  private dialogue: { line: number; data: DialogueOpen } | null = null;
   private portraits = new Map<string, HTMLCanvasElement>();
   private pendingPortrait = new Map<string, HTMLCanvasElement[]>();
+  private panelKind: PanelKind = '';
   private minimap: HTMLCanvasElement | null = null;
   private worldW = 1;
   private worldH = 1;
-  private px = 0;
-  private py = 0;
+  private tileX = 0;
+  private tileY = 0;
   private lastStatus = 0;
-  private status: any = null;
-  private feedCount = 0;
+  private status: Status | null = null;
 
   constructor() {
     document.getElementById('stage')!.insertAdjacentHTML('beforeend', this.template());
+    const seed = $<HTMLInputElement>('#seed');
     $('#begin').addEventListener('click', () => this.begin());
-    $('#seed').addEventListener('keydown', (e) => {
-      if ((e as KeyboardEvent).key === 'Enter') this.begin();
+    seed.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this.begin();
     });
-    $('#reroll').addEventListener('click', () => (($('#seed') as HTMLInputElement).value = String(Math.floor(Math.random() * 1e9))));
+    $('#reroll').addEventListener('click', () => (seed.value = String(randomSeed())));
     $('#prologue').addEventListener('click', () => this.nextPrologue());
     $('#speed').addEventListener('click', () => this.cycleSpeed());
     $('#btn-chronicle').addEventListener('click', () => this.openChronicle());
@@ -72,10 +99,10 @@ export class UI {
     $('#panel').addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
       if (t.closest('[data-close]') || t.id === 'panel') this.closePanel();
-      const row = t.closest('[data-vid]') as HTMLElement | null;
+      const row = t.closest<HTMLElement>('[data-vid]');
       if (row) this.openProfile(Number(row.dataset.vid));
     });
-    (($('#seed') as HTMLInputElement).value = String(Math.floor(Math.random() * 1e9)));
+    seed.value = String(randomSeed());
   }
 
   private template() {
@@ -130,7 +157,7 @@ export class UI {
   // ------------------------------------------------------------ start flow
 
   private begin() {
-    const seed = Number(($('#seed') as HTMLInputElement).value) || Math.floor(Math.random() * 1e9);
+    const seed = Number($<HTMLInputElement>('#seed').value) || randomSeed();
     $('#title').classList.add('hidden');
     // Story intro is parked for now: show only the loading status.
     $('#prologue').classList.remove('hidden');
@@ -140,7 +167,6 @@ export class UI {
     setTimeout(() => this.onStart(seed), 50);
   }
 
-  private prologueIdx = -1;
   private nextPrologue() {
     this.prologueIdx++;
     if (this.prologueIdx >= PROLOGUE.length) {
@@ -151,10 +177,9 @@ export class UI {
     }
     const p = PROLOGUE[this.prologueIdx];
     this.typewrite($('#pro-line'), p.text);
-    drawPrologueArt($('#pro-art') as HTMLCanvasElement, p.art);
+    drawPrologueArt($<HTMLCanvasElement>('#pro-art'), p.art);
   }
 
-  private typeTimer = 0;
   private typewrite(el: HTMLElement, text: string) {
     clearInterval(this.typeTimer);
     let i = 0;
@@ -184,13 +209,13 @@ export class UI {
 
   // ------------------------------------------------------------ per frame
 
-  frame(snap: Float32Array, ui: any, simMs: number) {
+  frame(snap: Float32Array, ui: UiUpdate, simMs: number) {
     const minute = snap[H.minute];
     $('#hud-clock').textContent = clock(minute);
     const w = snap[H.weather];
     const night = minute < 330 || minute > 1200;
     const wicon = w === 0 && night ? 'moon' : WEATHER_ICON[w] ?? 'sun';
-    const img = $('#hud-wicon') as HTMLImageElement;
+    const img = $<HTMLImageElement>('#hud-wicon');
     const src = icon(wicon, 3);
     if (img.src !== src) {
       img.src = src;
@@ -202,17 +227,18 @@ export class UI {
       this.lastStatus = now;
       this.onSend({ t: 'status' });
     }
-    for (const t of ui.toasts as string[]) this.toast(t);
-    for (const e of ui.events as any[]) this.feed(e);
-    for (const d of ui.dialogue as any[]) this.showDialogue(d);
+    for (const t of ui.toasts) this.toast(t);
+    for (const e of ui.events) this.feed(e);
+    for (const d of ui.dialogue) this.showDialogue(d);
     if (ui.season_changed) this.toast(`${SEASON[snap[H.season]]} has arrived`, true);
     const perf = $('#perf');
     if (perf.dataset.on) perf.textContent = `sim ${simMs.toFixed(1)}ms`;
   }
 
-  player(x: number, y: number) {
-    this.px = x;
-    this.py = y;
+  /** The player's position in tiles, for the world map marker. */
+  player(tileX: number, tileY: number) {
+    this.tileX = tileX;
+    this.tileY = tileY;
   }
 
   message(m: FromWorker) {
@@ -252,17 +278,17 @@ export class UI {
     setTimeout(() => el.remove(), big ? 3200 : 2000);
   }
 
-  private feed(e: any) {
+  private feed(e: WorldEvent) {
     const el = document.createElement('div');
     el.className = `feed-item k-${e.kind}`;
     el.innerHTML = `<span class="feed-dot"></span>${esc(e.text)}`;
-    if (e.who?.length) {
-      el.dataset.vid = e.who[0];
-      el.addEventListener('click', () => this.openProfile(e.who[0]));
+    const who = e.who[0];
+    if (who !== undefined) {
+      el.dataset.vid = String(who);
+      el.addEventListener('click', () => this.openProfile(who));
     }
     const feed = $('#feed');
     feed.prepend(el);
-    this.feedCount++;
     while (feed.children.length > 4) feed.lastElementChild?.remove();
     setTimeout(() => el.classList.add('out'), 9000);
     setTimeout(() => el.remove(), 9800);
@@ -275,37 +301,33 @@ export class UI {
 
   // ------------------------------------------------------------ dialogue
 
-  private showDialogue(d: any) {
-    this.dialogue = { lines: d.lines, i: 0, data: d };
+  private showDialogue(d: DialogueOpen) {
+    this.dialogue = { line: 0, data: d };
     $('#dlg-name').textContent = d.name;
     $('#dlg-job').textContent = d.job;
-    const hearts = Math.max(0, Math.min(5, Math.round(d.opinion / 20)));
-    $('#dlg-heart').innerHTML = Array.from({ length: 5 }, (_, i) => `<img class="heart${i < hearts ? '' : ' off'}" src="${icon('heart', 2)}">`).join('');
-    this.portrait(d.sheet, $('#dlg-face') as HTMLCanvasElement);
+    $('#dlg-heart').innerHTML = hearts(d.opinion);
+    this.portrait(d.sheet, $<HTMLCanvasElement>('#dlg-face'));
     $('#dialogue').classList.remove('hidden');
     this.typewrite($('#dlg-text'), d.lines[0] ?? '…');
   }
 
   private advanceDialogue() {
     if (!this.dialogue) return;
-    this.dialogue.i++;
-    if (this.dialogue.i >= this.dialogue.lines.length) {
-      this.dialogue = null;
-      $('#dialogue').classList.add('hidden');
-      return;
-    }
-    this.typewrite($('#dlg-text'), this.dialogue.lines[this.dialogue.i]);
+    const { data } = this.dialogue;
+    const line = ++this.dialogue.line;
+    if (line >= data.lines.length) this.closeTransient();
+    else this.typewrite($('#dlg-text'), data.lines[line]);
   }
 
   closeTransient() {
-    if (this.dialogue) {
-      this.dialogue = null;
-      $('#dialogue').classList.add('hidden');
-    }
+    if (!this.dialogue) return;
+    this.dialogue = null;
+    $('#dialogue').classList.add('hidden');
   }
 
   // ------------------------------------------------------------ portraits
 
+  /** Draws a character's portrait into `target`, fetching it from the worker once. */
   private portrait(sheet: number, target: HTMLCanvasElement) {
     const key = String(sheet);
     const hit = this.portraits.get(key);
@@ -341,8 +363,11 @@ export class UI {
 
   // ------------------------------------------------------------ panels
 
-  private panelKind = '';
-  private openPanel(kind: string, html: string) {
+  private get villages() {
+    return this.status?.villages ?? [];
+  }
+
+  private openPanel(kind: PanelKind, html: string) {
     this.panelKind = kind;
     $('#panel-card').innerHTML = `<button class="btn close" data-close>${iconImg('close', 2)}</button>${html}`;
     $('#panel').classList.remove('hidden');
@@ -353,16 +378,21 @@ export class UI {
     $('#panel').classList.add('hidden');
   }
 
+  private togglePanel(kind: PanelKind, open: () => void) {
+    if (this.panelKind === kind) this.closePanel();
+    else open();
+  }
+
   openProfile(id: number) {
-    this.openPanel('profile', '<div class="loading-dots">Loading…</div>');
+    this.openPanel('profile', LOADING);
     this.onSend({ t: 'inspect', id });
   }
 
-  private renderProfile(v: any) {
+  private renderProfile(v: VillagerProfile | null) {
     if (!v || this.panelKind !== 'profile') return;
     const bar = (label: string, val: number) =>
       `<div class="need"><span>${label}</span><div class="bar"><i style="width:${Math.max(3, val)}%;background:${val > 60 ? '#6aa65a' : val > 30 ? '#e0b040' : '#d24c40'}"></i></div></div>`;
-    const people = (title: string, list: any[]) =>
+    const people = (title: string, list: Relation[]) =>
       list.length ? `<h4>${title}</h4><div class="chips">${list.map((f) => `<span class="chip link" data-vid="${f.id}">${esc(f.name)} <b>${f.score > 0 ? '+' : ''}${f.score}</b></span>`).join('')}</div>` : '';
     const family = [
       v.partner ? `Married to <b>${esc(v.partner)}</b>` : '',
@@ -371,7 +401,6 @@ export class UI {
       v.children.length ? `Parent of ${v.children.map(esc).join(', ')}` : '',
       v.pregnant ? 'Expecting a baby' : '',
     ].filter(Boolean);
-    const hearts = Math.max(0, Math.min(5, Math.round(v.opinion / 20)));
     this.openPanel(
       'profile',
       `<div class="profile">
@@ -381,55 +410,55 @@ export class UI {
             <h2>${esc(v.name)}</h2>
             <div class="muted">${v.age} yrs · ${esc(v.stage)} · ${esc(v.job)} of ${esc(v.village)}</div>
             <div class="doing">${esc(v.doing)}</div>
-            <div class="hearts">${Array.from({ length: 5 }, (_, i) => `<img class="heart${i < hearts ? '' : ' off'}" src="${icon('heart', 2)}">`).join('')}</div>
+            <div class="hearts">${hearts(v.opinion)}</div>
           </div>
         </div>
-        <div class="chips">${v.traits.map((t: string) => `<span class="chip">${esc(t)}</span>`).join('')}</div>
+        <div class="chips">${v.traits.map((t) => `<span class="chip">${esc(t)}</span>`).join('')}</div>
         <div class="needs">${bar('Food', v.needs.hunger)}${bar('Energy', v.needs.energy)}${bar('Social', v.needs.social)}${bar('Fun', v.needs.fun)}</div>
         ${family.length ? `<div class="family">${family.map((f) => `<div>${f}</div>`).join('')}</div>` : ''}
         ${people('Friends', v.friends)}
         ${people('Rivals', v.rivals)}
-        ${v.memories.length ? `<h4>Recently</h4><ul class="mem">${v.memories.slice().reverse().map((m: string) => `<li>${esc(m)}</li>`).join('')}</ul>` : ''}
+        ${v.memories.length ? `<h4>Recently</h4><ul class="mem">${v.memories.slice().reverse().map((m) => `<li>${esc(m)}</li>`).join('')}</ul>` : ''}
       </div>`,
     );
-    this.portrait(v.sheet, $('#prof-face') as HTMLCanvasElement);
+    this.portrait(v.sheet, $<HTMLCanvasElement>('#prof-face'));
   }
 
   private openChronicle() {
-    this.openPanel('chronicle', '<h2>Chronicle</h2><div class="loading-dots">Loading…</div>');
+    this.openPanel('chronicle', `<h2>Chronicle</h2>${LOADING}`);
     this.onSend({ t: 'chronicle' });
   }
 
-  private renderChronicle(list: any[]) {
+  private renderChronicle(list: WorldEvent[]) {
     if (this.panelKind !== 'chronicle') return;
     const items = list
       .slice()
       .reverse()
       .map((e) => {
-        const day = e.day;
-        const season = SEASON[Math.floor(day / 12) % 4];
-        return `<li class="k-${e.kind}" ${e.who?.length ? `data-vid="${e.who[0]}"` : ''}><span class="when">${season} ${(day % 12) + 1}</span>${esc(e.text)}</li>`;
+        const season = SEASON[Math.floor(e.day / DAYS_PER_SEASON) % SEASON.length];
+        const who = e.who.length ? `data-vid="${e.who[0]}"` : '';
+        return `<li class="k-${e.kind}" ${who}><span class="when">${season} ${(e.day % DAYS_PER_SEASON) + 1}</span>${esc(e.text)}</li>`;
       })
       .join('');
     this.openPanel('chronicle', `<h2>Chronicle</h2><p class="muted">The story of this world, as it happens.</p><ul class="chron">${items || '<li>Nothing has happened yet.</li>'}</ul>`);
   }
 
   private openPeople() {
-    this.openPanel('people', '<h2>People</h2><div class="loading-dots">Loading…</div>');
+    this.openPanel('people', `<h2>People</h2>${LOADING}`);
     this.onSend({ t: 'villagers' });
   }
 
-  private renderPeople(list: any[]) {
+  private renderPeople(list: VillagerSummary[]) {
     if (this.panelKind !== 'people') return;
-    const villages = this.status?.villages ?? [];
-    const groups = new Map<number, any[]>();
+    const groups = new Map<number, VillagerSummary[]>();
     for (const v of list) {
-      if (!groups.has(v.village)) groups.set(v.village, []);
-      groups.get(v.village)!.push(v);
+      const group = groups.get(v.village);
+      if (group) group.push(v);
+      else groups.set(v.village, [v]);
     }
     let html = `<h2>People</h2><p class="muted">${list.length} souls live in this world.</p>`;
     for (const [vid, vs] of groups) {
-      html += `<h4>${esc(villages[vid]?.name ?? 'Village')}</h4><div class="people">`;
+      html += `<h4>${esc(this.villages[vid]?.name ?? 'Village')}</h4><div class="people">`;
       for (const v of vs) html += `<button class="person" data-vid="${v.id}"><canvas data-sheet="${v.sheet}" width="28" height="48"></canvas><span>${esc(v.name)}</span><small>${esc(v.job)}</small></button>`;
       html += '</div>';
     }
@@ -438,13 +467,14 @@ export class UI {
   }
 
   private openMap() {
+    const pct = (v: number, of: number) => `${(v / of) * 100}%`;
     let html = '<h2>World Map</h2><div class="map-wrap"><canvas id="map-canvas"></canvas>';
-    for (const v of this.status?.villages ?? []) {
-      html += `<div class="map-label" style="left:${(v.x / this.worldW) * 100}%;top:${(v.y / this.worldH) * 100}%">${esc(v.name)}<small>${v.pop} people</small></div>`;
+    for (const v of this.villages) {
+      html += `<div class="map-label" style="left:${pct(v.x, this.worldW)};top:${pct(v.y, this.worldH)}">${esc(v.name)}<small>${v.pop} people</small></div>`;
     }
-    html += `<div class="map-you" style="left:${(this.px / 32 / this.worldW) * 100}%;top:${(this.py / 32 / this.worldH) * 100}%"></div></div>`;
+    html += `<div class="map-you" style="left:${pct(this.tileX, this.worldW)};top:${pct(this.tileY, this.worldH)}"></div></div>`;
     this.openPanel('map', html);
-    const c = $('#map-canvas') as HTMLCanvasElement;
+    const c = $<HTMLCanvasElement>('#map-canvas');
     if (this.minimap) {
       c.width = this.minimap.width;
       c.height = this.minimap.height;
@@ -459,12 +489,15 @@ export class UI {
   }
 
   private renderBag() {
-    const inv: [string, number][] = this.status?.inventory ?? [];
+    const inv = this.status?.inventory ?? [];
     const items = inv.map(([k, n]) => `<div class="item"><b>${n}</b><span>${esc(k)}</span></div>`).join('');
+    const villages = this.villages
+      .map((v) => `<div class="vrow"><b>${esc(v.name)}</b><span>${v.pop} people · food ${Math.round(v.stock?.food ?? 0)} · wood ${Math.round(v.stock?.wood ?? 0)}</span></div>`)
+      .join('');
     this.openPanel(
       'bag',
       `<h2>Bag</h2><p class="muted">Tap trees, rocks, bushes and mushrooms to gather.</p><div class="items">${items || '<div class="muted">Empty for now.</div>'}</div>
-       <h4>Villages</h4>${(this.status?.villages ?? []).map((v: any) => `<div class="vrow"><b>${esc(v.name)}</b><span>${v.pop} people · food ${Math.round(v.stock?.food ?? 0)} · wood ${Math.round(v.stock?.wood ?? 0)}</span></div>`).join('')}`,
+       <h4>Villages</h4>${villages}`,
     );
   }
 
@@ -489,10 +522,10 @@ export class UI {
     if (k === 'escape') {
       this.closePanel();
       this.closeTransient();
-    } else if (k === 'm') this.panelKind === 'map' ? this.closePanel() : this.openMap();
-    else if (k === 'c') this.panelKind === 'chronicle' ? this.closePanel() : this.openChronicle();
-    else if (k === 'p') this.panelKind === 'people' ? this.closePanel() : this.openPeople();
-    else if (k === 'b' || k === 'i') this.panelKind === 'bag' ? this.closePanel() : this.openBag();
+    } else if (k === 'm') this.togglePanel('map', () => this.openMap());
+    else if (k === 'c') this.togglePanel('chronicle', () => this.openChronicle());
+    else if (k === 'p') this.togglePanel('people', () => this.openPeople());
+    else if (k === 'b' || k === 'i') this.togglePanel('bag', () => this.openBag());
     else if (k === ' ' || k === 'enter' || k === 'e') this.advanceDialogue();
     else if (k === 'f3') {
       const p = $('#perf');

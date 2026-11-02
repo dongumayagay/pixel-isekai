@@ -21,7 +21,7 @@ const PAL: Record<string, string> = {
   d: '#7e8ca8',
 };
 
-const ICONS: Record<string, string[]> = {
+const ICONS = {
   sun: ['....y....', '.y..y..y.', '..yYYYy..', '..YyyyY..', 'yyYyyyYyy', '..YyyyY..', '..yYYYy..', '.y..y..y.', '....y....'],
   moon: ['...SSS...', '..SScc...', '.SSc.....', '.Sc......', '.Sc......', '.SSc.....', '..SScc..S', '...SSSSS.', '.........'],
   cloud: ['.........', '...www...', '..wwwww..', '.wwwwwwcw', 'wwwwwwwcc', 'cwwwwwccc', '.cccccccc', '.........', '.........'],
@@ -34,19 +34,21 @@ const ICONS: Record<string, string[]> = {
   people: ['..nn..nn.', '.nyyn.nyy', '.yyyy.yyy', '..yy...yy', '.rrrr.bbb', 'rrrrrrbbb', 'rr.rrrbbb', '.........'],
   map: ['GGgggbbb.', 'GgggbbbB.', 'ggggbbBB.', 'gggnbBBB.', 'ggnnggBB.', 'gnngggGB.', 'nngggGGG.', '.........'],
   fast: ['.........', 'k...k....', 'kk..kk...', 'kkk.kkk..', 'kkkkkkkk.', 'kkk.kkk..', 'kk..kk...', 'k...k....', '.........'],
-  pause: ['.........', '.kk..kk..', '.kk..kk..', '.kk..kk..', '.kk..kk..', '.kk..kk..', '.kk..kk..', '.........', '.........'],
   heart: ['.rr.rr.', 'rrrrrrr', 'rrrrrrr', '.rrrrr.', '..rrr..', '...r...'],
   bag: ['..NNN...', '.N...N..', 'nnnnnnn.', 'nyyyyyn.', 'nnnnnnn.', 'nnnnnnn.', '.nnnnn..', '........'],
   close: ['k.....k', '.k...k.', '..k.k..', '...k...', '..k.k..', '.k...k.', 'k.....k'],
-};
+} satisfies Record<string, string[]>;
+
+export type IconName = keyof typeof ICONS;
 
 const cache = new Map<string, string>();
 
-export function icon(name: string, scale = 3): string {
+/** Data URL of an icon, each map cell drawn as a `scale`-px square. */
+export function icon(name: IconName, scale: number): string {
   const key = `${name}@${scale}`;
   const hit = cache.get(key);
   if (hit) return hit;
-  const rows = ICONS[name] ?? ICONS.close;
+  const rows = ICONS[name];
   const c = document.createElement('canvas');
   c.width = rows[0].length * scale;
   c.height = rows.length * scale;
@@ -64,6 +66,6 @@ export function icon(name: string, scale = 3): string {
   return url;
 }
 
-export function iconImg(name: string, scale = 3, cls = 'ico'): string {
-  return `<img class="${cls}" src="${icon(name, scale)}" alt="" draggable="false">`;
+export function iconImg(name: IconName, scale: number): string {
+  return `<img class="ico" src="${icon(name, scale)}" alt="" draggable="false">`;
 }
