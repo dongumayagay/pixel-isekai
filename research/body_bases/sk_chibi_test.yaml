@@ -1,0 +1,75 @@
+spritekiln: 1
+name: chibi_test
+kind: character
+extends: humanoid
+remove: [use.sword, parts.coat, parts.belt]
+size: 64
+palette: gothic
+render: {outline: dark, shading: toon}
+brief: {summary: anime chibi female test; head 1.6x, bust ellipsoids, long hair}
+materials:
+  skin: {ramp: skin, gamma: 0.8}
+  cloth: {ramp: cloth}
+  hair: {ramp: hair}
+ramps:
+  skin: ["#45212d", "#954a51", "#cb7173", "#f5a489", "#f9bf99", "#ffe0b1"]
+  hair: ["#222034", "#333a6c", "#46426c", "#4f5aa5", "#616fcb", "#a6aee1"]
+  cloth: ["#222034", "#6a78ac", "#7c8db5", "#a6aee1", "#e1eafd", "#ffffff"]
+channels:
+  jiggle: 0
+bones:
+  head: {parent: headbase, rot: "[head_pitch, head_yaw, 0]", scale: 1.6}
+use:
+  - {kit: head, at: head, with: {width: 0.95, jaw: 0.1, chin: 0.3, nose: 0, ears: 0}}
+  - {kit: hair, at: head, with: {fringe: 0.7, part: 0.2, locks: 2, length: 2.2, volume: 1.1}}
+parts:
+  torso:
+    material: skin
+    space: pelvis
+    blend: 0.05
+    prims:
+      - ellipsoid: {c: [0, 0.04, 0], r: [0.19, 0.13, 0.14]}
+      - ellipsoid: {c: [0, 0.25, 0.0], r: [0.15, 0.16, 0.11]}
+      - ellipsoid: {c: [0, 0.45, 0.0], r: [0.21, 0.14, 0.12]}
+  bust:
+    material: skin
+    space: pelvis
+    blend: 0.04
+    prims:
+      - ellipsoid: {c: "[0.075, 0.40 - 0.01*jiggle, 0.10]", r: "[0.085, 0.08 + 0.01*jiggle, 0.09]"}
+      - ellipsoid: {c: "[-0.075, 0.40 - 0.01*jiggle, 0.10]", r: "[0.085, 0.08 + 0.01*jiggle, 0.09]"}
+  bra:
+    material: cloth
+    space: pelvis
+    blend: 0.03
+    prims:
+      - ellipsoid: {c: [0.075, 0.395, 0.115], r: [0.08, 0.06, 0.08]}
+      - ellipsoid: {c: [-0.075, 0.395, 0.115], r: [0.08, 0.06, 0.08]}
+  panties:
+    material: cloth
+    space: pelvis
+    prims:
+      - ellipsoid: {c: [0, 0.03, 0], r: [0.195, 0.09, 0.145]}
+  arm_L:
+    material: skin
+    blend: 0.03
+    prims:
+      - sphere: {c: "@shoulder_L", r: 0.07}
+      - cone: {a: "@shoulder_L", b: "@elbow_L", r: [0.06, 0.05]}
+      - cone: {a: "@elbow_L", b: "@wrist_L", r: [0.05, 0.045]}
+  leg_L:
+    material: skin
+    blend: 0.03
+    prims:
+      - cone: {a: "@hip_L", b: "@knee_L", r: [0.095, 0.07]}
+      - cone: {a: "@knee_L", b: "@ankle_L", r: [0.07, 0.05]}
+animations:
+  idle:
+    frames: 8
+    ms: 140
+    channels:
+      bob: "0.02*sin(p)"
+      squash: "1 + 0.01*sin(p)"
+      jiggle: "sin(p - 0.8)"
+      hand_L: "[0.33, 0.06 + 0.02*sin(p - 0.6), 0.06]"
+      hand_R: "[0.33, 0.06 + 0.02*sin(p - 0.6), 0.06]"
