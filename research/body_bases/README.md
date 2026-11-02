@@ -59,3 +59,19 @@ SpriteKiln >= 0.3 on PYTHONPATH), `sk_chibi_pose.png`, `sk_chibi128_pose.png`, `
 Known polish list for the Angeler cast: cloth recolour reads blobby on dark colours (spread 0.55 hack,
 outfits will be drawn instead), hero is a female placeholder, all six share one hairstyle, no outfits,
 no expressions.
+
+## Angeler store survey (2026-11-02)
+Creator page: https://angeler1234.itch.io/ (13 packs). Relevant:
+- **Basic Character Ver 64** ($10): bald male + female bases, 64x128, idle/walk/run 8 frames each, 4 dirs,
+  no hair/clothes. Our free pack is its female subset (idle 8 / walk 10 / run 8). Male status per comments:
+  "unified 8-frame male and female" then "male standard body still planned" -> unclear even if bought.
+- **Basic Character Female 64 Free** = what we have (`.context/ref_free/Free/`).
+- **Basic Character 48 PRO Free** (48x96, single unlayered NPC, 12-frame idle/walk/run): different scale,
+  not layer-split, "not compatible" with their other packs. Reference only. Not downloaded.
+- Licence on all: personal + commercial, modify OK, no redistribution/resale, "no AI".
+
+Promo GIFs from the store (user-supplied, `.context/ref/angeler_promo/`): "Standby Show" 4-dir idle of the
+bald male and female, and the front pair. GIF is re-encoded (palette differs from the pack, ~0.85x scale,
+2px edge runs) so pixels are useless and unlicensed anyway. Use as a **drawing reference** for the male
+body (shoulder width, pec/abs line, straight hips, bald scalp shape in all 4 dirs) when editing our female
+sheets into a male base. Also confirms their bald head silhouette for our rebuilt scalp.
