@@ -781,7 +781,10 @@ pub(super) fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &C
             // Short cuts end at the nape, the bottom edge rising behind the
             // ear; long hair's cap stops at the skull's nape and the sheet
             // (behind the body) carries on down.
-            let skull_nape = cy + 5.5;
+            // Long hair covers the occiput down to the skull's bottom row in
+            // profile (the sheet behind the body carries on below); the old
+            // cap stopped at the nape and left the lower back of the head bald.
+            let skull_nape = cy + 16.0;
             let bottom = if long { skull_nape } else { nape };
             let ear_top = cy + 3.5;
             for y in (mc.y - ry).floor() as i32 - 1..=bottom.ceil() as i32 {

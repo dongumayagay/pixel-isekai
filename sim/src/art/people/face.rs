@@ -21,9 +21,9 @@ pub(super) fn face_hw(look: &Look, dy: i32) -> f32 {
     if w > 0.0 { w + extra } else { 0.0 }
 }
 
-/// Side-view head rows (left, right) offsets from x=32 for dy -13..=14:
+/// Side-view head rows (left, right) offsets from x=32 for dy -13..=15:
 /// round skull at the back, forehead, a one-pixel nose, lips and chin.
-pub(super) const SIDE_HEAD: [(i32, i32); 28] = [
+pub(super) const SIDE_HEAD: [(i32, i32); 29] = [
     // Cranium (under the hair).
     (-6, 5),
     (-9, 8),
@@ -54,11 +54,12 @@ pub(super) const SIDE_HEAD: [(i32, i32); 28] = [
     (-12, 13),
     (-11, 14),
     (-11, 14),
+    (-11, 12),
+    (-11, 12),
     (-10, 12),
-    (-9, 12),
-    (-7, 12),
-    (-5, 11),
-    (-2, 9),
+    (-9, 11),
+    (-7, 9),
+    (-4, 6),
 ];
 
 pub(super) fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
@@ -67,29 +68,32 @@ pub(super) fn head(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors)
     cv.begin();
     match dir {
         DIR_SIDE => {
-            for dy in -13..=14 {
+            // LPC base body, side: the skull's back edge runs straight down
+            // to one row above the shoulders, the chin rounds at the front,
+            // so the neck shows for a row or two only.
+            for dy in -13..=15 {
                 let (l, r) = SIDE_HEAD[(dy + 13) as usize];
                 for x in cx + l..cx + r {
                     // Shadow under the jaw line and under the chin.
-                    let edge = x == cx + r - 1 || (dy >= 10 && x < cx + l + 2) || dy == 14;
+                    let edge = x == cx + r - 1 || (dy >= 11 && x < cx + l + 2) || dy == 15;
                     cv.fill(x, cy + dy, c.skin[if edge { 2 } else { 3 }]);
                 }
             }
         }
         _ => {
             // From behind, anime heads hide the ears under the hair.
-            for dy in -13..=14 {
+            for dy in -13..=15 {
                 // From behind there is no jaw: the skull under the hair,
                 // then only the neck.
                 // From behind, the back of the skull and jaw narrow smoothly
                 // into the neck under the hairline.
                 let hw = if dir == DIR_UP && dy > 4 {
                     // Occiput: the skull's round bottom, a quarter ellipse
-                    // from the ear line down to the chin row (ref back sheet:
-                    // the skull hangs to the chin row, three rows of neck
-                    // show). The old trapezoid read as a neck block.
+                    // from the ear line down to a row above the shoulders
+                    // (LPC base body, back: skull narrows to ~0.65 width and
+                    // sits on the shoulders, no neck pole).
                     let nape = b.neck_w + 0.8;
-                    let t = (dy as f32 - 4.0) / 10.0;
+                    let t = (dy as f32 - 4.0) / 12.0;
                     (face_hw(look, 4) * (1.0 - t * t).max(0.0).sqrt()).max(nape)
                 } else {
                     face_hw(look, dy)
