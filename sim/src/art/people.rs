@@ -452,6 +452,19 @@ impl Canvas<'_> {
         }
     }
 
+    /// Step a pixel one shade lighter if it was painted from `ramp`.
+    fn lighten_on(&mut self, x: i32, y: i32, ramp: &R5) {
+        if !self.img.inside(x, y) {
+            return;
+        }
+        let i = (y * self.img.w + x) as usize;
+        let r = self.rid[i] as usize;
+        if r < self.ramps.len() && self.ramps[r] == *ramp && self.ridx[i] < 4 {
+            let c = ramp[self.ridx[i] as usize + 1];
+            self.put(x, y, c);
+        }
+    }
+
     /// Whether the current part painted this pixel.
     fn owns(&self, x: i32, y: i32) -> bool {
         self.img.inside(x, y) && self.ids[(y * self.img.w + x) as usize] == self.cur
@@ -877,8 +890,16 @@ fn limbs(b: &Build, pose: Pose, dir: u8) -> Limbs {
     // so in profile the far leg stands 2px up (its foot above the near one)
     // instead of both feet on one side-scroller baseline.
     let far_up = if side { 2.0 } else { 0.0 };
-    let hip_l = v(b.cx - hip_dx, b.hip_joint_y - far_up);
-    let hip_r = v(b.cx + hip_dx, b.hip_joint_y);
+    // Walking, the upper body leads: in profile it leans a pixel into the
+    // stride; from the front or back it sways over the standing leg. Both
+    // are done by setting the hips under it.
+    let hip_shift = match pose.walk {
+        Some(_) if side => -1.0,
+        Some(ph) => -(ph.sin() * 1.2).round(),
+        None => 0.0,
+    };
+    let hip_l = v(b.cx - hip_dx + hip_shift, b.hip_joint_y - far_up);
+    let hip_r = v(b.cx + hip_dx + hip_shift, b.hip_joint_y);
     let walk_ang = pose.walk.unwrap_or(0.0);
     let leg = |hip: V2, sgn: f32, swing: f32, lift: f32| -> (V2, V2) {
         if side {
@@ -916,7 +937,9 @@ fn limbs(b: &Build, pose: Pose, dir: u8) -> Limbs {
     // The arm's ball sits just under the shoulder line so the deltoid reads
     // as a one-pixel rounding, not a pad poking above the slope.
     let sh_y = b.shoulder_y + 2.0 + b.arm_r * 0.6;
-    let sh_l = v(b.cx - sh_dx, sh_y - far_up * 0.5);
+    // The torso turns a touch toward the camera in profile: the far
+    // shoulder edges forward, peeking past the chest line.
+    let sh_l = v(b.cx - sh_dx + if side { 1.5 } else { 0.0 }, sh_y - far_up * 0.5);
     let sh_r = v(b.cx + sh_dx, sh_y);
     let arm = |sh: V2, swing: f32, out: f32| -> (V2, V2) {
         match pose.work {
@@ -1841,6 +1864,12 @@ fn torso(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors) {
 
     cv.begin();
     cv.profile(sy, b.waist_y + 3.5, lean, width, &shirt, 0.0);
+    // Seen from above, the tops of the shoulders catch the light.
+    if !front {
+        for x in 0..FW {
+            cv.lighten_on(x, sy.ceil() as i32, &shirt);
+        }
+    }
     // Fuller busts sit a little lower.
     let by = (sy + 9.5 + (b.bust - 5.4).max(0.0) * 0.6).round() + b.jig;
     let cx = b.cx;
