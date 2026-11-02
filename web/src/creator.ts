@@ -5,30 +5,54 @@
 import './creator.css';
 import init, { creator_info, render_frame, random_look, lint_look, cast_list, profession_list, dress_look } from './pkg/sim.js';
 import wasmUrl from './pkg/sim_bg.wasm?url';
+import { $, parseJson, randomSeed } from './util';
 
+/** Mirrors `Look` in sim/src/art/people.rs; fields Rust defaults may be missing from old links. */
 interface Look {
   skin: number; hair: number; hair_style: number; primary: number; secondary: number; outfit: number;
   hat: number; accent: number; female: boolean; age: number; beard: boolean; eyes: number;
   mature: boolean; race: number; beast: number; held: number; glasses: boolean;
-  figure: number; build: number; height: number; facial: number; cut?: number;
+  figure: number; build: number; height?: number; facial: number; cut?: number;
 }
+/** What each outfit's primary, secondary and accent dyes colour ('' if unused). */
+type DyeSlots = [string, string, string];
+type Dyes = [number, number, number];
+/** Per sex, women first. */
+type BySex<T> = [T, T];
+
 interface Info {
   fw: number; fh: number; pivot: [number, number]; framesPerDir: number; sheetFrames: number;
-  races: string[]; hairStyles: string[]; outfits: string[]; outfitSlots: [string[], string[]][]; outfitDefaults: [number[], number[]][]; figures: string[]; heights: string[]; facial: string[]; cuts: string[]; buildsF: string[]; buildsM: string[];
+  races: string[]; hairStyles: string[]; outfits: string[]; outfitSlots: BySex<DyeSlots>[]; outfitDefaults: BySex<Dyes>[];
+  figures: string[]; heights: string[]; facial: string[]; cuts: string[]; buildsF: string[]; buildsM: string[];
   swatch: { skin: number[]; demon: number[]; hair: number[]; cloth: number[]; eyes: number[] };
 }
+interface LintIssue { kind: string; dir: number; frame: number; detail: string }
+interface CastMember { name: string; look: Look }
 
+// Names creator_info() doesn't export yet; keep in step with the `hat`,
+// `held` and `beast` docs on Look in sim/src/art/people.rs.
 const HATS = ['None', 'Straw hat', 'Bandana', 'Helmet', 'Hood', 'Cap', 'Witch hat', 'Flower', 'Chef', 'Ribbon', 'Maid band', 'Miner helmet'];
 const HELD = ['None', 'Staff', 'Hammer', 'Mug', 'Book', 'Sword', 'Basket', 'Axe', 'Pickaxe', 'Hoe', 'Fishing rod', 'Spear', 'Ladle'];
 const BEASTS = ['Cat', 'Fox', 'Wolf', 'Rabbit'];
-// Everyone is a grown adult; looking older comes from grey hair, a bald cut
-// or a beard rather than an age switch.
-const DIRS = [
+// Race indices into info.races, as RACE_* in people.rs.
+const RACE_DWARF = 2;
+const RACE_BEAST = 3;
+const RACE_DEMON = 4;
+// Facial styles the legacy `beard` flag stands for (see Look::facial_style).
+const FULL_BEARD = 5;
+const SAGE_BEARD = 6;
+
+// Sheet directions, in render_frame's `dir` order; side frames face right.
+const DIR_NAMES = ['down', 'up', 'side'];
+const VIEWS = [
   { name: 'Down', dir: 0, flip: false },
   { name: 'Up', dir: 1, flip: false },
   { name: 'Left', dir: 2, flip: true },
   { name: 'Right', dir: 2, flip: false },
 ];
+const numbered = (name: string, n: number) => Array.from({ length: n }, (_, i) => `${name} ${i + 1}`);
+/** Pose names within one direction. */
+const POSES = [...numbered('idle', 4), ...numbered('walk', 6), ...numbered('work', 2)];
 // Frame sequences (indices into a direction's 12 poses; 12 = blink, down
 // only) with per-frame hold times in ms, matching the in-game rates.
 const BLINK = 12;
@@ -38,10 +62,17 @@ const ANIMS: Record<string, { frames: number[]; ms: number[] }> = {
   Work: { frames: [10, 11], ms: [330, 330] },
   Blink: { frames: [0, BLINK], ms: [700, 140] },
 };
+const ANIM_NAMES = Object.keys(ANIMS);
 const BGS: Record<string, string> = { Grass: '#5f8f52', Dark: '#1a1524', Light: '#d8d0c0', Cobble: '#6e6878' };
+const BG_NAMES = Object.keys(BGS);
+const ZOOMS = [2, 3, 4, 6];
+const SPEEDS = [0.5, 1, 2];
 
-const $ = <T extends HTMLElement = HTMLElement>(s: string) => document.querySelector(s) as T;
 const hex = (n: number) => '#' + n.toString(16).padStart(6, '0');
+const capitalize = (s: string) => s && s[0].toUpperCase() + s.slice(1);
+const sexIndex = (l: Look) => (l.female ? 0 : 1);
+const parseLook = (json: string) => parseJson<Look>(json);
+const randomLook = (seed: number) => parseLook(random_look(seed));
 
 let info: Info;
 let look: Look;
@@ -53,6 +84,8 @@ let bg = saved.bg ?? 'Grass';
 let speed = saved.speed ?? 1;
 const saveView = () => localStorage.setItem('creator-view', JSON.stringify({ anim, zoom, bg, speed }));
 const cache = new Map<string, HTMLCanvasElement>();
+
+const skinSwatches = (l: Look) => (l.race === RACE_DEMON ? info.swatch.demon : info.swatch.skin);
 
 function frameCanvas(l: Look, dir: number, f: number): HTMLCanvasElement {
   const key = JSON.stringify(l) + '|' + dir + '|' + f;
@@ -68,18 +101,16 @@ function frameCanvas(l: Look, dir: number, f: number): HTMLCanvasElement {
   return c;
 }
 
-function draw(target: HTMLCanvasElement, l: Look, dir: number, f: number, flip: boolean, scale: number, back = true) {
+function draw(target: HTMLCanvasElement, l: Look, dir: number, f: number, flip: boolean, scale: number) {
   const ctx = target.getContext('2d')!;
   ctx.imageSmoothingEnabled = false;
-  if (back) {
-    ctx.fillStyle = BGS[bg];
-    ctx.fillRect(0, 0, target.width, target.height);
-    // Contact shadow at the pivot, as in game.
-    ctx.fillStyle = 'rgba(20,16,40,0.28)';
-    ctx.beginPath();
-    ctx.ellipse(info.pivot[0] * scale, (info.pivot[1] - 1) * scale, 13 * scale, 5 * scale, 0, 0, Math.PI * 2);
-    ctx.fill();
-  } else ctx.clearRect(0, 0, target.width, target.height);
+  ctx.fillStyle = BGS[bg];
+  ctx.fillRect(0, 0, target.width, target.height);
+  // Contact shadow at the pivot, as in game.
+  ctx.fillStyle = 'rgba(20,16,40,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(info.pivot[0] * scale, (info.pivot[1] - 1) * scale, 13 * scale, 5 * scale, 0, 0, Math.PI * 2);
+  ctx.fill();
   const src = frameCanvas(l, dir, f);
   ctx.save();
   if (flip) {
@@ -92,22 +123,25 @@ function draw(target: HTMLCanvasElement, l: Look, dir: number, f: number, flip: 
 
 // ---------------------------------------------------------------- UI
 
-function buttons<T>(host: HTMLElement, items: T[], label: (t: T, i: number) => string, isOn: (i: number) => boolean, pick: (i: number) => void) {
+/** A row of buttons with the `selected` one highlighted. */
+function choice(id: string, labels: readonly string[], selected: number, pick: (i: number) => void) {
+  const host = $(id);
   host.innerHTML = '';
-  items.forEach((t, i) => {
+  labels.forEach((label, i) => {
     const b = document.createElement('button');
-    b.textContent = label(t, i);
-    if (isOn(i)) b.classList.add('on');
+    b.textContent = label;
+    if (i === selected) b.classList.add('on');
     b.onclick = () => pick(i);
     host.appendChild(b);
   });
 }
 
-function swatches(host: HTMLElement, cols: number[], isOn: (i: number) => boolean, pick: (i: number) => void) {
+function swatches(id: string, colors: number[], selected: number, pick: (i: number) => void) {
+  const host = $(id);
   host.innerHTML = '';
-  cols.forEach((c, i) => {
+  colors.forEach((c, i) => {
     const b = document.createElement('button');
-    b.className = 'sw' + (isOn(i) ? ' on' : '');
+    b.className = 'sw' + (i === selected ? ' on' : '');
     b.style.background = hex(c);
     b.title = String(i);
     b.onclick = () => pick(i);
@@ -115,26 +149,61 @@ function swatches(host: HTMLElement, cols: number[], isOn: (i: number) => boolea
   });
 }
 
+/** A labelled canvas sized for one frame at `scale`, appended to `host` in a `cls` wrapper. */
+function figure(host: HTMLElement, cls: string, label: string, scale: number): HTMLCanvasElement {
+  const wrap = document.createElement('div');
+  wrap.className = cls;
+  const c = document.createElement('canvas');
+  c.width = info.fw * scale;
+  c.height = info.fh * scale;
+  wrap.appendChild(c);
+  const s = document.createElement('small');
+  s.textContent = label;
+  wrap.appendChild(s);
+  host.appendChild(wrap);
+  return c;
+}
+
+function stage(host: HTMLElement, cls: string, label: string, scale: number): HTMLCanvasElement {
+  const c = figure(host, cls, label, scale);
+  c.className = 'stagebox';
+  return c;
+}
+
+function card(host: HTMLElement, label: string, onClick: () => void): HTMLCanvasElement {
+  const c = figure(host, 'card', label, 2);
+  c.parentElement!.onclick = onClick;
+  return c;
+}
+
+/** Load a look into the editor and scroll back up to it. */
+function edit(l: Look) {
+  set(l);
+  $('main').scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 function set(patch: Partial<Look>) {
   look = { ...look, ...patch };
-  // Same rules as Look::normalized in Rust: beards only on adult men.
+  // Everyone is a grown adult; looking older comes from grey hair, a bald
+  // cut or a beard rather than an age switch. Beards only on men, as
+  // Look::normalized in Rust.
   if (look.age === 0) look.age = 1;
   look.mature = look.age > 0;
-  if (look.female || look.age === 0) {
+  if (look.female) {
     look.beard = false;
     look.facial = 0;
   }
-  if (look.race === 4) look.skin %= info.swatch.demon.length;
-  else look.skin %= info.swatch.skin.length;
+  look.skin %= skinSwatches(look).length;
   location.hash = encodeURIComponent(JSON.stringify(look));
   renderControls();
   renderSheet();
   runQa();
 }
 
+const show = (id: string, visible: boolean) => ($(id).style.display = visible ? '' : 'none');
+
 function renderControls() {
-  const f = $('#controls');
-  f.innerHTML = `
+  $('#controls').innerHTML = `
     <h3>Race</h3><div class="row" id="c-race"></div>
     <div id="c-beast-wrap"><h3>Beast kind</h3><div class="row" id="c-beast"></div></div>
     <h3>Body</h3><div class="row" id="c-sex"></div>
@@ -154,101 +223,80 @@ function renderControls() {
     <h3>Holding</h3><div class="row" id="c-held"></div>
     <div id="c-facial-wrap"><h3>Facial hair</h3><div class="row" id="c-facial"></div></div>
     <h3>Extras</h3><div class="row" id="c-extra"></div>`;
-  buttons($('#c-race'), info.races, (r) => r, (i) => look.race === i, (i) => set({ race: i }));
-  $('#c-beast-wrap').style.display = look.race === 3 ? '' : 'none';
-  buttons($('#c-beast'), BEASTS, (b) => b, (i) => look.beast === i, (i) => set({ beast: i }));
-  buttons($('#c-sex'), ['Female', 'Male'], (s) => s, (i) => look.female === (i === 0), (i) => set({ female: i === 0 }));
-  buttons($('#c-height'), info.heights, (h) => h, (i) => (look.height ?? 1) === i, (i) => set({ height: i }));
-  buttons($('#c-build'), look.female ? info.buildsF : info.buildsM, (b) => b, (i) => look.build === i, (i) => set({ build: i }));
-  $('#c-fig-wrap').style.display = look.female && look.age > 0 ? '' : 'none';
-  buttons($('#c-fig'), info.figures, (f) => f, (i) => look.figure === i, (i) => set({ figure: i }));
-  swatches($('#c-skin'), look.race === 4 ? info.swatch.demon : info.swatch.skin, (i) => look.skin === i, (i) => set({ skin: i }));
-  swatches($('#c-eyes'), info.swatch.eyes, (i) => look.eyes === i, (i) => set({ eyes: i }));
-  buttons($('#c-style'), info.hairStyles, (s) => s, (i) => look.hair_style === i, (i) => set({ hair_style: i }));
-  swatches($('#c-hair'), info.swatch.hair, (i) => look.hair === i, (i) => set({ hair: i }));
+  const sex = sexIndex(look);
+  choice('#c-race', info.races, look.race, (race) => set({ race }));
+  show('#c-beast-wrap', look.race === RACE_BEAST);
+  choice('#c-beast', BEASTS, look.beast, (beast) => set({ beast }));
+  choice('#c-sex', ['Female', 'Male'], sex, (i) => set({ female: i === 0 }));
+  choice('#c-height', info.heights, look.height ?? 1, (height) => set({ height }));
+  choice('#c-build', look.female ? info.buildsF : info.buildsM, look.build, (build) => set({ build }));
+  show('#c-fig-wrap', look.female && look.mature);
+  choice('#c-fig', info.figures, look.figure, (figure) => set({ figure }));
+  swatches('#c-skin', skinSwatches(look), look.skin, (skin) => set({ skin }));
+  swatches('#c-eyes', info.swatch.eyes, look.eyes, (eyes) => set({ eyes }));
+  choice('#c-style', info.hairStyles, look.hair_style, (hair_style) => set({ hair_style }));
+  swatches('#c-hair', info.swatch.hair, look.hair, (hair) => set({ hair }));
   // Picking an outfit dresses it in its best-known colours.
-  buttons($('#c-outfit'), info.outfits, (s) => s, (i) => look.outfit === i, (i) => {
-    const [p, s, a] = info.outfitDefaults[i][look.female ? 0 : 1];
-    set({ outfit: i, primary: p, secondary: s, accent: a });
+  choice('#c-outfit', info.outfits, look.outfit, (outfit) => {
+    const [primary, secondary, accent] = info.outfitDefaults[outfit][sex];
+    set({ outfit, primary, secondary, accent });
   });
-  buttons($('#c-cut'), info.cuts, (s) => s, (i) => (look.cut ?? 0) === i, (i) => set({ cut: i }));
+  choice('#c-cut', info.cuts, look.cut ?? 0, (cut) => set({ cut }));
   // Each colour row is named after the piece it dyes on this outfit; the
   // accent also colours the headwear.
-  const [pl, sl, al] = info.outfitSlots[look.outfit][look.female ? 0 : 1];
-  const slot = (key: 'p' | 's' | 'a', label: string, get: () => number, put: (i: number) => void) => {
-    $(`#c-${key}-wrap`).style.display = label ? '' : 'none';
+  const [primaryPiece, secondaryPiece, accentPiece] = info.outfitSlots[look.outfit][sex];
+  const dyeRow = (key: 'p' | 's' | 'a', label: string, selected: number, pick: (i: number) => void) => {
+    show(`#c-${key}-wrap`, label !== '');
     $(`#c-${key}-label`).textContent = label;
-    swatches($(`#c-${key}`), info.swatch.cloth, (i) => get() === i, put);
+    swatches(`#c-${key}`, info.swatch.cloth, selected, pick);
   };
-  slot('p', pl ? `${pl} (primary)` : '', () => look.primary, (i) => set({ primary: i }));
-  slot('s', sl ? `${sl} (secondary)` : '', () => look.secondary, (i) => set({ secondary: i }));
-  buttons($('#c-hat'), HATS, (s) => s, (i) => look.hat === i, (i) => set({ hat: i }));
-  const accent = [al, look.hat ? 'headwear' : ''].filter(Boolean).join(' & ');
-  slot('a', accent ? `${accent[0].toUpperCase()}${accent.slice(1)} (accent)` : '', () => look.accent, (i) => set({ accent: i }));
-  buttons($('#c-held'), HELD, (s) => s, (i) => look.held === i, (i) => set({ held: i }));
-  $('#c-facial-wrap').style.display = !look.female && look.age > 0 ? '' : 'none';
-  // Legacy beard flag shows as a full beard (long on dwarves).
-  const facial = look.facial || (look.beard ? (look.race === 2 ? 6 : 5) : 0);
-  buttons($('#c-facial'), info.facial, (f) => f, (i) => facial === i, (i) => set({ facial: i, beard: false }));
-  buttons($('#c-extra'), ['Glasses'], (s) => s, () => look.glasses, () => set({ glasses: !look.glasses }));
+  dyeRow('p', primaryPiece ? `${primaryPiece} (primary)` : '', look.primary, (primary) => set({ primary }));
+  dyeRow('s', secondaryPiece ? `${secondaryPiece} (secondary)` : '', look.secondary, (secondary) => set({ secondary }));
+  choice('#c-hat', HATS, look.hat, (hat) => set({ hat }));
+  const accent = [accentPiece, look.hat ? 'headwear' : ''].filter(Boolean).join(' & ');
+  dyeRow('a', accent ? `${capitalize(accent)} (accent)` : '', look.accent, (accent) => set({ accent }));
+  choice('#c-held', HELD, look.held, (held) => set({ held }));
+  show('#c-facial-wrap', !look.female && look.mature);
+  const facial = look.facial || (look.beard ? (look.race === RACE_DWARF ? SAGE_BEARD : FULL_BEARD) : 0);
+  choice('#c-facial', info.facial, facial, (facial) => set({ facial, beard: false }));
+  choice('#c-extra', ['Glasses'], look.glasses ? 0 : -1, () => set({ glasses: !look.glasses }));
 }
 
 function renderSheet() {
   const host = $('#sheet');
   host.innerHTML = '';
-  const names = ['idle 1', 'idle 2', 'idle 3', 'idle 4', 'walk 1', 'walk 2', 'walk 3', 'walk 4', 'walk 5', 'walk 6', 'work 1', 'work 2'];
-  for (const d of [0, 1, 2]) {
-    for (let f = 0; f < info.framesPerDir; f++) {
-      const cell = document.createElement('div');
-      cell.className = 'cell';
-      const c = document.createElement('canvas');
-      c.width = info.fw * 2;
-      c.height = info.fh * 2;
-      c.className = 'stagebox';
-      draw(c, look, d, f, false, 2);
-      cell.appendChild(c);
-      const s = document.createElement('small');
-      s.textContent = `${['down', 'up', 'side'][d]} · ${names[f]}`;
-      cell.appendChild(s);
-      host.appendChild(cell);
-    }
-  }
+  DIR_NAMES.forEach((dirName, d) => {
+    for (let f = 0; f < info.framesPerDir; f++) draw(stage(host, 'cell', `${dirName} · ${POSES[f]}`, 2), look, d, f, false, 2);
+  });
 }
 
 function runQa() {
-  const issues = JSON.parse(lint_look(JSON.stringify(look))) as { kind: string; dir: number; frame: number; detail: string }[];
+  const issues = parseJson<LintIssue[]>(lint_look(JSON.stringify(look)));
   const real = issues.filter((i) => i.kind !== 'palette');
   const el = $('#qa');
   el.classList.toggle('bad', real.length > 0);
   el.textContent = real.length
-    ? `QA: ${real.length} defect(s) — ` + real.slice(0, 4).map((i) => `${i.kind} (${['down', 'up', 'side'][i.dir]} f${i.frame}: ${i.detail})`).join('; ')
+    ? `QA: ${real.length} defect(s) — ` + real.slice(0, 4).map((i) => `${i.kind} (${DIR_NAMES[i.dir]} f${i.frame}: ${i.detail})`).join('; ')
     : `QA: clean — no clipping, debris, pinholes, floating feet, jitter or asymmetry across all ${info.sheetFrames} frames.`;
 }
 
 // ---------------------------------------------------------------- animation
 
+interface Preview {
+  look: Look;
+  canvas: HTMLCanvasElement;
+}
+
 const viewCanvases: HTMLCanvasElement[] = [];
-let galleryLooks: Look[] = [];
-const galleryCanvases: HTMLCanvasElement[] = [];
+const cast: Preview[] = [];
+const professions: Preview[] = [];
+let gallery: Preview[] = [];
 
 function buildViews() {
   const host = $('#views');
   host.innerHTML = '';
   viewCanvases.length = 0;
-  for (const v of DIRS) {
-    const w = document.createElement('div');
-    w.className = 'view';
-    const c = document.createElement('canvas');
-    c.width = info.fw * zoom;
-    c.height = info.fh * zoom;
-    c.className = 'stagebox';
-    w.appendChild(c);
-    const s = document.createElement('small');
-    s.textContent = v.name;
-    w.appendChild(s);
-    host.appendChild(w);
-    viewCanvases.push(c);
-  }
+  for (const v of VIEWS) viewCanvases.push(stage(host, 'view', v.name, zoom));
 }
 
 function frameAt(t: number, dir: number): number {
@@ -266,94 +314,49 @@ function frameAt(t: number, dir: number): number {
 }
 
 function tick(t: number) {
-  DIRS.forEach((v, i) => draw(viewCanvases[i], look, v.dir, frameAt(t, v.dir), v.flip, zoom));
-  castLooks.forEach((l, i) => draw(castCanvases[i], l, 0, frameAt(t + i * 211, 0), false, 2));
-  profLooks.forEach((l, i) => draw(profCanvases[i], l, 0, frameAt(t + i * 173, 0), false, 2));
-  galleryLooks.forEach((l, i) => {
+  VIEWS.forEach((v, i) => draw(viewCanvases[i], look, v.dir, frameAt(t, v.dir), v.flip, zoom));
+  // Offset phases so the lists don't animate in lockstep.
+  cast.forEach((p, i) => draw(p.canvas, p.look, 0, frameAt(t + i * 211, 0), false, 2));
+  professions.forEach((p, i) => draw(p.canvas, p.look, 0, frameAt(t + i * 173, 0), false, 2));
+  // Gallery figures always walk, turning every 2.6 s.
+  const walk = ANIMS.Walk;
+  gallery.forEach((p, i) => {
     const phase = t + i * 97;
-    const f = ANIMS.Walk.frames[Math.floor((phase * speed) / 100) % 6];
-    const d = Math.floor(phase / 2600) % 4;
-    draw(galleryCanvases[i], l, DIRS[d].dir, f, DIRS[d].flip, 2);
+    const f = walk.frames[Math.floor((phase * speed) / walk.ms[0]) % walk.frames.length];
+    const v = VIEWS[Math.floor(phase / 2600) % VIEWS.length];
+    draw(p.canvas, p.look, v.dir, f, v.flip, 2);
   });
   requestAnimationFrame(tick);
 }
 
-const castCanvases: HTMLCanvasElement[] = [];
-let castLooks: Look[] = [];
 function buildCast() {
   const host = $('#cast');
-  const list = JSON.parse(cast_list()) as { name: string; look: Look }[];
-  castLooks = list.map((c) => c.look);
-  list.forEach((c) => {
-    const card = document.createElement('div');
-    card.className = 'card';
-    const cv = document.createElement('canvas');
-    cv.width = info.fw * 2;
-    cv.height = info.fh * 2;
-    card.appendChild(cv);
-    const s = document.createElement('small');
-    s.textContent = c.name;
-    card.appendChild(s);
-    card.onclick = () => {
-      set(c.look);
-      document.querySelector('main')!.scrollTo({ top: 0, behavior: 'smooth' });
-    };
-    host.appendChild(card);
-    castCanvases.push(cv);
-  });
+  for (const c of parseJson<CastMember[]>(cast_list())) {
+    cast.push({ look: c.look, canvas: card(host, c.name, () => edit(c.look)) });
+  }
 }
 
-const profCanvases: HTMLCanvasElement[] = [];
-let profLooks: Look[] = [];
 function buildProfessions() {
   const host = $('#profs');
-  const names = JSON.parse(profession_list()) as string[];
-  profLooks = names.map((_, i) => {
-    const base = JSON.parse(random_look(9000 + i)) as Look;
-    const person = { ...base, race: 0, age: 1, female: i % 2 === 0, hat: 0, held: 0 };
-    return JSON.parse(dress_look(JSON.stringify(person), i, 77 + i)) as Look;
-  });
-  names.forEach((name, i) => {
-    const card = document.createElement('div');
-    card.className = 'card';
-    const cv = document.createElement('canvas');
-    cv.width = info.fw * 2;
-    cv.height = info.fh * 2;
-    card.appendChild(cv);
-    const s = document.createElement('small');
-    s.textContent = name;
-    card.appendChild(s);
-    card.onclick = () => {
-      set(profLooks[i]);
-      document.querySelector('main')!.scrollTo({ top: 0, behavior: 'smooth' });
-    };
-    host.appendChild(card);
-    profCanvases.push(cv);
+  parseJson<string[]>(profession_list()).forEach((name, job) => {
+    // A plain adult human of alternating sex, dressed for the job.
+    const person = { ...randomLook(9000 + job), race: 0, age: 1, female: job % 2 === 0, hat: 0, held: 0 };
+    const dressed = parseLook(dress_look(JSON.stringify(person), job, 77 + job));
+    professions.push({ look: dressed, canvas: card(host, name, () => edit(dressed)) });
   });
 }
 
 function buildGallery() {
   const host = $('#gallery');
   host.innerHTML = '';
-  galleryCanvases.length = 0;
-  const base = Math.floor(Math.random() * 1e9);
-  galleryLooks = Array.from({ length: 24 }, (_, i) => JSON.parse(random_look(base + i)) as Look);
-  galleryLooks.forEach((l) => {
-    const card = document.createElement('div');
-    card.className = 'card';
-    const c = document.createElement('canvas');
-    c.width = info.fw * 2;
-    c.height = info.fh * 2;
-    card.appendChild(c);
-    const s = document.createElement('small');
-    s.textContent = `${info.races[l.race]} · ${info.outfits[l.outfit]}`;
-    card.appendChild(s);
-    card.onclick = () => {
+  const base = randomSeed();
+  gallery = Array.from({ length: 24 }, (_, i) => {
+    const l = randomLook(base + i);
+    const canvas = card(host, `${info.races[l.race]} · ${info.outfits[l.outfit]}`, () => {
       set(l);
       window.scrollTo({ top: 0, behavior: 'smooth' });
-    };
-    host.appendChild(card);
-    galleryCanvases.push(c);
+    });
+    return { look: l, canvas };
   });
 }
 
@@ -367,21 +370,23 @@ function download(name: string, blob: Blob) {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
-/** Sheet: one row per direction (down, up, side-right) of 8 poses, then the
- *  blink frame on a fourth row. Metadata lists animations and timings. */
+/** Sheet: one row per direction (down, up, side-right) of every pose, then
+ *  the blink frame on a fourth row. Metadata lists animations and timings. */
 function exportSheet() {
   const c = document.createElement('canvas');
   c.width = info.fw * info.framesPerDir;
   c.height = info.fh * 4;
   const ctx = c.getContext('2d')!;
-  for (const d of [0, 1, 2]) for (let f = 0; f < info.framesPerDir; f++) ctx.drawImage(frameCanvas(look, d, f), f * info.fw, d * info.fh);
+  DIR_NAMES.forEach((_, d) => {
+    for (let f = 0; f < info.framesPerDir; f++) ctx.drawImage(frameCanvas(look, d, f), f * info.fw, d * info.fh);
+  });
   ctx.drawImage(frameCanvas(look, 0, BLINK), 0, 3 * info.fh);
   c.toBlob((b) => b && download('character.png', b), 'image/png');
   const meta = {
     frame: { w: info.fw, h: info.fh },
     pivot: { x: info.pivot[0], y: info.pivot[1] },
     rows: ['down', 'up', 'side (faces right; mirror for left)', 'blink (down)'],
-    poses: ['idle1', 'idle2', 'idle3', 'idle4', 'walk1', 'walk2', 'walk3', 'walk4', 'walk5', 'walk6', 'work1', 'work2'],
+    poses: POSES.map((p) => p.replace(' ', '')),
     animations: Object.fromEntries(Object.entries(ANIMS).map(([k, v]) => [k.toLowerCase(), v])),
     look,
   };
@@ -390,9 +395,50 @@ function exportSheet() {
 
 // ---------------------------------------------------------------- boot
 
+/** The look encoded in the URL hash, if any. */
+function lookFromHash(): Look | null {
+  if (location.hash.length <= 1) return null;
+  try {
+    // Links from before the dyes were renamed carry top/bottom/hat_color
+    // (Rust still accepts them as serde aliases).
+    const raw = JSON.parse(decodeURIComponent(location.hash.slice(1))) as Record<string, number | boolean>;
+    for (const [old, now] of [['top', 'primary'], ['bottom', 'secondary'], ['hat_color', 'accent']]) {
+      if (old in raw) {
+        raw[now] ??= raw[old];
+        delete raw[old];
+      }
+    }
+    return raw as unknown as Look;
+  } catch {
+    return null;
+  }
+}
+
+function renderViewTabs() {
+  saveView();
+  choice('#anims', ANIM_NAMES, ANIM_NAMES.indexOf(anim), (i) => {
+    anim = ANIM_NAMES[i];
+    renderViewTabs();
+  });
+  choice('#zooms', ZOOMS.map((z) => `${z}×`), ZOOMS.indexOf(zoom), (i) => {
+    zoom = ZOOMS[i];
+    buildViews();
+    renderViewTabs();
+  });
+  choice('#bgs', BG_NAMES, BG_NAMES.indexOf(bg), (i) => {
+    bg = BG_NAMES[i];
+    renderViewTabs();
+    renderSheet();
+  });
+  choice('#speeds', SPEEDS.map((s) => `${s}×`), SPEEDS.indexOf(speed), (i) => {
+    speed = SPEEDS[i];
+    renderViewTabs();
+  });
+}
+
 async function boot() {
   await init({ module_or_path: wasmUrl });
-  info = JSON.parse(creator_info()) as Info;
+  info = parseJson<Info>(creator_info());
   $('#app').innerHTML = `
     <header>
       <h1>CHARACTER CREATOR</h1>
@@ -417,35 +463,13 @@ async function boot() {
       <section><h2>Every frame</h2><div class="sheet" id="sheet"></div></section>
       <section><h2>Gallery — click to edit <button id="reroll">Reroll</button></h2><div class="gallery" id="gallery"></div></section>
     </main>`;
-  const tabs = () => {
-    saveView();
-    buttons($('#anims'), Object.keys(ANIMS), (a) => a, (i) => Object.keys(ANIMS)[i] === anim, (i) => { anim = Object.keys(ANIMS)[i]; tabs(); });
-    buttons($('#zooms'), [2, 3, 4, 6], (z) => `${z}×`, (i) => [2, 3, 4, 6][i] === zoom, (i) => { zoom = [2, 3, 4, 6][i]; buildViews(); tabs(); });
-    buttons($('#bgs'), Object.keys(BGS), (b) => b, (i) => Object.keys(BGS)[i] === bg, (i) => { bg = Object.keys(BGS)[i]; tabs(); renderSheet(); });
-    buttons($('#speeds'), [0.5, 1, 2], (s) => `${s}×`, (i) => [0.5, 1, 2][i] === speed, (i) => { speed = [0.5, 1, 2][i]; tabs(); });
-  };
-  tabs();
-  const fromHash = (() => {
-    try {
-      if (location.hash.length <= 1) return null;
-      // Links from before the dyes were renamed carry top/bottom/hat_color.
-      const raw = JSON.parse(decodeURIComponent(location.hash.slice(1))) as Record<string, number | boolean>;
-      for (const [old, now] of [['top', 'primary'], ['bottom', 'secondary'], ['hat_color', 'accent']]) {
-        if (old in raw) {
-          raw[now] ??= raw[old];
-          delete raw[old];
-        }
-      }
-      return raw as unknown as Look;
-    } catch {
-      return null;
-    }
-  })();
-  look = fromHash ?? (JSON.parse(random_look(Math.floor(Math.random() * 1e9))) as Look);
+  renderViewTabs();
+  look = lookFromHash() ?? randomLook(randomSeed());
+  const seed = $<HTMLInputElement>('#seed');
   $('#rand').onclick = () => {
-    const s = Number(($('#seed') as HTMLInputElement).value) || Math.floor(Math.random() * 1e9);
-    ($('#seed') as HTMLInputElement).value = '';
-    set(JSON.parse(random_look(s)) as Look);
+    const s = Number(seed.value) || randomSeed();
+    seed.value = '';
+    set(randomLook(s));
   };
   $('#copy').onclick = () => navigator.clipboard.writeText(JSON.stringify(look));
   $('#export').onclick = exportSheet;

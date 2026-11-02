@@ -7,7 +7,7 @@ html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px 'Pi
 header { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-bottom: 2px solid var(--line); background: #1c1726; flex-wrap: wrap; }
 header h1 { font-size: 18px; margin: 0 12px 0 0; color: var(--gold); letter-spacing: 1px; }
 header .grow { flex: 1; }
-button, select, input { font: inherit; color: var(--ink); background: var(--panel); border: 2px solid var(--line); border-radius: 4px; padding: 5px 9px; }
+button, input { font: inherit; color: var(--ink); background: var(--panel); border: 2px solid var(--line); border-radius: 4px; padding: 5px 9px; }
 button { cursor: pointer; }
 button:hover { border-color: var(--dim); }
 button.primary { background: #6a4f1e; border-color: var(--gold); }
