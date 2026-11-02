@@ -2,10 +2,12 @@
 //! mood, job, relationships, recent memories and village gossip, so the
 //! same person says different things from day to day.
 
+use super::clock::Weather;
 use super::villager::{Goal, Job};
 use super::Game;
 
 impl Game {
+    /// Up to four lines villager `i` says to the player right now.
     pub fn dialogue_for(&mut self, i: usize) -> Vec<String> {
         let v = self.villagers[i].clone();
         let h = self.clock.hour();
@@ -135,7 +137,6 @@ impl Game {
         }
 
         // Weather remark
-        use super::clock::Weather;
         let wl = match self.clock.weather {
             Weather::Rain => "This rain! At least the fields are happy.",
             Weather::Storm => "Listen to that thunder. Best stay indoors.",

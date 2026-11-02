@@ -69,7 +69,7 @@ pub fn town(rng: &mut Rng, culture: usize) -> String {
     let c = &C[culture % CULTURES];
     let pre = *rng.pick(c.town_pre);
     let suf = *rng.pick(c.town_suf);
-    cap(&format!("{}{}", pre, suf))
+    cap(&format!("{pre}{suf}"))
 }
 
 pub fn first(rng: &mut Rng, culture: usize, female: bool) -> String {
@@ -77,7 +77,7 @@ pub fn first(rng: &mut Rng, culture: usize, female: bool) -> String {
     let a = *rng.pick(c.first_a);
     let b = *rng.pick(c.first_b);
     let e = if female { *rng.pick(c.fem_end) } else { *rng.pick(c.masc_end) };
-    let mut s = format!("{}{}{}", a, b, e);
+    let mut s = format!("{a}{b}{e}");
     // Collapse awkward doubled vowels at the joins.
     for pair in ["aa", "ee", "ii", "oo", "uu", "aea", "yy"] {
         if s.contains(pair) {

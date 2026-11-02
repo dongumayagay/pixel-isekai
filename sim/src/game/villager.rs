@@ -7,7 +7,28 @@ use crate::art::people::{self, held, outfit, Look};
 use crate::names;
 use crate::rng::Rng;
 use crate::world::villages::BuildingKind;
-use crate::world::{World, TILE};
+use crate::world::{tile_center, World, TILE};
+
+/// Life-stage thresholds in human-equivalent years.
+pub const TEEN_AGE: f32 = 13.0;
+pub const ADULT_AGE: f32 = 18.0;
+pub const ELDER_AGE: f32 = 60.0;
+
+/// Sprite age stage for `Look::age`: 0 child, 1 adult, 2 elder.
+pub fn look_stage(age: f32) -> u8 {
+    if age < TEEN_AGE {
+        0
+    } else if age >= ELDER_AGE {
+        2
+    } else {
+        1
+    }
+}
+
+/// Top up a need, capped at fully satisfied.
+pub fn top_up(need: &mut f32, amount: f32) {
+    *need = (*need + amount).min(100.0);
+}
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Job {
@@ -68,8 +89,24 @@ impl Job {
             Job::Retired => "Retired",
         }
     }
-    /// Outfit and hat that make the job readable at a glance.
-    /// Outfit, hat and held item that make the job readable at a glance.
+
+    /// What the inspector says someone is doing while at work.
+    pub fn work_description(self) -> &'static str {
+        match self {
+            Job::Farmer => "Tending the fields",
+            Job::Woodcutter => "Chopping wood",
+            Job::Miner => "Mining stone",
+            Job::Fisher => "Fishing",
+            Job::Smith => "Working the forge",
+            Job::Merchant => "Minding the shop",
+            Job::Innkeeper => "Running the inn",
+            Job::Guard => "On patrol",
+            Job::Priest => "Leading prayers",
+            Job::Adventurer => "Exploring the wilds",
+            _ => "Working",
+        }
+    }
+
     /// Each profession's signature look: outfit, headwear, palette and tool
     /// chosen so the job reads at a glance, with a little personal variety.
     pub fn dress(self, look: &mut Look, rng: &mut Rng) {
@@ -248,6 +285,8 @@ impl Needs {
     }
 }
 
+/// Speech-bubble icon over a head. Discriminants are the renderer's
+/// `emote_N` sprite ids, so the full set is kept even where unused.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Emote {
     None = 0,
@@ -275,7 +314,6 @@ pub enum Goal {
     Pray,
     Play,
     Shop,
-    Visit(usize),
 }
 
 impl Goal {
@@ -290,11 +328,11 @@ impl Goal {
             Goal::Pray => "Praying",
             Goal::Play => "Playing",
             Goal::Shop => "Shopping",
-            Goal::Visit(_) => "Travelling",
         }
     }
 }
 
+/// A goal is first travelled to, then performed on arrival.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 pub enum Phase {
     Travel,
@@ -334,15 +372,18 @@ pub struct Villager {
     pub player_opinion: f32,
     pub emote: Emote,
     pub emote_t: f32,
+    /// Building prop the villager is inside (and hidden in), if any.
     pub inside: Option<usize>,
+    /// Days left until a baby is born; 0 when not expecting.
     pub pregnant: f32,
     pub gold: i32,
+    /// In-game minutes until the next decision while idle.
     pub think_cd: f32,
     pub alive: bool,
     /// Short memory of notable recent events, newest last.
     pub memories: Vec<String>,
+    /// Whether the player has chatted today; only the first chat builds rapport.
     pub talked_today: bool,
-    pub gifted_today: bool,
 }
 
 impl Villager {
@@ -352,29 +393,24 @@ impl Villager {
 
     pub fn stage(&self) -> &'static str {
         let a = self.life_age();
-        if a < 13.0 {
+        if a < TEEN_AGE {
             "Child"
-        } else if a < 18.0 {
+        } else if a < ADULT_AGE {
             "Teen"
-        } else if a < 60.0 {
+        } else if a < ELDER_AGE {
             "Adult"
         } else {
             "Elder"
         }
     }
 
-    /// Years of life per human-equivalent year: elves and demons are long-lived.
-    pub fn life_mult(&self) -> f32 {
-        race_life_mult(self.race)
-    }
-
     /// Age in human-equivalent years (drives life stages).
     pub fn life_age(&self) -> f32 {
-        self.age / self.life_mult()
+        self.age / race_life_mult(self.race)
     }
 
     pub fn is_adult(&self) -> bool {
-        self.life_age() >= 18.0
+        self.life_age() >= ADULT_AGE
     }
 
     pub fn opinion_of(&self, id: u32) -> f32 {
@@ -402,6 +438,7 @@ impl Villager {
     }
 }
 
+/// Years of life per human-equivalent year: elves and demons are long-lived.
 pub fn race_life_mult(race: u8) -> f32 {
     match race {
         people::RACE_ELF => 4.0,
@@ -423,19 +460,15 @@ pub fn pick_race(rng: &mut Rng, culture: usize) -> u8 {
     rng.weighted(&w) as u8
 }
 
-/// Make a new villager of a given age. Sheet is assigned by the caller.
+/// Make a new villager of a given age, of a race typical for the culture.
+/// `age` is in human-equivalent years; it's scaled by the race's lifespan.
+/// Sheet is assigned by the caller.
 #[allow(clippy::too_many_arguments)]
 pub fn make(id: u32, rng: &mut Rng, culture: usize, family: &str, female: bool, age: f32, job: Job, village: usize, home: usize, x: f32, y: f32) -> Villager {
     let race = pick_race(rng, culture);
-    make_race(id, rng, culture, family, female, age, job, village, home, x, y, race)
-}
-
-/// `age` is in human-equivalent years; it's scaled by the race's lifespan.
-#[allow(clippy::too_many_arguments)]
-pub fn make_race(id: u32, rng: &mut Rng, culture: usize, family: &str, female: bool, age: f32, job: Job, village: usize, home: usize, x: f32, y: f32, race: u8) -> Villager {
-    let stage = if age < 13.0 { 0 } else if age >= 60.0 { 2 } else { 1 };
+    let stage = look_stage(age);
     let mut look = Look::random(rng, female, stage);
-    look.mature = age >= 18.0;
+    look.mature = age >= ADULT_AGE;
     look.race = race;
     match race {
         people::RACE_BEAST => look.beast = rng.below(4) as u8,
@@ -446,11 +479,7 @@ pub fn make_race(id: u32, rng: &mut Rng, culture: usize, family: &str, female: b
                 look.facial = 6;
             }
         }
-        people::RACE_ELF => {
-            if rng.chance(0.4) {
-                look.hair = *rng.pick(&[3, 5, 7]);
-            }
-        }
+        people::RACE_ELF if rng.chance(0.4) => look.hair = *rng.pick(&[3, 5, 7]),
         _ => {}
     }
     let age = age * race_life_mult(race);
@@ -496,7 +525,6 @@ pub fn make_race(id: u32, rng: &mut Rng, culture: usize, family: &str, female: b
         alive: true,
         memories: Vec::new(),
         talked_today: false,
-        gifted_today: false,
     }
 }
 
@@ -507,21 +535,22 @@ pub fn populate(world: &World, rng: &mut Rng) -> Vec<Villager> {
     let mut next_id = 1u32;
     for v in &world.villages {
         let culture = v.culture as usize;
-        let homes: Vec<usize> = v.buildings.iter().filter(|b| b.kind == BuildingKind::Home).map(|b| b.prop).collect();
+        let homes = v.homes();
         if homes.is_empty() {
             continue;
         }
         // Jobs this village needs, specialists first.
-        let mut jobs: Vec<Job> = Vec::new();
-        for b in &v.buildings {
-            match b.kind {
-                BuildingKind::Inn => jobs.push(Job::Innkeeper),
-                BuildingKind::Store => jobs.push(Job::Merchant),
-                BuildingKind::Smithy => jobs.push(Job::Smith),
-                BuildingKind::Chapel => jobs.push(Job::Priest),
-                BuildingKind::Home => {}
-            }
-        }
+        let mut jobs: Vec<Job> = v
+            .buildings
+            .iter()
+            .filter_map(|b| match b.kind {
+                BuildingKind::Inn => Some(Job::Innkeeper),
+                BuildingKind::Store => Some(Job::Merchant),
+                BuildingKind::Smithy => Some(Job::Smith),
+                BuildingKind::Chapel => Some(Job::Priest),
+                BuildingKind::Home => None,
+            })
+            .collect();
         jobs.push(Job::Guard);
         jobs.push(Job::Healer);
         if rng.chance(0.6) {
@@ -535,25 +564,23 @@ pub fn populate(world: &World, rng: &mut Rng) -> Vec<Villager> {
         }
         let near_water = (0..24).any(|d| world.terrain(v.cx + d, v.cy).is_water() || world.terrain(v.cx - d, v.cy).is_water() || world.terrain(v.cx, v.cy + d).is_water());
         let highland = world.level(v.cx, v.cy) >= 2;
-        let mut job_iter = 0;
+        // Once the specialists are filled, the rest work the land.
+        let mut specialists = jobs.into_iter();
         let mut next_job = |rng: &mut Rng| -> Job {
-            job_iter += 1;
-            if let Some(j) = jobs.get(job_iter - 1) {
-                return *j;
-            }
-            let w = [
-                0.38,
-                0.18,
-                if highland { 0.2 } else { 0.06 },
-                if near_water { 0.18 } else { 0.0 },
-                0.08,
-                0.06,
-            ];
-            [Job::Farmer, Job::Woodcutter, Job::Miner, Job::Fisher, Job::Guard, Job::Adventurer][rng.weighted(&w)]
+            specialists.next().unwrap_or_else(|| {
+                let w = [
+                    0.38,
+                    0.18,
+                    if highland { 0.2 } else { 0.06 },
+                    if near_water { 0.18 } else { 0.0 },
+                    0.08,
+                    0.06,
+                ];
+                [Job::Farmer, Job::Woodcutter, Job::Miner, Job::Fisher, Job::Guard, Job::Adventurer][rng.weighted(&w)]
+            })
         };
         for &home in &homes {
-            let hp = &world.props[home];
-            let door = ((hp.x + hp.fw as i32 / 2) * TILE + TILE / 2, (hp.y + 1) * TILE + TILE / 2);
+            let door = tile_center(world.props[home].door());
             let family = names::family(rng, culture);
             let couple = rng.chance(0.72);
             let a_female = rng.chance(0.5);
@@ -561,8 +588,8 @@ pub fn populate(world: &World, rng: &mut Rng) -> Vec<Villager> {
             let mut members: Vec<usize> = Vec::new();
             let ja = next_job(rng);
             let jitter = |rng: &mut Rng| rng.range_f(-20.0, 20.0);
-            let ax = door.0 as f32 + jitter(rng);
-            let ay = door.1 as f32 + 8.0;
+            let ax = door.0 + jitter(rng);
+            let ay = door.1 + 8.0;
             out.push(make(next_id, rng, culture, &family, a_female, age_a, ja, v.id, home, ax, ay));
             members.push(out.len() - 1);
             next_id += 1;
@@ -571,7 +598,7 @@ pub fn populate(world: &World, rng: &mut Rng) -> Vec<Villager> {
                 let b_female = if rng.chance(0.88) { !a_female } else { a_female };
                 let age_b = (age_a + rng.range_f(-6.0, 6.0)).clamp(19.0, 62.0);
                 let jb = next_job(rng);
-                let bx = door.0 as f32 + jitter(rng);
+                let bx = door.0 + jitter(rng);
                 out.push(make(next_id, rng, culture, &family, b_female, age_b, jb, v.id, home, bx, ay));
                 next_id += 1;
                 let (ia, ib) = (members[0], out.len() - 1);
@@ -585,7 +612,7 @@ pub fn populate(world: &World, rng: &mut Rng) -> Vec<Villager> {
                     for _ in 0..kids {
                         let age_k = rng.range_f(18.0, (age_a - 18.0).max(18.5));
                         let job = next_job(rng);
-                        let kx = door.0 as f32 + jitter(rng);
+                        let kx = door.0 + jitter(rng);
                         let kf = rng.chance(0.5);
                         let mut kid = make(next_id, rng, culture, &family, kf, age_k, job, v.id, home, kx, ay + 6.0);
                         kid.parents = vec![ida, idb];
@@ -605,7 +632,7 @@ pub fn populate(world: &World, rng: &mut Rng) -> Vec<Villager> {
                 }
             }
             if rng.chance(0.18) {
-                let ex = door.0 as f32 + jitter(rng);
+                let ex = door.0 + jitter(rng);
                 let (ef, ea) = (rng.chance(0.55), rng.range_f(61.0, 78.0));
                 out.push(make(next_id, rng, culture, &family, ef, ea, Job::Retired, v.id, home, ex, ay));
                 next_id += 1;

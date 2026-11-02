@@ -12,9 +12,9 @@ pub mod villager;
 use serde::Deserialize;
 use serde_json::json;
 
-use actor::{Activity, Actor, Facing};
+use actor::{stand_pos, Activity, Actor, Facing};
 use ai::{Seen, Stock};
-use clock::{Clock, SEC_PER_MIN};
+use clock::{Clock, Weather, SEC_PER_MIN, WINTER};
 use society::Event;
 use sprites::{prop_pivot, SpriteBank};
 use villager::{Emote, Goal, Villager};
@@ -125,8 +125,8 @@ impl Game {
         look.eyes = 0;
         look.facial = 0;
         let sheet = sprites.add_sheet(&look);
-        let (sx, sy) = world.spawn;
-        let mut actor = Actor::new((sx * TILE + TILE / 2) as f32, (sy * TILE + TILE / 2 + 6) as f32, sheet, 4.2);
+        let (sx, sy) = stand_pos(world.spawn);
+        let mut actor = Actor::new(sx, sy, sheet, 4.2);
         actor.facing = Facing::Down;
         let player = Player {
             actor,
@@ -191,15 +191,19 @@ impl Game {
         }
     }
 
+    /// Index of a living villager by id.
+    pub fn index_of(&self, id: u32) -> Option<usize> {
+        self.villagers.iter().position(|v| v.id == id && v.alive)
+    }
+
     fn update_villagers(&mut self, dt: f32, mins: f32) {
         let seen: Vec<Seen> = self
             .villagers
             .iter()
             .filter(|v| v.alive)
-            .map(|v| Seen { id: v.id, x: v.actor.x, y: v.actor.y, village: v.village, available: ai::available(v), adult: v.is_adult() })
+            .map(|v| Seen { id: v.id, x: v.actor.x, y: v.actor.y, village: v.village, available: ai::available(v) })
             .collect();
         let mut invites = Vec::new();
-        let mut log = Vec::new();
         let mut talks = Vec::new();
         let mut changed = std::mem::take(&mut self.changed_props);
         {
@@ -211,7 +215,6 @@ impl Game {
                 stocks: &mut self.stocks,
                 seen: &seen,
                 invites: &mut invites,
-                log: &mut log,
                 changed_props: &mut changed,
                 talks: &mut talks,
             };
@@ -238,7 +241,6 @@ impl Game {
         if !talks.is_empty() {
             self.resolve_talks(talks);
         }
-        let _ = log;
     }
 
     fn update_player(&mut self, dt: f32) {
@@ -252,22 +254,20 @@ impl Game {
             p.actor.walk_free(&self.world, vx, vy, dt);
         } else if p.actor.has_path() {
             // Keep walking toward a moving villager.
-            if let Some(Pending::Talk(id)) = p.pending {
-                if let Some(v) = self.villagers.iter().find(|v| v.id == id) {
-                    let d = ((v.actor.x - p.actor.x).powi(2) + (v.actor.y - p.actor.y).powi(2)).sqrt();
-                    if d < TILE as f32 * 1.3 {
-                        p.actor.clear_path();
-                    }
-                }
+            if let Some(Pending::Talk(id)) = p.pending
+                && let Some(v) = self.villagers.iter().find(|v| v.id == id)
+                && p.actor.dist_to(v.actor.x, v.actor.y) < TILE as f32 * 1.3
+            {
+                p.actor.clear_path();
             }
             p.actor.follow(dt);
         } else {
             p.actor.moving = false;
         }
-        if !self.player.actor.has_path() {
-            if let Some(pend) = self.player.pending.take() {
-                self.resolve_pending(pend);
-            }
+        if !self.player.actor.has_path()
+            && let Some(pend) = self.player.pending.take()
+        {
+            self.resolve_pending(pend);
         }
     }
 
@@ -276,11 +276,10 @@ impl Game {
             Pending::Talk(id) => {
                 let Some(i) = self.index_of(id) else { return };
                 let (px, py) = (self.player.actor.x, self.player.actor.y);
-                let d = ((self.villagers[i].actor.x - px).powi(2) + (self.villagers[i].actor.y - py).powi(2)).sqrt();
-                if d > TILE as f32 * 2.2 {
+                let (vx, vy) = (self.villagers[i].actor.x, self.villagers[i].actor.y);
+                if self.player.actor.dist_to(vx, vy) > TILE as f32 * 2.2 {
                     return;
                 }
-                let (vx, vy) = (self.villagers[i].actor.x, self.villagers[i].actor.y);
                 self.player.actor.face_toward(vx, vy);
                 self.villagers[i].actor.face_toward(px, py);
                 let lines = self.dialogue_for(i);
@@ -310,19 +309,14 @@ impl Game {
         self.player.actor.face_toward(px, py - 8.0);
         self.player.actor.activity = match p.kind {
             k if k.is_tree() => Activity::Chop,
-            PropKind::Rock | PropKind::Boulder | PropKind::OreRock => Activity::Mine,
+            k if k.is_rock() => Activity::Mine,
             _ => Activity::Hoe,
         };
         self.player.actor.anim = 0.0;
         let (item, n, remove): (&str, u32, bool) = match p.kind {
             k if k.is_tree() => {
-                let pr = &mut self.world.props[pi];
-                pr.hp = pr.hp.saturating_sub(1);
                 self.player.actor.flash = 0.0;
-                if pr.hp == 0 {
-                    pr.kind = PropKind::Stump;
-                    pr.hp = 2;
-                    pr.state = 0;
+                if self.world.props[pi].chop(1) {
                     self.changed_props.push(pi);
                     self.toasts.push("Timber! +5 Wood".into());
                     ("Wood", 5, false)
@@ -335,7 +329,7 @@ impl Game {
             PropKind::Boulder => ("Stone", 5, true),
             PropKind::OreRock => (["Copper Ore", "Iron Ore", "Gold Ore", "Crystal"][p.variant as usize % 4], 2, true),
             PropKind::BerryBush => {
-                if self.season() == 3 {
+                if self.season() == WINTER {
                     return;
                 }
                 ("Berries", 3, false)
@@ -376,8 +370,7 @@ impl Game {
             Cmd::Dir { x, y } => self.player.dir_input = (x, y),
             Cmd::Speed { v } => self.speed = v.clamp(0.0, 16.0),
             Cmd::Weather { w, i } => {
-                let w = [clock::Weather::Clear, clock::Weather::Cloudy, clock::Weather::Rain, clock::Weather::Storm, clock::Weather::Snow, clock::Weather::Fog][w.min(5) as usize];
-                self.clock.set_weather(w, i);
+                self.clock.set_weather(Weather::from_index(w as usize), i);
             }
             Cmd::Skip { hours } => {
                 let steps = (hours * 60.0 * SEC_PER_MIN / 0.1) as usize;
@@ -406,7 +399,7 @@ impl Game {
             let dy = y - (v.actor.y - 46.0);
             if dx.abs() < 18.0 && dy.abs() < 46.0 {
                 let d = dx * dx + dy * dy;
-                if best.map_or(true, |(_, b)| d < b) {
+                if best.is_none_or(|(_, b)| d < b) {
                     best = Some((v.id, d));
                 }
             }
@@ -415,7 +408,7 @@ impl Game {
             let i = self.index_of(id).unwrap();
             let goal = self.villagers[i].actor.tile();
             self.player.pending = Some(Pending::Talk(id));
-            let d = ((self.villagers[i].actor.x - self.player.actor.x).powi(2) + (self.villagers[i].actor.y - self.player.actor.y).powi(2)).sqrt();
+            let d = self.player.actor.dist_to(self.villagers[i].actor.x, self.villagers[i].actor.y);
             if d < TILE as f32 * 1.6 || !self.player.actor.path_to(&self.world, &mut self.pf, goal, 20_000) {
                 self.player.actor.clear_path();
             }
@@ -431,8 +424,7 @@ impl Game {
             });
             if let Some(pi) = idx {
                 let p = &self.world.props[pi];
-                let harvestable = p.kind.is_tree() || matches!(p.kind, PropKind::Stump | PropKind::Rock | PropKind::Boulder | PropKind::OreRock | PropKind::BerryBush | PropKind::Mushroom | PropKind::Flowers | PropKind::Crop);
-                if !harvestable || p.kind == PropKind::House {
+                if !p.kind.is_harvestable() {
                     break;
                 }
                 let (bx, by) = (p.x, p.y);
@@ -657,19 +649,7 @@ impl Game {
         let rivals: Vec<_> = rel.iter().rev().take(2).filter(|(_, s)| *s < -5.0).map(|(o, s)| json!({"id": o, "name": name_of(*o), "score": s.round()})).collect();
         let vil = &self.world.villages[v.village];
         let doing = match v.goal {
-            Goal::Work => match v.job {
-                villager::Job::Farmer => "Tending the fields".into(),
-                villager::Job::Woodcutter => "Chopping wood".into(),
-                villager::Job::Miner => "Mining stone".into(),
-                villager::Job::Fisher => "Fishing".into(),
-                villager::Job::Smith => "Working the forge".into(),
-                villager::Job::Merchant => "Minding the shop".into(),
-                villager::Job::Innkeeper => "Running the inn".into(),
-                villager::Job::Guard => "On patrol".into(),
-                villager::Job::Priest => "Leading prayers".into(),
-                villager::Job::Adventurer => "Exploring the wilds".into(),
-                _ => "Working".into(),
-            },
+            Goal::Work => v.job.work_description().to_string(),
             Goal::Socialize(o) => format!("Chatting with {}", name_of(o)),
             g => g.label().to_string(),
         };

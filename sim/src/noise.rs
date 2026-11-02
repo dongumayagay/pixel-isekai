@@ -1,5 +1,8 @@
 //! Seeded 2D simplex noise with fBm and domain warping.
 
+// The diagonals are deliberately 0.7071, not FRAC_1_SQRT_2: every world is
+// generated from this table, so changing it would reshape existing seeds.
+#[allow(clippy::approx_constant)]
 const GRAD: [(f32, f32); 12] = [
     (1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0),
     (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0),
@@ -13,17 +16,10 @@ pub struct Noise {
 
 impl Noise {
     pub fn new(seed: u64) -> Self {
-        let mut p: [u8; 256] = [0; 256];
-        for (i, v) in p.iter_mut().enumerate() {
-            *v = i as u8;
-        }
-        let mut rng = crate::rng::Rng::new(seed);
-        rng.shuffle(&mut p);
-        let mut perm = [0u8; 512];
-        for i in 0..512 {
-            perm[i] = p[i & 255];
-        }
-        Noise { perm }
+        let mut p: [u8; 256] = std::array::from_fn(|i| i as u8);
+        crate::rng::Rng::new(seed).shuffle(&mut p);
+        // Doubled so lookups at index + 1 never need wrapping.
+        Noise { perm: std::array::from_fn(|i| p[i & 255]) }
     }
 
     /// Simplex noise in roughly [-1, 1].

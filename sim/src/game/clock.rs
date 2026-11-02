@@ -6,11 +6,14 @@ use crate::rng::Rng;
 
 /// Real seconds per in-game minute at 1× speed. A full day is ~14 minutes.
 pub const SEC_PER_MIN: f32 = 0.6;
+pub const MINUTES_PER_DAY: f64 = 1440.0;
 pub const DAYS_PER_SEASON: u32 = 12;
 /// Villagers age half a year per day, so generations turn over in a long save.
 pub const YEARS_PER_DAY: f32 = 0.5;
 
 pub const SEASON_NAMES: [&str; 4] = ["Spring", "Summer", "Autumn", "Winter"];
+/// Season index of winter: nothing grows and snow covers the ground.
+pub const WINTER: u8 = 3;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Weather {
@@ -20,6 +23,13 @@ pub enum Weather {
     Storm = 3,
     Snow = 4,
     Fog = 5,
+}
+
+impl Weather {
+    /// Inverse of `weather as u8`; out-of-range values clamp to fog.
+    pub fn from_index(i: usize) -> Weather {
+        [Weather::Clear, Weather::Cloudy, Weather::Rain, Weather::Storm, Weather::Snow, Weather::Fog][i.min(5)]
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -41,10 +51,10 @@ impl Clock {
     }
 
     pub fn day(&self) -> u32 {
-        (self.minutes / 1440.0) as u32
+        (self.minutes / MINUTES_PER_DAY) as u32
     }
     pub fn minute_of_day(&self) -> f32 {
-        (self.minutes % 1440.0) as f32
+        (self.minutes % MINUTES_PER_DAY) as f32
     }
     pub fn hour(&self) -> f32 {
         self.minute_of_day() / 60.0
@@ -81,16 +91,14 @@ impl Clock {
     }
 
     fn roll_weather(&mut self, rng: &mut Rng) {
-        let season = self.season();
         // Weights: clear, cloudy, rain, storm, snow, fog
-        let w: [f32; 6] = match season {
+        let w: [f32; 6] = match self.season() {
             0 => [0.42, 0.22, 0.24, 0.04, 0.0, 0.08],
             1 => [0.58, 0.18, 0.1, 0.1, 0.0, 0.04],
             2 => [0.36, 0.26, 0.22, 0.06, 0.0, 0.1],
             _ => [0.34, 0.22, 0.0, 0.0, 0.34, 0.1],
         };
-        let i = rng.weighted(&w);
-        self.weather = [Weather::Clear, Weather::Cloudy, Weather::Rain, Weather::Storm, Weather::Snow, Weather::Fog][i];
+        self.weather = Weather::from_index(rng.weighted(&w));
         self.target_intensity = match self.weather {
             Weather::Clear => 0.0,
             Weather::Cloudy => 0.35,

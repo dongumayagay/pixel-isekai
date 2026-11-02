@@ -7,6 +7,16 @@ use crate::art::people::{FRAMES_PER_DIR, IDLE_FRAMES, WALK_FIRST, WALK_FRAMES, W
 use crate::world::path::{simplify, PathFinder};
 use crate::world::{World, TILE};
 
+/// Spots beside a target tile, south first so whoever stands there faces up
+/// toward it.
+pub const BESIDE: [(i32, i32); 6] = [(0, 1), (-1, 0), (1, 0), (0, -1), (1, 1), (-1, 1)];
+
+/// Where an actor's feet rest when standing on a tile: centred, a little
+/// below the middle so the body overlaps the tile above.
+pub fn stand_pos((x, y): (i32, i32)) -> (f32, f32) {
+    ((x * TILE + TILE / 2) as f32, (y * TILE + TILE / 2 + 6) as f32)
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Facing {
     Down,
@@ -15,7 +25,22 @@ pub enum Facing {
     Right,
 }
 
+impl Facing {
+    /// Facing for a movement or look direction. Horizontal wins only when
+    /// `|dx|` beats `|dy| * vertical_bias`.
+    fn toward(dx: f32, dy: f32, vertical_bias: f32) -> Facing {
+        if dx.abs() > dy.abs() * vertical_bias {
+            if dx > 0.0 { Facing::Right } else { Facing::Left }
+        } else if dy > 0.0 {
+            Facing::Down
+        } else {
+            Facing::Up
+        }
+    }
+}
+
 /// What the actor is visibly doing; drives the animation and particle fx.
+/// Discriminants are part of the snapshot sent to the renderer.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Activity {
     None = 0,
@@ -29,6 +54,13 @@ pub enum Activity {
     Sweep = 8,
     Play = 9,
     Fight = 10,
+}
+
+impl Activity {
+    /// Whether the body animates with the tool-swinging work frames.
+    fn uses_work_frames(self) -> bool {
+        !matches!(self, Activity::None | Activity::Talk | Activity::Pray)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -73,35 +105,23 @@ impl Actor {
         ((self.x / TILE as f32).floor() as i32, (self.y / TILE as f32).floor() as i32)
     }
 
+    /// Straight-line distance in pixels to a point.
+    pub fn dist_to(&self, x: f32, y: f32) -> f32 {
+        ((x - self.x).powi(2) + (y - self.y).powi(2)).sqrt()
+    }
+
     pub fn face_toward(&mut self, tx: f32, ty: f32) {
-        let dx = tx - self.x;
-        let dy = ty - self.y;
-        self.facing = if dx.abs() > dy.abs() {
-            if dx > 0.0 { Facing::Right } else { Facing::Left }
-        } else if dy > 0.0 {
-            Facing::Down
-        } else {
-            Facing::Up
-        };
+        self.facing = Facing::toward(tx - self.x, ty - self.y, 1.0);
     }
 
     /// Plan a path to a tile. Returns false if unreachable.
     pub fn path_to(&mut self, world: &World, pf: &mut PathFinder, goal: (i32, i32), max_nodes: usize) -> bool {
         let start = self.tile();
         let start = if world.walkable(start.0, start.1) { start } else { nearest_walkable(world, start).unwrap_or(start) };
-        match pf.walk(world, start, goal, max_nodes) {
-            Some(p) => {
-                let s = simplify(&p);
-                self.path = s
-                    .iter()
-                    .skip(1)
-                    .map(|&(x, y)| ((x * TILE + TILE / 2) as f32, (y * TILE + TILE / 2 + 6) as f32))
-                    .collect();
-                self.path_i = 0;
-                true
-            }
-            None => false,
-        }
+        let Some(tiles) = pf.walk(world, start, goal, max_nodes) else { return false };
+        self.path = simplify(&tiles).into_iter().skip(1).map(stand_pos).collect();
+        self.path_i = 0;
+        true
     }
 
     pub fn has_path(&self) -> bool {
@@ -135,13 +155,8 @@ impl Actor {
         } else {
             self.x += dx / d * step;
             self.y += dy / d * step;
-            self.facing = if dx.abs() > dy.abs() * 1.1 {
-                if dx > 0.0 { Facing::Right } else { Facing::Left }
-            } else if dy > 0.0 {
-                Facing::Down
-            } else {
-                Facing::Up
-            };
+            // Slightly favour up/down so diagonal walks don't flicker.
+            self.facing = Facing::toward(dx, dy, 1.1);
         }
         self.moving = true;
         false
@@ -156,22 +171,16 @@ impl Actor {
         }
         let (nx, ny) = (vx / len, vy / len);
         let step = self.speed * dt;
-        let try_move = |a: &Actor, x: f32, y: f32| -> bool { can_stand(world, a.x, a.y, x, y) };
+        // Move each axis separately so the body slides along walls.
         let tx = self.x + nx * step;
-        if try_move(self, tx, self.y) {
+        if can_stand(world, self.x, self.y, tx, self.y) {
             self.x = tx;
         }
         let ty = self.y + ny * step;
-        if try_move(self, self.x, ty) {
+        if can_stand(world, self.x, self.y, self.x, ty) {
             self.y = ty;
         }
-        self.facing = if nx.abs() > ny.abs() {
-            if nx > 0.0 { Facing::Right } else { Facing::Left }
-        } else if ny > 0.0 {
-            Facing::Down
-        } else {
-            Facing::Up
-        };
+        self.facing = Facing::toward(nx, ny, 1.0);
         self.moving = true;
     }
 
@@ -194,9 +203,10 @@ impl Actor {
         };
         let f = if self.moving {
             WALK_FIRST + ((self.anim * 10.0) as u16 % WALK_FRAMES)
-        } else if self.activity != Activity::None && self.activity != Activity::Talk && self.activity != Activity::Pray {
+        } else if self.activity.uses_work_frames() {
             WORK_FIRST + ((self.anim * 3.0) as u16 % 2)
         } else if dir == 0 && self.blink < 0.0 {
+            // The front-facing blink frame follows the three direction rows.
             return (self.sheet + FRAMES_PER_DIR * 3, flip);
         } else {
             (self.anim * 2.5) as u16 % IDLE_FRAMES
@@ -233,11 +243,11 @@ pub fn can_stand(world: &World, fx: f32, fy: f32, x: f32, y: f32) -> bool {
     true
 }
 
+/// The first walkable tile on growing square rings around (x, y), up to 7 away.
 pub fn nearest_walkable(world: &World, (x, y): (i32, i32)) -> Option<(i32, i32)> {
     for r in 1..8i32 {
         for dy in -r..=r {
             for dx in -r..=r {
-                let (dx, dy): (i32, i32) = (dx, dy);
                 if dx.abs() != r && dy.abs() != r {
                     continue;
                 }

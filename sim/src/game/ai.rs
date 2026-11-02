@@ -1,12 +1,15 @@
 //! Villager decision making (utility AI) and goal execution.
 
-use super::actor::{nearest_walkable, Activity};
-use super::clock::Clock;
-use super::villager::{Emote, Goal, Job, Phase, Villager};
+use super::actor::{nearest_walkable, stand_pos, Activity, Facing, BESIDE};
+use super::clock::{Clock, WINTER};
+use super::villager::{top_up, Emote, Goal, Job, Phase, Villager};
 use crate::rng::Rng;
 use crate::world::path::PathFinder;
 use crate::world::villages::BuildingKind;
-use crate::world::{flag, PropKind, Terrain, World, TILE};
+use crate::world::{flag, tile_center, PropKind, World, TILE};
+
+/// The four edge-adjacent tiles, in the order water is searched for.
+const ADJACENT: [(i32, i32); 4] = [(0, 1), (1, 0), (-1, 0), (0, -1)];
 
 /// Per-village shared resources.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -26,9 +29,10 @@ pub struct Seen {
     pub y: f32,
     pub village: usize,
     pub available: bool,
-    pub adult: bool,
 }
 
+/// Everything a villager's update may read or change besides itself.
+/// Cross-villager effects are queued here and applied by the game afterwards.
 pub struct Ctx<'a> {
     pub world: &'a mut World,
     pub pf: &'a mut PathFinder,
@@ -38,34 +42,27 @@ pub struct Ctx<'a> {
     pub seen: &'a [Seen],
     /// Requests for another villager to join a conversation: (target, from).
     pub invites: &'a mut Vec<(u32, u32)>,
-    /// Chronicle lines produced this tick.
-    pub log: &'a mut Vec<String>,
     /// Props whose sprite changed (chopped trees, harvested crops).
     pub changed_props: &'a mut Vec<usize>,
     /// Finished conversations: (speaker, listener).
     pub talks: &'a mut Vec<(u32, u32)>,
 }
 
-fn door_of(world: &World, prop: usize) -> (i32, i32) {
-    let p = &world.props[prop];
-    (p.x + p.fw as i32 / 2, p.y + 1)
-}
-
 fn building_door(world: &World, village: usize, kind: BuildingKind) -> Option<(i32, i32)> {
-    world.villages.get(village)?.buildings.iter().find(|b| b.kind == kind).map(|b| b.door)
+    world.villages.get(village)?.door_of(kind)
 }
 
-/// Find a walkable tile adjacent to (x, y), preferring the south side so
-/// workers face up toward what they're working on.
+/// Find a walkable tile adjacent to (x, y) on the same level, preferring the
+/// south side so workers face up toward what they're working on.
 fn beside(world: &World, x: i32, y: i32) -> Option<(i32, i32)> {
-    for (dx, dy) in [(0, 1), (-1, 0), (1, 0), (0, -1), (1, 1), (-1, 1)] {
-        if world.walkable(x + dx, y + dy) && world.level(x + dx, y + dy) == world.level(x, y) {
-            return Some((x + dx, y + dy));
-        }
-    }
-    None
+    BESIDE
+        .iter()
+        .map(|(dx, dy)| (x + dx, y + dy))
+        .find(|&(bx, by)| world.walkable(bx, by) && world.level(bx, by) == world.level(x, y))
 }
 
+/// One of the eight nearest live props matching `pred` within a Manhattan
+/// radius, so workers spread over nearby trees and rocks.
 fn find_prop_near(world: &World, rng: &mut Rng, cx: i32, cy: i32, radius: i32, pred: impl Fn(PropKind) -> bool) -> Option<usize> {
     let mut found: Vec<(i32, usize)> = Vec::new();
     for (i, p) in world.props.iter().enumerate() {
@@ -117,6 +114,7 @@ pub fn decide(v: &mut Villager, ctx: &mut Ctx) {
     let lonely = 1.0 - n.social / 100.0;
     let bored = 1.0 - n.fun / 100.0;
     let t = &v.traits;
+    // A little randomness per option keeps routines from looking scripted.
     let noise = |r: &mut Rng| r.f32() * 0.12;
 
     let mut best = (Goal::Leisure, 0.12 + bored * 0.6 + t.curious * 0.1 + noise(ctx.rng));
@@ -142,23 +140,24 @@ pub fn decide(v: &mut Villager, ctx: &mut Ctx) {
         consider(Goal::Shop, 0.18 + bored * 0.2 + noise(ctx.rng));
     }
     // Pick a conversation partner: someone liked and nearby.
-    let mut partner: Option<(u32, f32)> = None;
     if !night {
+        let mut chat: Option<(u32, f32)> = None;
         for s in ctx.seen {
             if s.id == v.id || !s.available || s.village != v.village {
                 continue;
             }
-            let d = ((s.x - v.actor.x).powi(2) + (s.y - v.actor.y).powi(2)).sqrt() / TILE as f32;
+            let d = v.actor.dist_to(s.x, s.y) / TILE as f32;
             if d > 22.0 {
                 continue;
             }
             let op = v.opinion_of(s.id);
-            let score = op / 100.0 - d / 40.0 + ctx.rng.f32() * 0.3 + if Some(s.id) == v.partner || Some(s.id) == v.dating { 0.4 } else { 0.0 };
-            if partner.map_or(true, |(_, b)| score > b) {
-                partner = Some((s.id, score));
+            let sweetheart = if Some(s.id) == v.partner || Some(s.id) == v.dating { 0.4 } else { 0.0 };
+            let score = op / 100.0 - d / 40.0 + ctx.rng.f32() * 0.3 + sweetheart;
+            if chat.is_none_or(|(_, b)| score > b) {
+                chat = Some((s.id, score));
             }
         }
-        if let Some((id, sc)) = partner {
+        if let Some((id, sc)) = chat {
             let evening = if (17.0..21.5).contains(&h) { 0.18 } else { 0.0 };
             consider(Goal::Socialize(id), lonely * 0.95 * (0.45 + t.sociable) + evening + sc * 0.15 + noise(ctx.rng));
         }
@@ -175,7 +174,7 @@ pub fn begin(v: &mut Villager, goal: Goal, ctx: &mut Ctx) {
     let world = &*ctx.world;
     let vil = &world.villages[v.village.min(world.villages.len() - 1)];
     let (cx, cy) = (vil.cx, vil.cy);
-    let home_door = door_of(world, v.home);
+    let home_door = world.props[v.home].door();
     let target: Option<(i32, i32)> = match goal {
         Goal::Sleep => Some(home_door),
         Goal::Eat => {
@@ -189,8 +188,7 @@ pub fn begin(v: &mut Villager, goal: Goal, ctx: &mut Ctx) {
         Goal::Work => work_target(v, ctx),
         Goal::Socialize(id) => ctx.seen.iter().find(|s| s.id == id).map(|s| ((s.x / TILE as f32) as i32, (s.y / TILE as f32) as i32)),
         Goal::Leisure => {
-            let r = ctx.rng.below(3);
-            if r == 0 {
+            if ctx.rng.below(3) == 0 {
                 random_tile_near(world, ctx.rng, cx, cy, 3, true)
             } else {
                 random_tile_near(world, ctx.rng, cx, cy, vil.radius + 4, false)
@@ -204,7 +202,6 @@ pub fn begin(v: &mut Villager, goal: Goal, ctx: &mut Ctx) {
             .or_else(|| building_door(world, v.village, BuildingKind::Chapel)),
         Goal::Play => random_tile_near(world, ctx.rng, cx, cy + 2, 6, true),
         Goal::Shop => building_door(world, v.village, BuildingKind::Store),
-        Goal::Visit(other) => world.villages.get(other).map(|o| (o.cx, o.cy + 2)),
         Goal::Idle => None,
     };
     let Some(target) = target else {
@@ -223,6 +220,7 @@ pub fn begin(v: &mut Villager, goal: Goal, ctx: &mut Ctx) {
     }
 }
 
+/// Where to go to do the job, noting the prop to work on if there is one.
 fn work_target(v: &mut Villager, ctx: &mut Ctx) -> Option<(i32, i32)> {
     let world = &*ctx.world;
     let vil = &world.villages[v.village];
@@ -235,9 +233,8 @@ fn work_target(v: &mut Villager, ctx: &mut Ctx) -> Option<(i32, i32)> {
             let (fx, fy, fw, fh) = vil.fields[ctx.rng.below(vil.fields.len())];
             let x = fx + ctx.rng.range(0, fw);
             let y = fy + ctx.rng.range(0, fh);
-            // Stand beside the crop row.
-            let idx = world.props.iter().position(|p| p.alive && p.kind == PropKind::Crop && p.x == x && p.y == y);
-            v.work_prop = idx;
+            // Crops don't block, so farmers stand right on the row they tend.
+            v.work_prop = world.props.iter().position(|p| p.alive && p.kind == PropKind::Crop && p.x == x && p.y == y);
             Some((x, y))
         }
         Job::Woodcutter => {
@@ -246,7 +243,7 @@ fn work_target(v: &mut Villager, ctx: &mut Ctx) -> Option<(i32, i32)> {
             beside(world, world.props[p].x, world.props[p].y)
         }
         Job::Miner => {
-            let p = find_prop_near(world, ctx.rng, cx, cy, 34, |k| matches!(k, PropKind::Rock | PropKind::Boulder | PropKind::OreRock))?;
+            let p = find_prop_near(world, ctx.rng, cx, cy, 34, |k| k.is_rock())?;
             v.work_prop = Some(p);
             beside(world, world.props[p].x, world.props[p].y)
         }
@@ -254,7 +251,8 @@ fn work_target(v: &mut Villager, ctx: &mut Ctx) -> Option<(i32, i32)> {
             for _ in 0..60 {
                 let x = cx + ctx.rng.range(-24, 25);
                 let y = cy + ctx.rng.range(-24, 25);
-                if world.walkable(x, y) && [(0, 1), (1, 0), (-1, 0), (0, -1)].iter().any(|(dx, dy)| world.terrain(x + dx, y + dy).is_water() && world.level(x + dx, y + dy) == world.level(x, y)) {
+                let shore = |(dx, dy): &(i32, i32)| world.terrain(x + dx, y + dy).is_water() && world.level(x + dx, y + dy) == world.level(x, y);
+                if world.walkable(x, y) && ADJACENT.iter().any(shore) {
                     return Some((x, y));
                 }
             }
@@ -269,7 +267,7 @@ fn work_target(v: &mut Villager, ctx: &mut Ctx) -> Option<(i32, i32)> {
             for _ in 0..40 {
                 let x = cx + ctx.rng.range(-vil.radius - 4, vil.radius + 5);
                 let y = cy + ctx.rng.range(-vil.radius - 4, vil.radius + 5);
-                if world.walkable(x, y) && world.flags(x, y) & (flag::ROAD | flag::PLAZA) != 0 {
+                if world.walkable(x, y) && world.has(x, y, flag::ROAD | flag::PLAZA) {
                     return Some((x, y));
                 }
             }
@@ -283,16 +281,12 @@ fn work_target(v: &mut Villager, ctx: &mut Ctx) -> Option<(i32, i32)> {
 fn enter_building(v: &mut Villager, prop: usize, world: &World) {
     v.inside = Some(prop);
     v.actor.hidden = true;
-    let d = door_of(world, prop);
-    v.actor.x = (d.0 * TILE + TILE / 2) as f32;
-    v.actor.y = (d.1 * TILE + TILE / 2) as f32;
+    (v.actor.x, v.actor.y) = tile_center(world.props[prop].door());
 }
 
 pub fn exit_building(v: &mut Villager, world: &World) {
     if let Some(p) = v.inside.take() {
-        let d = door_of(world, p);
-        v.actor.x = (d.0 * TILE + TILE / 2) as f32;
-        v.actor.y = (d.1 * TILE + TILE / 2 + 6) as f32;
+        (v.actor.x, v.actor.y) = stand_pos(world.props[p].door());
     }
     v.actor.hidden = false;
 }
@@ -313,12 +307,8 @@ fn arrive(v: &mut Villager, ctx: &mut Ctx) {
             v.timer = 60.0 * 10.0;
         }
         Goal::Eat => {
-            if let Some(b) = building_at_door(ctx.world, v.village, v.target) {
-                enter_building(v, b, ctx.world);
-            } else {
-                let home = v.home;
-                enter_building(v, home, ctx.world);
-            }
+            let place = building_at_door(ctx.world, v.village, v.target).unwrap_or(v.home);
+            enter_building(v, place, ctx.world);
             v.timer = r.range_f(25.0, 50.0);
         }
         Goal::Work => {
@@ -335,19 +325,17 @@ fn arrive(v: &mut Villager, ctx: &mut Ctx) {
             };
             if let Some(p) = v.work_prop {
                 let pr = &ctx.world.props[p];
-                let (px, py) = ((pr.x * TILE + TILE / 2) as f32, (pr.y * TILE + TILE / 2) as f32);
+                let (px, py) = tile_center((pr.x, pr.y));
                 v.actor.face_toward(px, py);
             }
             if v.job == Job::Fisher {
                 // Face the water.
                 let (tx, ty) = v.actor.tile();
-                for (dx, dy) in [(0, 1), (1, 0), (-1, 0), (0, -1)] {
-                    if ctx.world.terrain(tx + dx, ty + dy).is_water() {
-                        v.actor.face_toward(v.actor.x + dx as f32 * 10.0, v.actor.y + dy as f32 * 10.0);
-                        break;
-                    }
+                if let Some((dx, dy)) = ADJACENT.iter().find(|(dx, dy)| ctx.world.terrain(tx + dx, ty + dy).is_water()) {
+                    v.actor.face_toward(v.actor.x + *dx as f32 * 10.0, v.actor.y + *dy as f32 * 10.0);
                 }
             }
+            // Roaming jobs work in shorter stints between moves.
             if matches!(v.job, Job::Guard | Job::Adventurer | Job::Merchant) {
                 v.timer = r.range_f(20.0, 60.0);
             }
@@ -365,7 +353,7 @@ fn arrive(v: &mut Villager, ctx: &mut Ctx) {
         Goal::Pray => {
             v.timer = r.range_f(20.0, 40.0);
             v.actor.activity = Activity::Pray;
-            v.actor.facing = super::actor::Facing::Up;
+            v.actor.facing = Facing::Up;
             v.emote(Emote::Sparkle, 2.5);
         }
         Goal::Play => {
@@ -378,7 +366,7 @@ fn arrive(v: &mut Villager, ctx: &mut Ctx) {
             }
             v.timer = r.range_f(15.0, 30.0);
         }
-        Goal::Visit(_) | Goal::Idle => {
+        Goal::Idle => {
             v.timer = 10.0;
         }
     }
@@ -393,16 +381,16 @@ fn finish(v: &mut Villager, ctx: &mut Ctx) {
             let stock = &mut ctx.stocks[vid];
             if stock.food >= 1.0 {
                 stock.food -= 1.0;
-                v.needs.hunger = (v.needs.hunger + 60.0).min(100.0);
+                top_up(&mut v.needs.hunger, 60.0);
             } else {
-                v.needs.hunger = (v.needs.hunger + 25.0).min(100.0);
+                top_up(&mut v.needs.hunger, 25.0);
                 v.emote(Emote::Sad, 3.0);
             }
-            if v.inside.map_or(false, |b| ctx.world.props[b].state == BuildingKind::Inn as u8) {
+            if v.inside.is_some_and(|b| ctx.world.props[b].state == BuildingKind::Inn as u8) {
                 v.gold -= 8;
                 ctx.stocks[vid].gold += 8.0;
-                v.needs.fun = (v.needs.fun + 20.0).min(100.0);
-                v.needs.social = (v.needs.social + 15.0).min(100.0);
+                top_up(&mut v.needs.fun, 20.0);
+                top_up(&mut v.needs.social, 15.0);
             }
         }
         Goal::Work => {
@@ -411,7 +399,7 @@ fn finish(v: &mut Villager, ctx: &mut Ctx) {
             v.gold += wage;
             match v.job {
                 Job::Farmer => {
-                    stock.food += if season == 3 { 0.6 } else { 2.2 };
+                    stock.food += if season == WINTER { 0.6 } else { 2.2 };
                     if let Some(p) = v.work_prop {
                         let pr = &mut ctx.world.props[p];
                         if pr.kind == PropKind::Crop {
@@ -419,7 +407,7 @@ fn finish(v: &mut Villager, ctx: &mut Ctx) {
                                 pr.state = 0;
                                 stock.food += 3.0;
                                 v.emote(Emote::Sparkle, 2.0);
-                            } else if season != 3 && ctx.rng.chance(0.5) {
+                            } else if season != WINTER && ctx.rng.chance(0.5) {
                                 pr.state += 1;
                             }
                             ctx.changed_props.push(p);
@@ -431,51 +419,34 @@ fn finish(v: &mut Villager, ctx: &mut Ctx) {
                     stock.wood += 1.0;
                     if let Some(p) = v.work_prop {
                         let pr = &mut ctx.world.props[p];
-                        if pr.alive && pr.kind.is_tree() {
-                            pr.hp = pr.hp.saturating_sub(2);
-                            if pr.hp == 0 {
-                                pr.kind = PropKind::Stump;
-                                pr.hp = 2;
-                                pr.state = 0;
-                                stock.wood += 4.0;
-                                ctx.changed_props.push(p);
-                            }
+                        if pr.alive && pr.kind.is_tree() && pr.chop(2) {
+                            stock.wood += 4.0;
+                            ctx.changed_props.push(p);
                         }
                     }
                 }
-                Job::Miner => {
-                    stock.ore += 1.5;
+                Job::Miner => stock.ore += 1.5,
+                Job::Smith if stock.ore >= 1.0 => {
+                    stock.ore -= 1.0;
+                    stock.goods += 1.0;
                 }
-                Job::Smith => {
-                    if stock.ore >= 1.0 {
-                        stock.ore -= 1.0;
-                        stock.goods += 1.0;
-                    }
-                }
-                Job::Merchant => {
-                    if stock.goods >= 1.0 {
-                        stock.goods -= 1.0;
-                        stock.gold += 12.0;
-                    }
+                Job::Merchant if stock.goods >= 1.0 => {
+                    stock.goods -= 1.0;
+                    stock.gold += 12.0;
                 }
                 _ => {}
             }
         }
-        Goal::Leisure | Goal::Play => {
-            v.needs.fun = (v.needs.fun + 25.0).min(100.0);
-        }
-        Goal::Socialize(other) => {
-            ctx.talks.push((v.id, other));
-        }
-        Goal::Pray => {
-            v.needs.fun = (v.needs.fun + 10.0).min(100.0);
-        }
+        Goal::Leisure | Goal::Play => top_up(&mut v.needs.fun, 25.0),
+        Goal::Socialize(other) => ctx.talks.push((v.id, other)),
+        Goal::Pray => top_up(&mut v.needs.fun, 10.0),
         Goal::Shop => {
             v.gold -= 10;
-            ctx.stocks[vid].gold += 10.0;
-            v.needs.fun = (v.needs.fun + 18.0).min(100.0);
-            if ctx.stocks[vid].goods >= 0.5 {
-                ctx.stocks[vid].goods -= 0.5;
+            let stock = &mut ctx.stocks[vid];
+            stock.gold += 10.0;
+            top_up(&mut v.needs.fun, 18.0);
+            if stock.goods >= 0.5 {
+                stock.goods -= 0.5;
             }
         }
         _ => {}
@@ -489,15 +460,20 @@ fn finish(v: &mut Villager, ctx: &mut Ctx) {
     v.think_cd = ctx.rng.range_f(0.2, 1.5);
 }
 
+/// Needs drift down over time; sleep restores energy.
+fn decay_needs(v: &mut Villager, mins: f32) {
+    let sleeping = v.goal == Goal::Sleep && v.phase == Phase::Perform;
+    let n = &mut v.needs;
+    n.hunger = (n.hunger - 0.055 * mins).max(0.0);
+    n.energy = if sleeping { (n.energy + 0.25 * mins).min(100.0) } else { (n.energy - 0.06 * mins).max(0.0) };
+    n.social = (n.social - 0.045 * mins * (0.5 + v.traits.sociable)).max(0.0);
+    n.fun = (n.fun - 0.035 * mins).max(0.0);
+}
+
 /// Advance one villager. `dt` is real seconds scaled by game speed; `mins`
 /// is in-game minutes elapsed.
 pub fn update(v: &mut Villager, ctx: &mut Ctx, dt: f32, mins: f32) {
-    // Needs decay.
-    let sleeping = v.goal == Goal::Sleep && v.phase == Phase::Perform;
-    v.needs.hunger = (v.needs.hunger - 0.055 * mins).max(0.0);
-    v.needs.energy = if sleeping { (v.needs.energy + 0.25 * mins).min(100.0) } else { (v.needs.energy - 0.06 * mins).max(0.0) };
-    v.needs.social = (v.needs.social - 0.045 * mins * (0.5 + v.traits.sociable)).max(0.0);
-    v.needs.fun = (v.needs.fun - 0.035 * mins).max(0.0);
+    decay_needs(v, mins);
     if v.emote_t > 0.0 {
         v.emote_t -= dt;
         if v.emote_t <= 0.0 {
@@ -507,82 +483,84 @@ pub fn update(v: &mut Villager, ctx: &mut Ctx, dt: f32, mins: f32) {
     v.actor.update_anim(dt);
 
     match v.phase {
-        Phase::Travel => {
-            if v.goal == Goal::Idle {
-                v.think_cd -= mins;
-                if v.think_cd <= 0.0 {
-                    decide(v, ctx);
-                }
-                return;
-            }
-            // Re-target moving conversation partners.
-            if let Goal::Socialize(id) = v.goal {
-                if let Some(s) = ctx.seen.iter().find(|s| s.id == id) {
-                    let d = ((s.x - v.actor.x).powi(2) + (s.y - v.actor.y).powi(2)).sqrt();
-                    if d < TILE as f32 * 1.4 {
-                        v.actor.clear_path();
-                        v.actor.face_toward(s.x, s.y);
-                        ctx.invites.push((id, v.id));
-                        arrive(v, ctx);
-                        return;
-                    }
-                    if !s.available && d > TILE as f32 * 3.0 {
-                        v.goal = Goal::Idle;
-                        v.think_cd = 0.5;
-                        v.actor.clear_path();
-                        return;
-                    }
-                }
-            }
-            if v.actor.follow(dt) {
-                arrive(v, ctx);
+        Phase::Travel => travel(v, ctx, dt, mins),
+        Phase::Perform => perform(v, ctx, dt, mins),
+    }
+}
+
+fn travel(v: &mut Villager, ctx: &mut Ctx, dt: f32, mins: f32) {
+    if v.goal == Goal::Idle {
+        v.think_cd -= mins;
+        if v.think_cd <= 0.0 {
+            decide(v, ctx);
+        }
+        return;
+    }
+    // Re-target moving conversation partners.
+    if let Goal::Socialize(id) = v.goal
+        && let Some(s) = ctx.seen.iter().find(|s| s.id == id)
+    {
+        let d = v.actor.dist_to(s.x, s.y);
+        if d < TILE as f32 * 1.4 {
+            v.actor.clear_path();
+            v.actor.face_toward(s.x, s.y);
+            ctx.invites.push((id, v.id));
+            arrive(v, ctx);
+            return;
+        }
+        if !s.available && d > TILE as f32 * 3.0 {
+            v.goal = Goal::Idle;
+            v.think_cd = 0.5;
+            v.actor.clear_path();
+            return;
+        }
+    }
+    if v.actor.follow(dt) {
+        arrive(v, ctx);
+    }
+}
+
+fn perform(v: &mut Villager, ctx: &mut Ctx, dt: f32, mins: f32) {
+    v.timer -= mins;
+    match v.goal {
+        Goal::Sleep => {
+            // Sleep on until a personal wake-up hour once rested.
+            let h = ctx.clock.hour();
+            let wake = 5.5 + (1.0 - v.traits.diligent) * 2.0 + if v.job == Job::Child { 0.8 } else { 0.0 };
+            v.timer = if (wake..wake + 4.0).contains(&h) && v.needs.energy > 70.0 { 0.0 } else { 1.0 };
+        }
+        Goal::Socialize(_) => {
+            top_up(&mut v.needs.social, 0.9 * mins);
+            if v.emote == Emote::None && ctx.rng.chance(0.004 * mins.max(1.0)) {
+                v.emote(if ctx.rng.chance(0.75) { Emote::Chat } else { Emote::Music }, 2.0);
             }
         }
-        Phase::Perform => {
-            v.timer -= mins;
-            match v.goal {
-                Goal::Sleep => {
-                    let h = ctx.clock.hour();
-                    let wake = 5.5 + (1.0 - v.traits.diligent) * 2.0 + if v.job == Job::Child { 0.8 } else { 0.0 };
-                    if (wake..wake + 4.0).contains(&h) && v.needs.energy > 70.0 {
-                        v.timer = 0.0;
-                    } else {
-                        v.timer = 1.0;
-                    }
+        Goal::Play => {
+            // Kids dart about between short hops.
+            if !v.actor.has_path() && ctx.rng.chance(0.05) {
+                let (tx, ty) = v.actor.tile();
+                if let Some(t) = random_tile_near(ctx.world, ctx.rng, tx, ty, 3, true) {
+                    v.actor.path_to(ctx.world, ctx.pf, t, 400);
                 }
-                Goal::Socialize(_) => {
-                    v.needs.social = (v.needs.social + 0.9 * mins).min(100.0);
-                    if v.emote == Emote::None && ctx.rng.chance(0.004 * mins.max(1.0)) {
-                        v.emote(if ctx.rng.chance(0.75) { Emote::Chat } else { Emote::Music }, 2.0);
-                    }
-                }
-                Goal::Play => {
-                    // Kids dart about between short hops.
-                    if !v.actor.has_path() && ctx.rng.chance(0.05) {
-                        let (tx, ty) = v.actor.tile();
-                        if let Some(t) = random_tile_near(ctx.world, ctx.rng, tx, ty, 3, true) {
-                            v.actor.path_to(ctx.world, ctx.pf, t, 400);
-                        }
-                    }
-                    v.actor.follow(dt);
-                    if v.emote == Emote::None && ctx.rng.chance(0.002) {
-                        v.emote(Emote::Music, 1.5);
-                    }
-                }
-                Goal::Work if v.job == Job::Guard || v.job == Job::Adventurer => {
-                    if !v.actor.has_path() && ctx.rng.chance(0.03) {
-                        if let Some(t) = work_target(v, ctx) {
-                            v.actor.path_to(ctx.world, ctx.pf, t, 4000);
-                        }
-                    }
-                    v.actor.follow(dt);
-                }
-                _ => {}
             }
-            if v.timer <= 0.0 {
-                finish(v, ctx);
+            v.actor.follow(dt);
+            if v.emote == Emote::None && ctx.rng.chance(0.002) {
+                v.emote(Emote::Music, 1.5);
             }
         }
+        Goal::Work if v.job == Job::Guard || v.job == Job::Adventurer => {
+            if !v.actor.has_path()
+                && ctx.rng.chance(0.03)
+                && let Some(t) = work_target(v, ctx)
+            {
+                v.actor.path_to(ctx.world, ctx.pf, t, 4000);
+            }
+            v.actor.follow(dt);
+        }
+        _ => {}
+    }
+    if v.timer <= 0.0 {
+        finish(v, ctx);
     }
 }
 
@@ -603,8 +581,4 @@ pub fn accept_invite(v: &mut Villager, from: u32, fx: f32, fy: f32, rng: &mut Rn
     v.actor.activity = Activity::Talk;
     v.actor.face_toward(fx, fy);
     v.emote(Emote::Chat, 1.5);
-}
-
-pub fn is_water_edge(world: &World, x: i32, y: i32) -> bool {
-    [(0, 1), (1, 0), (-1, 0), (0, -1)].iter().any(|(dx, dy)| world.terrain(x + dx, y + dy) == Terrain::Shallow)
 }
