@@ -9,6 +9,9 @@ use sim::world::bake::{Baker, CHUNK_PX};
 use sim::world::villages::BuildingKind;
 use sim::world::{worldgen, PropKind, CHUNK, CHUNKS_X, CHUNKS_Y, TILE};
 
+/// (x, y, z, image, pivot) for one placed sprite.
+type Placed = (i32, i32, i32, Img, (i32, i32));
+
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let seed: u64 = a.get(1).and_then(|s| s.parse().ok()).unwrap_or(2026);
@@ -40,7 +43,7 @@ fn main() {
         }
     }
     // Collect drawables: (sort_y, x, y, sprite, pivot)
-    let mut items: Vec<(i32, i32, i32, Img, (i32, i32))> = Vec::new();
+    let mut items: Vec<Placed> = Vec::new();
     for (i, pr) in w.props.iter().enumerate() {
         if pr.x < x0 - 4 || pr.y < y0 - 2 || pr.x > x0 + tw + 4 || pr.y > y0 + th + 6 {
             continue;
@@ -108,10 +111,10 @@ fn main() {
             for xx in (cx - rx) as i32..=(cx + rx) as i32 {
                 let nx = (xx as f32 + 0.5 - cx) / rx;
                 let ny = (yy as f32 + 0.5 - cy) / ry;
-                if nx * nx + ny * ny <= 1.0 {
-                    if let Some(c) = img.get(xx, yy) {
-                        img.set(xx, yy, pal::mix(c, hex(0x1c1830), 0.35));
-                    }
+                if nx * nx + ny * ny <= 1.0
+                    && let Some(c) = img.get(xx, yy)
+                {
+                    img.set(xx, yy, pal::mix(c, hex(0x1c1830), 0.35));
                 }
             }
         }

@@ -22,7 +22,7 @@ fn main() {
     let views = [(0u8, 0u16), (2, 0), (1, 0)];
     let (cw, ch) = (people::FW, people::FH);
     let cols = 6;
-    let rows = (looks.len() + 1) / 2;
+    let rows = looks.len().div_ceil(2);
     let mut img = Img::new(cw * cols, ch * rows as i32);
     for y in 0..img.h {
         for x in 0..img.w {
