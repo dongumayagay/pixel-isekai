@@ -75,3 +75,10 @@ bald male and female, and the front pair. GIF is re-encoded (palette differs fro
 2px edge runs) so pixels are useless and unlicensed anyway. Use as a **drawing reference** for the male
 body (shoulder width, pec/abs line, straight hips, bald scalp shape in all 4 dirs) when editing our female
 sheets into a male base. Also confirms their bald head silhouette for our rebuilt scalp.
+
+## Store promo sweep (2026-11-02)
+All 11 project pages scraped (88 promo images) into `.context/ref/angeler_promo/` (local only, see its
+INDEX.md). Key takeaways: the author's PRO 64 pack is layered exactly like our extract (head / hair /
+underwear / face overlay), so our kit scheme is validated; bald male + female idle GIFs = male body
+reference; 48px NPC pack shows 28 outfits (maids, nun, priest, noble, villagers), guard pack shows 5
+armour tiers, female knight shows armour-over-base layering. All reference only, no pixel reuse.
