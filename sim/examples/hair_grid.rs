@@ -11,21 +11,27 @@ fn main() {
     let f: u16 = std::env::var("FRAME").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     let views = [0u8, 2, 1];
     let (cw, ch) = (people::FW, 72);
-    let n = people::HAIR_STYLES as i32;
+    // STYLES=13,1,8 renders only those styles (in that order).
+    let styles: Vec<i32> = match std::env::var("STYLES") {
+        Ok(v) => v.split(',').filter_map(|t| t.trim().parse().ok()).collect(),
+        Err(_) => (0..people::HAIR_STYLES as i32).collect(),
+    };
+    let n = styles.len() as i32;
     let mut img = Img::new(cw * 6, ch * n);
     for y in 0..img.h {
         for x in 0..img.w {
             img.set(x, y, if (x / (cw * 3) + y / ch) % 2 == 0 { hex(0x6a9a5a) } else { hex(0x5a8a4e) });
         }
     }
-    for style in 0..n {
+    for (row, &style) in styles.iter().enumerate() {
+        let row = row as i32;
         for (si, female) in [true, false].into_iter().enumerate() {
             let look = Look { hair_style: style as u8, female, hat: 0, held: 0, outfit: 0, hair: [1, 3, 0, 4, 2][style as usize % 5], ..base };
             for (k, &d) in views.iter().enumerate() {
                 let fr = people::frame(&look, d, f);
                 let mut head = Img::new(cw, ch);
                 head.blit(&fr, 0, -6, false);
-                img.blit(&head, (si as i32 * 3 + k as i32) * cw, style * ch, false);
+                img.blit(&head, (si as i32 * 3 + k as i32) * cw, row * ch, false);
             }
         }
     }

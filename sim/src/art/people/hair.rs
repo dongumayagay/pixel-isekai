@@ -26,6 +26,31 @@
 //! | back view, short hair          | solid dome to the nape, U hairline | cap to nape, hairline rise       |
 //! | back view, long hair           | sheet 2 px wider than the skull    | sheet_w()                        |
 //! | hats over the crown            | only fringe, locks and tails show  | covers_crown(): no crown pieces  |
+//!
+//! Side and back views, re-derived from the 64x128 idle sheet (frame 0, all
+//! four directions, top-down 3/4 camera), the 8x head crops, the itch.io
+//! turnaround gifs and SpriteKiln's hair kit (`specs/kits/hair.yaml`: back
+//! mass = three tubes hugging 2-3 px behind the skull, temple lock = one
+//! tube from the temple past the ear to the jaw):
+//!
+//! | rule                            | reference                            | here                                   |
+//! |---------------------------------|--------------------------------------|----------------------------------------|
+//! | profile back edge is vertical   | x46 rows 25-55: straight to shoulders| SIDE_HEAD row + volume, sheet follows  |
+//! | profile depth = front width + 2 | 29 deep at the ear row vs 27 wide    | skull row +2.5 behind, +2.5 in front   |
+//! | profile fringe: level bottom    | 4 px thick, ends at the brow, 1 step | clump slopes capped at 0.5 (no V's)    |
+//! | strands inside, not notches     | dark columns x23-33 inside the fringe| near-vertical lines to the fringe edge |
+//! | temple lock in front of the ear | 3 px wide, fringe bottom to the jaw  | lock_strip 3 px at ear_x + 4           |
+//! | ear shows, even with long hair  | skin x33-36 between lock and mass    | EAR_SIDE always stamped over the cap   |
+//! | back mass behind the ear        | 9-10 px wide, darkest beside the neck| cap/sheet to the neck, 2 dark columns  |
+//! | profile tones (3/4 camera)      | light crown, mid mass, dark at neck  | h3 crown + fringe, h2 mass, h1 at neck |
+//! | tail hangs, never fins out      | tied at the occiput, falls to the    | tie at skull back, cy-4; tail straight |
+//! |                                 | shoulders behind the neck            | down to neck.y + 8                     |
+//! | profile shows a crown sliver    | hair top 1 row above front and back  | side dome ellipse raised 1 row         |
+//! | back view: crown seen from above| light top 55% in a U to ear level,   | h3 above U (cy+5 centre, cy-1 sides),  |
+//! |                                 | mid below, no stripes on the dome    | h2 below; no flow lines                |
+//! | back view: splits only low down | darker clump lines in bottom 10 rows | hair_sheet lower clumps only           |
+//! | back-view tail                  | wide (4-5 px) from the occiput       | r 4.5 from cy-4, strands converge      |
+//! | every joint from the Build      | head sits lower / neck shorter later | head_c, head_r, neck_top, neck, neck_w |
 
 use super::*;
 
@@ -129,14 +154,16 @@ fn style(s: u8) -> Style {
 impl Style {
     /// The fringe seen in profile: the clumps of the heavier half of the
     /// front fringe laid along the head's depth, the centre clump just
-    /// behind the brow and the outermost at the temple.
+    /// behind the brow and the outermost at the temple. The clump sides are
+    /// flattened (reference: the profile fringe ends in a near-level edge
+    /// with strand lines inside it, not a saw of V notches).
     fn side_tips(&self, out: &mut [(f32, f32, f32); 8]) -> usize {
         let hang = |s: f32| self.tips.iter().filter(|t| t.0 * s > -0.5).map(|t| t.1).sum::<f32>();
         let s = if hang(-1.0) > hang(1.0) + 0.5 { -1.0 } else { 1.0 };
         let mut n = 0;
         for &(tx, ty, slope) in self.tips.iter().filter(|t| t.0 * s > -0.5) {
             if n < out.len() {
-                out[n] = (3.0 + tx.abs() * 0.9, ty, slope);
+                out[n] = (3.0 + tx.abs() * 0.9, ty, slope.min(0.5));
                 n += 1;
             }
         }
@@ -194,6 +221,53 @@ impl Skull {
             }
         }
     }
+
+    /// Profile landmarks from the skeleton: the hair's resting back edge
+    /// (the skull's deepest row plus the hair's volume), the ear's left
+    /// column and the temple lock's left column, just in front of the ear.
+    fn profile(&self, b: &Build, tight: bool) -> Profile {
+        let vb = if tight { 1.5 } else { 2.5 };
+        let deepest = SIDE_HEAD.iter().map(|r| r.0).min().unwrap_or(-13) as f32;
+        let ear_x = b.head_c.x - 5.0;
+        Profile { back: b.head_c.x + deepest - vb, vb, vf: if tight { 2.0 } else { 2.5 }, ear_x, lock_x: ear_x + 4.0 }
+    }
+
+    /// Hair extents on one profile row: the dome ellipse over the crown
+    /// unioned with the skull row (`SIDE_HEAD`) plus the hair's volume, so
+    /// the back edge falls straight to the nape instead of bulging out.
+    /// Rows below the skull's nape keep curving in toward the neck.
+    fn side_span(&self, b: &Build, p: &Profile, fy: f32) -> (f32, f32) {
+        let mc = self.mc();
+        // The 3/4 camera shows a sliver of the crown in profile: the dome
+        // sits one row higher than the front and back views (ref sheet:
+        // hair top y=16 side vs 17 front/back).
+        let ny = (fy - mc.y + 1.0) / self.ry;
+        let e = if ny.abs() <= 1.0 { self.rx * (1.0 - ny * ny).sqrt() } else { f32::NAN };
+        let dy = (fy - b.head_c.y).floor() as i32;
+        let (l, r) = match dy {
+            -13..=5 => SIDE_HEAD[(dy + 13) as usize],
+            d if d > 5 => (SIDE_HEAD[18].0 + (d - 5), SIDE_HEAD[18].1),
+            _ => (i32::MAX, i32::MIN),
+        };
+        let (l, r) = if l == i32::MAX { (f32::NAN, f32::NAN) } else { (b.head_c.x + l as f32 - p.vb, b.head_c.x + r as f32 + p.vf) };
+        ((mc.x - e).min(l), (mc.x + e).max(r))
+    }
+}
+
+struct Profile {
+    back: f32,
+    vb: f32,
+    vf: f32,
+    ear_x: f32,
+    lock_x: f32,
+}
+
+impl Profile {
+    /// Where a tied tail hangs from in profile: at the occiput, on the hair's
+    /// back edge, so it falls behind the neck instead of finning out.
+    fn tie(&self, cy: f32) -> V2 {
+        v(self.back + 0.5, cy - 4.0)
+    }
 }
 
 /// Long-hair width down the back: just under the skull width at the nape,
@@ -213,14 +287,16 @@ pub(super) fn back_hair(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Co
     cv.begin();
     if k.long() {
         if dir == DIR_SIDE {
-            // Continues the skull's back curve, then falls along the back,
-            // narrowing toward the tips.
-            let top = cy - 4.0;
+            // A straight fall from the hair's back edge: 9-10 px show behind
+            // the neck (the front half hides behind the body), a hair wider
+            // over the shoulders, then a taper toward the tips.
+            let p = sk.profile(b, k.tight);
+            let top = cy - 2.0;
             let len = k.back + 2.0;
-            let back_x = |t: f32| 17.0 + 5.0 * t.powf(1.2) + t * t * sway * 2.2;
-            let front_x = |t: f32| 33.0 - 4.0 * t + t * t * sway * 1.2;
+            let back_x = |t: f32| p.back - 1.5 * (std::f32::consts::PI * (t / 0.3).min(1.0)).sin() * (1.0 - t * 0.5) + 4.0 * t * t + t * t * sway * 2.2;
+            let front_x = |t: f32| p.ear_x + 3.0 + t * t * sway * 1.2;
             let tt = |y: f32| ((y - top) / len).clamp(0.0, 1.0);
-            hair_sheet(cv, h, top, top + len, true, k.hem * 0.5, |y| (back_x(tt(y)) + front_x(tt(y))) * 0.5, |y| (front_x(tt(y)) - back_x(tt(y))) * 0.5);
+            hair_sheet(cv, h, top, top + len, false, k.hem * 0.5, |y| (back_x(tt(y)) + front_x(tt(y))) * 0.5, |y| (front_x(tt(y)) - back_x(tt(y))) * 0.5);
         } else {
             // From the front only what shows past the body matters; ending
             // above the knee keeps it from boxing in the legs.
@@ -247,17 +323,22 @@ fn attachments(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, k: 
     // Mirrored pairs in the front and back views; only the near one in
     // profile.
     let pair: &[f32] = if side { &[-1.0] } else { &[-1.0, 1.0] };
-    let nape = cy + if k.gathered { 10.0 } else { k.nape.max(12.0) };
+    let nape = if k.gathered { cy + 10.0 } else { b.neck_top.max(cy + k.nape) };
+    let p = sk.profile(b, k.tight);
+    // Where tails end: flowing over the shoulders, not on a neck pole.
+    let shoulder = b.neck.y + 8.0;
     match (k.extra, dir, behind) {
-        // Tied high at the back of the head: sweeps out, then falls.
+        // Tied at the occiput: a short sweep back off the tie, then the
+        // tail falls straight behind the neck to the shoulders.
         (Ponytail, DIR_SIDE, true) => {
-            let at = v(19.5, cy - 7.0);
-            let mid = at.add(v(-4.5 - sway, 7.0));
-            let end = mid.add(v(-1.0 - sway * 2.0, 17.0));
-            lock_segment(cv, h, at, mid, 3.6, false);
-            tail_lock(cv, h, mid.add(v(0.5, -1.0)), end, 4.2);
+            let at = p.tie(cy);
+            let mid = at.add(v(-3.0 - sway * 0.5, 6.0));
+            lock_segment(cv, h, at, mid, 2.6, false);
+            tail_lock(cv, h, mid.add(v(0.3, -1.0)), v(mid.x - 0.5 - sway * 2.0, shoulder), 4.2);
+        }
+        (Ponytail, DIR_SIDE, false) => {
             cv.begin();
-            cv.ellipse(at.add(v(0.5, 0.0)), 2.0, 2.4, &tie, 0.05);
+            cv.ellipse(p.tie(cy).add(v(0.5, 0.0)), 1.4, 2.2, &tie, 0.05);
         }
         // From the front the tail peeks out past the head.
         (Ponytail, DIR_DOWN, true) => {
@@ -265,61 +346,78 @@ fn attachments(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, k: 
             tail_lock(cv, h, base, base.add(v(2.0 + sway, 18.0)), 3.2);
         }
         (Ponytail, DIR_UP, false) => {
-            let base = v(32.0, cy - 7.0);
+            let base = v(32.0, cy - 4.0);
+            // Strands gathered up into the tie.
+            for s in [-1.0f32, 1.0] {
+                cv.line(v(32.0 + s * 8.5, cy + 4.0), v(32.0 + s * 2.0, cy - 3.0), |t| if t > 0.9 { None } else { Some(h[2]) });
+            }
             cv.begin();
-            tail_lock(cv, h, base, base.add(v(sway, 30.0)), 4.2);
+            tail_lock(cv, h, base.add(v(0.0, 0.5)), v(32.0 + sway, shoulder + 2.0), 4.5);
             cv.begin();
-            cv.ellipse(base.add(v(0.0, -0.5)), 2.2, 1.6, &tie, 0.1);
+            cv.ellipse(base, 2.4, 1.6, &tie, 0.1);
         }
-        (TwinTails, DIR_DOWN | DIR_SIDE, true) => {
+        (TwinTails, DIR_DOWN, true) => {
             for &s in pair {
-                let base = v(32.0 + s * 14.5 + if side { 4.0 } else { 0.0 }, cy - 4.0);
+                let base = v(32.0 + s * 14.5, cy - 4.0);
                 tail_lock(cv, h, base, base.add(v(s * 3.0 + sway, 30.0)), 4.0);
             }
+        }
+        // In profile the far tail shows as a sliver behind the neck; the
+        // near one hangs beside the ear, over the shoulder.
+        (TwinTails, DIR_SIDE, true) => {
+            let base = v(p.ear_x - 4.0, cy - 3.0);
+            tail_lock(cv, h, base, v(base.x - 1.0 - sway, shoulder), 3.4);
+        }
+        (TwinTails, DIR_SIDE, false) => {
+            let base = v(p.ear_x + 1.5, cy - 3.0);
+            cv.begin();
+            tail_lock(cv, h, base, v(base.x + sway * 2.0, shoulder + 1.0), 3.8);
+            cv.begin();
+            cv.ellipse(base.add(v(0.0, -1.0)), 2.2, 1.8, &tie, 0.1);
         }
         (TwinTails, DIR_DOWN | DIR_UP, false) => {
             for &s in pair {
                 let base = v(32.0 + s * (sk.rx + 0.5), cy - 4.0);
                 cv.begin();
                 if dir == DIR_UP {
-                    tail_lock(cv, h, base, base.add(v(s * 3.0 + sway, 30.0)), 4.0);
+                    tail_lock(cv, h, base, v(base.x + s * 3.0 + sway, shoulder), 4.0);
                 }
                 cv.ellipse(base.add(v(0.0, -1.0)), 2.4, 2.0, &tie, 0.1);
             }
         }
         // A long tail tied at the nape, straight down the back.
-        (LowTie, DIR_SIDE, true) => tail_lock(cv, h, v(20.5, cy + 6.0), v(19.5 - sway * 1.5, cy + 34.0), 3.0),
+        (LowTie, DIR_SIDE, true) => tail_lock(cv, h, v(p.back + 3.5, b.neck_top - 5.0), v(p.back + 2.5 - sway * 1.5, shoulder + 16.0), 3.0),
         (LowTie, DIR_SIDE, false) => {
             cv.begin();
-            cv.ellipse(v(21.0, cy + 6.5), 1.3, 2.0, &tie, 0.1);
+            cv.ellipse(v(p.back + 4.0, b.neck_top - 4.5), 1.3, 2.0, &tie, 0.1);
         }
         (LowTie, DIR_UP, false) => {
-            let at = v(32.0, cy + 8.0);
+            let at = v(32.0, b.neck_top - 4.0);
             cv.begin();
-            tail_lock(cv, h, at, v(32.0 + sway, cy + 36.0), 3.0);
+            tail_lock(cv, h, at, v(32.0 + sway, shoulder + 18.0), 3.0);
             cv.begin();
             cv.ellipse(at, 2.2, 1.2, &tie, 0.1);
         }
         // Samurai: tied high at the back of the crown, the tail arcing out
         // and down to the shoulders.
         (TopKnot, DIR_SIDE, true) => {
-            let at = v(20.5, cy - 10.0);
-            let mid = at.add(v(-4.0 - sway * 0.5, 4.0));
+            let at = v(p.back + 4.0, cy - 10.0);
+            let mid = at.add(v(-4.5 - sway * 0.5, 5.0));
             lock_segment(cv, h, at, mid, 3.0, false);
-            tail_lock(cv, h, mid.add(v(0.3, -0.8)), mid.add(v(-1.0 - sway * 2.0, 20.0)), 3.4);
+            tail_lock(cv, h, mid.add(v(0.3, -0.8)), v(mid.x - 0.5 - sway * 2.0, shoulder), 3.4);
         }
         (TopKnot, _, false) if crown => {
             cv.begin();
             match dir {
                 DIR_DOWN => cv.ellipse(v(32.0, cy - ry - 0.5), 2.6, 2.2, h, 0.1),
                 DIR_SIDE => {
-                    cv.ellipse(v(21.0, cy - 10.5), 2.4, 2.4, h, 0.1);
+                    cv.ellipse(v(p.back + 4.5, cy - 10.5), 2.4, 2.4, h, 0.1);
                     cv.begin();
-                    cv.ellipse(v(22.0, cy - 10.0), 0.9, 2.0, &tie, 0.1);
+                    cv.ellipse(v(p.back + 5.5, cy - 10.0), 0.9, 2.0, &tie, 0.1);
                 }
                 _ => {
                     let at = v(32.0, cy - 11.0);
-                    tail_lock(cv, h, at, v(32.0 + sway, cy + 16.0), 3.2);
+                    tail_lock(cv, h, at, v(32.0 + sway, shoulder - 2.0), 3.2);
                     cv.begin();
                     cv.ellipse(at, 2.6, 2.0, h, 0.1);
                     cv.begin();
@@ -362,7 +460,7 @@ fn attachments(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, k: 
         (SideBraid, DIR_UP, false) => braid(cv, h, &[v(40.5, cy + 6.0), v(43.5, cy + 17.0)], 2.9, 2.6, &tie, 1.0),
         (HalfUp, DIR_SIDE, false) => {
             cv.begin();
-            cv.ellipse(v(18.5, cy - 5.0), 1.6, 2.4, &tie, 0.1);
+            cv.ellipse(v(p.back + 2.0, cy - 5.0), 1.6, 2.4, &tie, 0.1);
         }
         // A ribbon bow: two loops, a knot and two tails falling over the hair.
         (HalfUp, DIR_UP, false) => {
@@ -383,7 +481,8 @@ fn attachments(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &Colors, k: 
                 }
             } else if side {
                 let nape = cy + k.nape;
-                for (x, len) in [(20.5f32, 4.0f32), (24.5, 3.5)] {
+                for (dx, len) in [(3.0f32, 4.0f32), (7.0, 3.5)] {
+                    let x = p.back + dx;
                     tail_lock(cv, h, v(x + 1.0, nape - 3.0), v(x - 0.5, nape + len - 2.0), 2.0);
                 }
             }
@@ -455,20 +554,6 @@ fn hair_sheet(cv: &mut Canvas, h: &R5, top: f32, end: f32, lit: bool, vdepth: f3
             let parted = vdepth <= 0.0 && t > 0.12 && uc < 0.13;
             let tone = if edge || lower || parted { base - 1 } else { base };
             cv.fill(x, y, h[tone]);
-        }
-    }
-}
-
-/// Flow lines over a hair mass: from the crown, over the curve of the
-/// skull, then straight down to `bottom`. Mirrored pairs at each offset.
-fn flow_lines(cv: &mut Canvas, h: &R5, cx: f32, crown_y: f32, skull_y: f32, bottom: f32, offsets: &[f32]) {
-    for &o in offsets {
-        for s in [-1.0f32, 1.0] {
-            let a = v(cx + s * o * 0.35, crown_y);
-            let m = v(cx + s * o * 1.05, skull_y);
-            let e = v(cx + s * o, bottom);
-            cv.line(a, m, |t| if t < 0.35 { None } else { Some(h[2]) });
-            cv.line(m, e, |t| if t > 0.85 { Some(h[1]) } else { Some(h[2]) });
         }
     }
 }
@@ -635,8 +720,8 @@ pub(super) fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &C
     match dir {
         DIR_UP => {
             // The whole cap down to the nape, then the sheet over the back.
-            let nape = cy + if k.gathered { 10.0 } else { k.nape.max(12.0) };
-            let neck_w = if look.female { 6.0 } else { 7.0 };
+            let nape = if k.gathered { cy + 10.0 } else { b.neck_top.max(cy + k.nape) };
+            let neck_w = b.neck_w + 2.8;
             // Round crown, full width to the ears, then the skull curves in
             // under the ears and eases into the neck (a hair under the full
             // radius keeps the widest row from poking out a nub).
@@ -653,36 +738,36 @@ pub(super) fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &C
                     er + (neck_w + 0.5 - er) * (1.0 - (1.0 - t).powf(1.8))
                 }
             };
-            sk.cap(cv, nape, |nx, ny| (nx * rx).abs() <= half(mc.y + ny * ry) + EPS, |px, fy, nx, ny| {
+            sk.cap(cv, nape, |nx, ny| (nx * rx).abs() <= half(mc.y + ny * ry) + EPS, |px, fy, nx, _| {
                 let d = (px - 32.0).abs();
                 // The hairline rises behind the ears into a U at the nape.
                 let rise = (d / rx).min(1.0).powf(1.6) * if k.gathered { 7.0 } else { 4.0 };
                 if fy > nape - rise {
                     return None;
                 }
+                // The 3/4 camera sees the top of the dome: lit in a U down
+                // to ear level at the centre, the fall below it a step
+                // darker, no stripes across the crown.
+                let under = fy > cy + 5.0 - (d / rx).min(1.0).powi(2) * 6.0;
                 Some(match ex {
                     // A horseshoe at ear height; the crown stays bare.
                     Bald if !(cy - 1.0..=cy + 7.0).contains(&fy) => return None,
                     Bald => h[if nx.abs() > 0.8 { 2 } else { 3 }],
                     Undercut if fy > cy - 2.0 => clipped[if nx.abs() > 0.8 { 1 } else { 2 }],
-                    _ => h[if nx.abs() > 0.86 || ny > 0.7 { 2 } else { 3 }],
+                    _ => h[if under || nx.abs() > 0.9 { 2 } else { 3 }],
                 })
             });
             let top = cy + 5.0;
             let len = (k.back - 5.0).max(0.0);
             if k.long() {
-                hair_sheet(cv, h, top, top + len, true, k.hem, |_| 32.0, |y| sheet_w(rx, ((y - top) / len).clamp(0.0, 1.0)));
+                hair_sheet(cv, h, top, top + len, false, k.hem, |_| 32.0, |y| sheet_w(rx, ((y - top) / len).clamp(0.0, 1.0)));
+            } else if !matches!(ex, Bald | Undercut) {
+                // Short cuts: a pair of clump splits low on the nape only.
+                for s in [-1.0f32, 1.0] {
+                    cv.line(v(32.0 + s * 4.0, nape - 6.0), v(32.0 + s * 4.5, nape - 1.5), |t| if t < 0.1 { None } else { Some(h[1]) });
+                }
             }
-            // Flow lines that follow the skull, then fall with the hair.
-            let bottom = match ex {
-                Undercut => cy - 3.0,
-                _ if k.long() => top + len - 7.0,
-                _ => nape - 2.0,
-            };
             if ex != Bald {
-                // Long sheets get more strands so they don't read as a slab.
-                let offsets: &[f32] = if k.back > 20.0 { &[2.5, 6.0, 10.0] } else { &[4.0, 9.5] };
-                flow_lines(cv, h, 32.0, cy - 12.0, cy + 4.0, bottom, offsets);
                 highlight_ring(cv, h, shine, mc, rx, ry, &[]);
             }
         }
@@ -690,55 +775,83 @@ pub(super) fn hair_front(cv: &mut Canvas, look: &Look, dir: u8, b: &Build, c: &C
             let mut buf = [(0.0, 0.0, 0.0); 8];
             let n = k.side_tips(&mut buf);
             let stips = &buf[..n];
-            let nape = cy + k.nape;
-            // Long hair covers the ear and nape; shorter cuts show the ear.
             let long = k.long();
-            let bottom = if long { cy + 13.0 } else { nape };
-            // The back of the head curves into the nape, no square corner.
-            sk.cap(cv, bottom, |nx, ny| {
-                let nyk = if ny > 0.0 { ny * 0.8 } else { ny };
-                nx * nx + nyk * nyk <= 1.0 + EPS
-            }, |px, fy, nx, ny| {
-                let x = px.floor() as i32;
-                // The fringe hangs over the brow and runs across the temple
-                // into the lock (no bare patch); behind it, hair to the nape.
-                let limit = if px > 33.0 {
-                    if ex == Slick { cy - 7.0 } else { fringe_bottom(stips, cy, px) }
-                } else if long {
-                    cy + 13.0
-                } else {
-                    nape - ((px - 22.5) / 11.0).clamp(0.0, 1.0) * 3.0
-                };
-                if fy > limit {
-                    return None;
+            let p = sk.profile(b, k.tight);
+            let nape = cy + k.nape;
+            // Short cuts end at the nape, the bottom edge rising behind the
+            // ear; long hair's cap stops at the skull's nape and the sheet
+            // (behind the body) carries on down.
+            let skull_nape = cy + 5.5;
+            let bottom = if long { skull_nape } else { nape };
+            let ear_top = cy + 3.5;
+            for y in (mc.y - ry).floor() as i32 - 1..=bottom.ceil() as i32 {
+                let fy = y as f32 + 0.5;
+                let (xl, xr) = sk.side_span(b, &p, fy);
+                if xl.is_nan() {
+                    continue;
                 }
-                let rim = nx * nx + ny * ny > 0.8 && ny > -0.2;
-                Some(match ex {
-                    Bald if fy < cy - 3.0 || x > 29 => return None,
-                    Undercut if fy > cy - 5.0 && x < 33 => clipped[if rim { 1 } else { 2 }],
-                    _ => h[if rim { 2 } else { 3 }],
-                })
-            });
-            // The ear sits behind the temple lock, eye line to nose; beastfolk
-            // and elves draw their own ears.
-            if !long && human_ears {
+                for x in xl.floor() as i32..=xr.ceil() as i32 {
+                    let px = x as f32 + 0.5;
+                    if px < xl || px > xr {
+                        continue;
+                    }
+                    // Three zones along the depth: the fringe over the brow
+                    // (level bottom), the ear column (the ear is stamped
+                    // over), and the mass behind the ear down to the nape.
+                    let limit = if px >= p.lock_x {
+                        if ex == Slick { cy - 7.0 } else { fringe_bottom(stips, cy, px) }
+                    } else if px >= p.ear_x {
+                        ear_top
+                    } else if long {
+                        skull_nape
+                    } else {
+                        nape - (px - (p.ear_x - 5.0)).max(0.0) * 0.8
+                    };
+                    if fy > limit {
+                        continue;
+                    }
+                    // Rounded bottom-back corner.
+                    if fy > bottom - 1.0 && px < xl + 1.0 {
+                        continue;
+                    }
+                    let back_edge = px < xl + 1.0 && fy > cy - 7.0;
+                    let under = fy > limit - 1.0 && px < p.lock_x;
+                    // The 3/4 camera: the crown and fringe lit, the mass
+                    // behind the ear a step darker, darkest beside the neck.
+                    let mass = px < p.ear_x && fy > cy - 3.5 + ((px - xl) / 10.0).powi(2) * 2.0;
+                    let neck = px >= p.ear_x - 2.0 && px < p.ear_x && fy > cy + 1.0;
+                    let tone = if neck { 1 } else if back_edge || under || mass { 2 } else { 3 };
+                    let c = match ex {
+                        Bald if fy < cy - 3.0 || px > p.ear_x + 2.5 => continue,
+                        Undercut if fy > cy - 5.0 && px < p.lock_x + 2.0 => clipped[tone.min(2)],
+                        _ => h[tone],
+                    };
+                    cv.fill(x, y, c);
+                }
+            }
+            // The ear shows between the lock and the back mass, even under
+            // long hair; beastfolk and elves draw their own ears.
+            if human_ears {
                 cv.begin();
-                stamp_fill(cv, 27, cy.round() as i32 + 3, &EAR_SIDE, false, &skin_pal);
+                stamp_fill(cv, p.ear_x as i32, cy.round() as i32 + 3, &EAR_SIDE, false, &skin_pal);
                 cv.begin();
             }
-            // Every cut has a temple lock (a sideburn at least) to the jaw.
+            // Every cut has a temple lock (a sideburn at least) in front of
+            // the ear, from the fringe's edge to the jaw.
             if ll > 0.0 && !matches!(ex, Slick | Undercut | Bald) {
-                lock_strip(cv, h, 31.5, cy - 1.0, cy + ll.clamp(6.0, 12.0), (lw * 0.7).max(2.6), sway, 1.0, k.blunt);
+                let top = fringe_bottom(stips, cy, p.lock_x + 1.5) - 1.5;
+                lock_strip(cv, h, p.lock_x + 1.5, top.min(cy + 1.0), cy + ll.clamp(6.0, 12.0), (lw * 0.7).clamp(2.6, 3.2), sway, 1.0, k.blunt);
             }
+            // Strands inside the fringe, falling to its edge.
             for &(tx, _, _) in stips.iter().skip(1) {
-                let nb = fringe_bottom(stips, cy, (32.0 + tx - 2.0).floor() + 0.5);
-                cv.line(v(32.0 + tx * 0.5, cy - 11.0), v(32.0 + tx - 2.0, nb), |t| if t < 0.1 { None } else if t > 0.8 { Some(h[1]) } else { Some(h[2]) });
+                let ex0 = 32.0 + tx - 2.0;
+                let nb = fringe_bottom(stips, cy, ex0.floor() + 0.5);
+                cv.line(v(ex0 + 0.5, cy - 9.0), v(ex0, nb - 0.5), |t| if t < 0.1 { None } else if t > 0.75 { Some(h[1]) } else { Some(h[2]) });
             }
             if ex != Bald {
-                let low = if ex == Undercut { cy - 6.0 } else { nape - 2.0 };
-                for dx in [-8.0f32, -3.0] {
-                    cv.line(v(31.0 + dx * 0.4, cy - 12.0), v(31.0 + dx * 1.3, low), |t| if t < 0.15 { None } else { Some(h[2]) });
-                }
+                // One strand over the back of the crown into the mass.
+                let low = if ex == Undercut { cy - 6.0 } else { bottom - 2.0 };
+                cv.line(v(p.back + 6.5, cy - 11.0), v(p.back + 4.0, low), |t| if t < 0.15 { None } else { Some(h[2]) });
                 highlight_ring(cv, h, shine, mc, rx, ry, &[]);
             }
         }
@@ -895,8 +1008,8 @@ fn spikes(cv: &mut Canvas, h: &R5, cy: f32, dir: u8) {
     };
     if dir == DIR_SIDE {
         // Profile: swept back over the crown.
-        for (k, (x, ang, len)) in [(36.0f32, -0.35f32, 6.0f32), (31.0, -0.6, 7.5), (26.0, -0.85, 7.5), (21.5, -1.15, 6.0)].into_iter().enumerate() {
-            let y = cy - 12.5 + (k as f32 - 0.5).abs() * 1.2;
+        for (k, (x, ang, len)) in [(36.0f32, -0.35f32, 7.0f32), (31.0, -0.6, 8.5), (25.5, -0.85, 8.5), (20.5, -1.15, 7.0)].into_iter().enumerate() {
+            let y = cy - 13.5 + (k as f32 - 0.5).abs() * 1.2;
             spike(cv, v(x, y), ang, len, 3.0);
         }
     } else {
