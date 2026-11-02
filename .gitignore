@@ -1,9 +1,0 @@
-target/
-/node_modules
-/dist
-/web/src/pkg
-.DS_Store
-__pycache__/
-
-# licensed base (no redistribution): rebuilt locally by tools/charkit64/extract.py
-/assets/charkit64
