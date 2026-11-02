@@ -24,6 +24,7 @@ mod cast;
 mod clothing;
 mod face;
 mod hair;
+mod locks;
 mod paint;
 mod props;
 mod qa;
@@ -37,6 +38,7 @@ use body::*;
 use clothing::*;
 use face::*;
 use hair::*;
+pub use locks::*;
 use paint::*;
 use props::*;
 
@@ -225,15 +227,13 @@ pub struct Look {
     #[serde(alias = "bottom")]
     pub secondary: u8,
     pub outfit: u8,
-    /// 0 none, 1 straw hat, 2 bandana, 3 helmet, 4 hood, 5 cap, 6 witch hat,
-    /// 7 flower, 8 chef toque, 9 ribbon, 10 maid headband, 11 miner helmet
+    /// Headwear, an index into [`HAT_TABLE`] (see the `HAT_*` constants).
     pub hat: u8,
     #[serde(alias = "hat_color")]
     pub accent: u8,
     pub female: bool,
     /// 0 child, 1 adult, 2 elder
     pub age: u8,
-    pub beard: bool,
     pub eyes: u8,
     /// Adult body (18+). Gates figure shaping and its secondary motion, so
     /// child and teen sprites never get them.
@@ -258,7 +258,7 @@ pub struct Look {
     /// 0 short, 1 medium, 2 tall.
     #[serde(default = "default_height")]
     pub height: u8,
-    /// Facial hair for grown men (see [`FACIAL`]); 0 falls back to `beard`.
+    /// Facial hair for grown men (see [`FACIAL`]).
     #[serde(default)]
     pub facial: u8,
     /// How revealing the outfit is cut (see [`CUTS`]).
@@ -274,24 +274,14 @@ pub const CUTS: [&str; 3] = ["Modest", "Bold", "Daring"];
 pub const FACIAL: [&str; 8] = ["None", "Stubble", "Hero mustache", "Goatee", "Short beard", "Full beard", "Sage beard", "Crescent mustache"];
 
 impl Look {
-    /// Headwear over the crown (bandana, helmet, hood, cap, chef, miner):
-    /// hair that would rise above it is not drawn.
+    /// Headwear over the crown: hair that would rise above it is not drawn.
     fn covers_crown(&self) -> bool {
-        matches!(self.hat, 2 | 3 | 4 | 5 | 8 | 11)
+        self.hat_meta().covers_crown
     }
 
-    /// Facial hair style actually drawn: grown men only; the legacy `beard`
-    /// flag means a full beard (a long one on dwarves).
+    /// Facial hair style actually drawn: grown men only.
     pub fn facial_style(&self) -> u8 {
-        if self.female || !self.mature {
-            0
-        } else if self.facial > 0 {
-            self.facial.min(FACIAL.len() as u8 - 1)
-        } else if self.beard {
-            if self.race == RACE_DWARF { 6 } else { 5 }
-        } else {
-            0
-        }
+        if self.female || !self.mature { 0 } else { self.facial.min(FACIAL.len() as u8 - 1) }
     }
 }
 
@@ -332,28 +322,38 @@ impl Look {
         let o = if female { *rng.pick(&[outfit::PEASANT, outfit::PEASANT, outfit::INNKEEPER, outfit::MERCHANT, outfit::COOK]) } else { *rng.pick(&[outfit::PEASANT, outfit::LABORER, outfit::PEASANT, outfit::MERCHANT]) };
         let (p, s, a) = outfit::defaults(o, female);
         let dyes = [0u8, 1, 2, 3, 4, 5, 8, 9, 13];
+        let skin = rng.below(pal::SKIN.len()) as u8;
+        let hair_style = if female { *rng.pick(styles_f) } else { *rng.pick(styles_m) };
+        let primary = if rng.chance(0.5) { p } else { *rng.pick(&dyes) };
+        let accent = if rng.chance(0.6) { a } else { *rng.pick(&dyes) };
+        // A plain full beard, or (rolled after the body) a chosen style.
+        let bearded = !female && age >= 1 && rng.chance(if age == 2 { 0.6 } else { 0.2 });
+        let eyes = rng.below(EYE_COLORS.len()) as u8;
+        let figure = *rng.pick(&[1u8, 2, 2, 2, 3, 3, 4]);
+        let build = *rng.pick(&[0u8, 1, 1, 1, 2, 2, 3]);
+        let height = *rng.pick(&[0u8, 1, 1, 1, 2]);
+        let facial = if !female && age >= 1 && rng.chance(if age == 2 { 0.7 } else { 0.4 }) { 1 + rng.below(FACIAL.len() - 1) as u8 } else { 0 };
         Look {
-            skin: rng.below(pal::SKIN.len()) as u8,
+            skin,
             hair: if age == 2 { 5 } else { hair },
-            hair_style: if female { *rng.pick(styles_f) } else { *rng.pick(styles_m) },
-            primary: if rng.chance(0.5) { p } else { *rng.pick(&dyes) },
+            hair_style,
+            primary,
             secondary: s,
             outfit: o,
             hat: 0,
-            accent: if rng.chance(0.6) { a } else { *rng.pick(&dyes) },
+            accent,
             female,
             age,
-            beard: !female && age >= 1 && rng.chance(if age == 2 { 0.6 } else { 0.2 }),
-            eyes: rng.below(EYE_COLORS.len()) as u8,
+            eyes,
             mature: age >= 1,
             race: RACE_HUMAN,
             beast: 0,
             held: held::NONE,
             glasses: false,
-            figure: *rng.pick(&[1u8, 2, 2, 2, 3, 3, 4]),
-            build: *rng.pick(&[0u8, 1, 1, 1, 2, 2, 3]),
-            height: *rng.pick(&[0u8, 1, 1, 1, 2]),
-            facial: if !female && age >= 1 && rng.chance(if age == 2 { 0.7 } else { 0.4 }) { 1 + rng.below(FACIAL.len() - 1) as u8 } else { 0 },
+            figure,
+            build,
+            height,
+            facial: if facial > 0 || !bearded { facial } else { 5 },
             cut: 0,
         }
     }
@@ -560,28 +560,25 @@ impl Look {
         l.figure = rng.below(5) as u8;
         l.build = rng.below(4) as u8;
         l.height = rng.below(3) as u8;
-        l.beard = rng.chance(0.3);
-        l.facial = if rng.chance(0.5) { rng.below(FACIAL.len()) as u8 } else { 0 };
+        // Rolled first so the stream matches older galleries (was the beard flag).
+        let bearded = rng.chance(0.3);
+        let facial = if rng.chance(0.5) { rng.below(FACIAL.len()) as u8 } else { 0 };
+        l.facial = if facial == 0 && bearded { if l.race == RACE_DWARF { 6 } else { 5 } } else { facial };
         if l.race == RACE_DEMON {
             l.skin = rng.below(pal::DEMON_SKIN.len()) as u8;
         }
         l.normalized()
     }
 
-    /// Enforce traits that only exist for some bodies: beards only on grown
-    /// men, figure (bust) only on grown women; children are never mature
-    /// (teens keep `mature` false until 18). Every render goes through this,
-    /// so no combination can break the rule.
+    /// Apply every rule in [`LOCKS`], in order: hats that hair, ears or
+    /// swimwear clash with come off (or the hair tucks under them), and
+    /// traits that only exist for some bodies are dropped. Every render goes
+    /// through this, so no combination can break a rule.
     pub fn normalized(mut self) -> Look {
-        if self.age == 0 {
-            self.mature = false;
-        }
-        if self.female || !self.mature {
-            self.beard = false;
-            self.facial = 0;
-        }
-        if !self.female || !self.mature {
-            self.figure = default_figure();
+        for lock in LOCKS {
+            if (lock.clash)(&self) {
+                (lock.fix)(&mut self);
+            }
         }
         self
     }
@@ -589,7 +586,7 @@ impl Look {
     /// Whether the front (or back) view should be mirror-symmetric.
     fn symmetric(&self, _dir: u8) -> bool {
         matches!(self.hair_style, 1 | 3 | 5 | 6 | 8 | 9 | 10 | 12 | 15)
-            && matches!(self.hat, 0 | 2 | 3 | 4 | 5 | 8 | 10)
+            && self.hat_meta().symmetric
             && self.held == held::NONE
             // Tails peek out to one side; tailed races aren't mirror-exact.
             && matches!(self.race, RACE_HUMAN | RACE_ELF)

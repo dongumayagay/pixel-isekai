@@ -3,14 +3,14 @@
 // the visual QA linter live, browse random galleries and export sheets.
 
 import './creator.css';
-import init, { creator_info, render_frame, random_look, lint_look, cast_list, profession_list, dress_look } from './pkg/sim.js';
+import init, { creator_info, render_frame, random_look, lint_look, look_options, normalize_look, cast_list, profession_list, dress_look } from './pkg/sim.js';
 import wasmUrl from './pkg/sim_bg.wasm?url';
 import { $, parseJson, randomSeed } from './util';
 
 /** Mirrors `Look` in sim/src/art/people.rs; fields Rust defaults may be missing from old links. */
 interface Look {
   skin: number; hair: number; hair_style: number; primary: number; secondary: number; outfit: number;
-  hat: number; accent: number; female: boolean; age: number; beard: boolean; eyes: number;
+  hat: number; accent: number; female: boolean; age: number; eyes: number;
   mature: boolean; race: number; beast: number; held: number; glasses: boolean;
   figure: number; build: number; height?: number; facial: number; cut?: number;
 }
@@ -23,24 +23,18 @@ type BySex<T> = [T, T];
 interface Info {
   fw: number; fh: number; pivot: [number, number]; framesPerDir: number; sheetFrames: number;
   races: string[]; hairStyles: string[]; outfits: string[]; outfitSlots: BySex<DyeSlots>[]; outfitDefaults: BySex<Dyes>[];
+  hats: string[]; held: string[]; beasts: string[];
   figures: string[]; heights: string[]; facial: string[]; cuts: string[]; buildsF: string[]; buildsM: string[];
   swatch: { skin: number[]; demon: number[]; hair: number[]; cloth: number[]; eyes: number[] };
 }
+/** Per option, which values the Rust lock table allows with the rest of the look (false = greyed out). */
+interface Options { race: boolean[]; sex: BySex<boolean>; hairStyle: boolean[]; outfit: boolean[]; hat: boolean[]; held: boolean[]; beast: boolean[] }
 interface LintIssue { kind: string; dir: number; frame: number; detail: string }
 interface CastMember { name: string; look: Look }
 
-// Names creator_info() doesn't export yet; keep in step with the `hat`,
-// `held` and `beast` docs on Look in sim/src/art/people.rs.
-const HATS = ['None', 'Straw hat', 'Bandana', 'Helmet', 'Hood', 'Cap', 'Witch hat', 'Flower', 'Chef', 'Ribbon', 'Maid band', 'Miner helmet'];
-const HELD = ['None', 'Staff', 'Hammer', 'Mug', 'Book', 'Sword', 'Basket', 'Axe', 'Pickaxe', 'Hoe', 'Fishing rod', 'Spear', 'Ladle'];
-const BEASTS = ['Cat', 'Fox', 'Wolf', 'Rabbit'];
-// Race indices into info.races, as RACE_* in people.rs.
-const RACE_DWARF = 2;
+// Race indices into info.races, as RACE_* in sim/src/art/people/mod.rs.
 const RACE_BEAST = 3;
 const RACE_DEMON = 4;
-// Facial styles the legacy `beard` flag stands for (see Look::facial_style).
-const FULL_BEARD = 5;
-const SAGE_BEARD = 6;
 
 // Sheet directions, in render_frame's `dir` order; side frames face right.
 const DIR_NAMES = ['down', 'up', 'side'];
@@ -123,14 +117,18 @@ function draw(target: HTMLCanvasElement, l: Look, dir: number, f: number, flip: 
 
 // ---------------------------------------------------------------- UI
 
-/** A row of buttons with the `selected` one highlighted. */
-function choice(id: string, labels: readonly string[], selected: number, pick: (i: number) => void) {
+/** A row of buttons with the `selected` one highlighted and those `allowed` marks false locked. */
+function choice(id: string, labels: readonly string[], selected: number, pick: (i: number) => void, allowed?: readonly boolean[]) {
   const host = $(id);
   host.innerHTML = '';
   labels.forEach((label, i) => {
     const b = document.createElement('button');
     b.textContent = label;
     if (i === selected) b.classList.add('on');
+    if (allowed?.[i] === false) {
+      b.disabled = true;
+      b.title = "Doesn't go with the rest of this look";
+    }
     b.onclick = () => pick(i);
     host.appendChild(b);
   });
@@ -185,15 +183,12 @@ function edit(l: Look) {
 function set(patch: Partial<Look>) {
   look = { ...look, ...patch };
   // Everyone is a grown adult; looking older comes from grey hair, a bald
-  // cut or a beard rather than an age switch. Beards only on men, as
-  // Look::normalized in Rust.
+  // cut or a beard rather than an age switch.
   if (look.age === 0) look.age = 1;
-  look.mature = look.age > 0;
-  if (look.female) {
-    look.beard = false;
-    look.facial = 0;
-  }
-  look.skin %= skinSwatches(look).length;
+  look.mature = true;
+  // Rust owns every other rule (Look::normalized): clashing hats come off,
+  // hair tucks under them, traits the body can't carry are dropped.
+  look = parseLook(normalize_look(JSON.stringify(look)));
   location.hash = encodeURIComponent(JSON.stringify(look));
   renderControls();
   renderSheet();
@@ -224,23 +219,25 @@ function renderControls() {
     <div id="c-facial-wrap"><h3>Facial hair</h3><div class="row" id="c-facial"></div></div>
     <h3>Extras</h3><div class="row" id="c-extra"></div>`;
   const sex = sexIndex(look);
-  choice('#c-race', info.races, look.race, (race) => set({ race }));
+  // Rust decides what clashes; options that would draw badly are locked.
+  const ok = parseJson<Options>(look_options(JSON.stringify(look)));
+  choice('#c-race', info.races, look.race, (race) => set({ race }), ok.race);
   show('#c-beast-wrap', look.race === RACE_BEAST);
-  choice('#c-beast', BEASTS, look.beast, (beast) => set({ beast }));
-  choice('#c-sex', ['Female', 'Male'], sex, (i) => set({ female: i === 0 }));
+  choice('#c-beast', info.beasts, look.beast, (beast) => set({ beast }), ok.beast);
+  choice('#c-sex', ['Female', 'Male'], sex, (i) => set({ female: i === 0 }), ok.sex);
   choice('#c-height', info.heights, look.height ?? 1, (height) => set({ height }));
   choice('#c-build', look.female ? info.buildsF : info.buildsM, look.build, (build) => set({ build }));
   show('#c-fig-wrap', look.female && look.mature);
   choice('#c-fig', info.figures, look.figure, (figure) => set({ figure }));
   swatches('#c-skin', skinSwatches(look), look.skin, (skin) => set({ skin }));
   swatches('#c-eyes', info.swatch.eyes, look.eyes, (eyes) => set({ eyes }));
-  choice('#c-style', info.hairStyles, look.hair_style, (hair_style) => set({ hair_style }));
+  choice('#c-style', info.hairStyles, look.hair_style, (hair_style) => set({ hair_style }), ok.hairStyle);
   swatches('#c-hair', info.swatch.hair, look.hair, (hair) => set({ hair }));
   // Picking an outfit dresses it in its best-known colours.
   choice('#c-outfit', info.outfits, look.outfit, (outfit) => {
     const [primary, secondary, accent] = info.outfitDefaults[outfit][sex];
     set({ outfit, primary, secondary, accent });
-  });
+  }, ok.outfit);
   choice('#c-cut', info.cuts, look.cut ?? 0, (cut) => set({ cut }));
   // Each colour row is named after the piece it dyes on this outfit; the
   // accent also colours the headwear.
@@ -252,13 +249,12 @@ function renderControls() {
   };
   dyeRow('p', primaryPiece ? `${primaryPiece} (primary)` : '', look.primary, (primary) => set({ primary }));
   dyeRow('s', secondaryPiece ? `${secondaryPiece} (secondary)` : '', look.secondary, (secondary) => set({ secondary }));
-  choice('#c-hat', HATS, look.hat, (hat) => set({ hat }));
+  choice('#c-hat', info.hats, look.hat, (hat) => set({ hat }), ok.hat);
   const accent = [accentPiece, look.hat ? 'headwear' : ''].filter(Boolean).join(' & ');
   dyeRow('a', accent ? `${capitalize(accent)} (accent)` : '', look.accent, (accent) => set({ accent }));
-  choice('#c-held', HELD, look.held, (held) => set({ held }));
+  choice('#c-held', info.held, look.held, (held) => set({ held }), ok.held);
   show('#c-facial-wrap', !look.female && look.mature);
-  const facial = look.facial || (look.beard ? (look.race === RACE_DWARF ? SAGE_BEARD : FULL_BEARD) : 0);
-  choice('#c-facial', info.facial, facial, (facial) => set({ facial, beard: false }));
+  choice('#c-facial', info.facial, look.facial, (facial) => set({ facial }));
   choice('#c-extra', ['Glasses'], look.glasses ? 0 : -1, () => set({ glasses: !look.glasses }));
 }
 

@@ -4,7 +4,7 @@ use sim::art::people::{self, Look, FACIAL};
 use sim::palette::hex;
 fn main() {
     let out = std::env::args().nth(1).unwrap_or("facial.png".into());
-    let base = Look { hair: 1, hair_style: 0, beard: false, ..people::cast()[0].1 };
+    let base = Look { hair: 1, hair_style: 0, ..people::cast()[0].1 };
     let n = FACIAL.len() as i32;
     let (cw, ch, y0) = (people::FW, 60, 14);
     let mut img = Img::new(cw * n, ch * 2);
