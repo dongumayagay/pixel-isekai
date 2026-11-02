@@ -73,37 +73,47 @@ def classify(a):
 
 
 def fill_scalp(body, cls, cell_y0, cell_x0):
-    """Rebuild the skull under the hair in one cell: the head silhouette is hair+face eroded by the
-    hair's volume (2px), filled with skin base and outlined. Keeps whatever skin is already there."""
+    """Rebuild the skull under the hair in one cell. The hair hugs the cranium only on its upper rows and
+    flares below the ears, so the skull is: (hair|face silhouette eroded 2px) restricted to an ellipse
+    that spans the head height, plus whatever face skin is already drawn. Outlined, with a shade row."""
     y0, x0 = cell_y0, cell_x0
     c = cls[y0:y0 + H, x0:x0 + W]
     b = body[y0:y0 + H, x0:x0 + W]
-    # head rows: from the top of the sprite down to the first row where skin spans the neck
-    head = np.zeros((H, W), bool)
     hair = c == 2
     face = (c == 1) | (c == 4)
     rows = np.nonzero(hair.any(axis=1))[0]
     if not len(rows):
         return
-    ytop = rows.min()
-    # neck: first row below ytop+20 where hair is absent in the middle 10 columns
-    mid = slice(W // 2 - 5, W // 2 + 5)
-    yneck = next((y for y in range(ytop + 20, H) if not hair[y, mid].any() and not face[y, mid].any()), ytop + 36)
-    sil = (hair | face)[:yneck]
-    # erode 2px to remove hair volume, then only where there is no skin already
+    ytop = int(rows.min())
+    # the cranium rows: hair top .. ~12px down is where the hair hugs the skull
+    sil = hair | face
     er = sil.copy()
     for _ in range(2):
         p = np.pad(er, 1)
         er = p[:-2, 1:-1] & p[2:, 1:-1] & p[1:-1, :-2] & p[1:-1, 2:]
-    skull = np.zeros((H, W), bool); skull[:yneck] = er
+    band = er[ytop + 6:ytop + 14]
+    xs = np.nonzero(band.any(axis=0))[0]
+    cx = (xs.min() + xs.max()) / 2.0
+    rx = (xs.max() - xs.min()) / 2.0 + 0.5
+    HEAD_H = 34                                   # hair top -> chin at this scale
+    cy = ytop + HEAD_H / 2.0
+    ry = HEAD_H / 2.0
+    yy, xx = np.mgrid[0:H, 0:W]
+    ell = ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2 <= 1.0
+    skull = (er & ell)
+    skull[ytop + HEAD_H:] = False
+    # fill the cranium solid between its left/right edges (hair partings leave holes)
+    for y in range(ytop, ytop + HEAD_H):
+        r = np.nonzero(skull[y])[0]
+        if len(r):
+            skull[y, r.min():r.max() + 1] = True
     new = skull & (b == 0)
     b[new] = 6
-    # outline: skull pixels with a non-skull 4-neighbour, only where newly filled
-    p = np.pad(skull, 1)
-    edge = skull & ~(p[:-2, 1:-1] & p[2:, 1:-1] & p[1:-1, :-2] & p[1:-1, 2:])
+    p = np.pad(skull | (b > 0), 1)
+    full = skull | (b > 0)
+    edge = full & ~(p[:-2, 1:-1] & p[2:, 1:-1] & p[1:-1, :-2] & p[1:-1, 2:])
     b[edge & new] = 1
-    # one row of shade under the outline on top (hair shadow on the forehead)
-    sh = np.zeros_like(skull); sh[1:] = edge[:-1]
+    sh = np.zeros_like(skull); sh[1:] = (edge & new)[:-1]
     b[sh & new & ~edge] = 4
 
 
