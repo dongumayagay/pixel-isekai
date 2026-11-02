@@ -9,6 +9,8 @@ import numpy as np
 from PIL import Image
 
 import face
+import face2x
+from upscale import scale2x
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KIT_DIR = os.path.join(os.path.dirname(os.path.dirname(HERE)), 'assets', 'charkit')
@@ -66,8 +68,8 @@ class Kit:
         out.sort(key=lambda t: t[0])
         return out
 
-    def frame(self, char, anim, direction, col, blink=False):
-        """One composited RGBA cell as a HxWx4 uint8 array."""
+    def frame(self, char, anim, direction, col, blink=False, scale=2):
+        """One composited RGBA cell: 64x64 at scale 1, 128x128 (Scale2x + 2x face) at scale 2."""
         row = self.rows[direction]
         fr = np.zeros((CELL, CELL, 4), np.uint8)
         head_dy = 0
@@ -77,12 +79,41 @@ class Kit:
             if col >= a['cols'] or row >= a['rows']:
                 continue
             cell = idx[row * CELL:(row + 1) * CELL, col * CELL:(col + 1) * CELL]
-            rgba = pal[cell]
-            over(fr, rgba)
+            over(fr, pal[cell])
             if part.startswith('head_'):
                 ys = np.nonzero(cell)[0]
                 head_dy = (int(ys.min()) - HEAD_TOP) if len(ys) else 0
-                face.draw(fr, direction, head_dy, char.get('eyes', 'brown'), char.get('sex', 'f') == 'f', blink)
+                if scale == 1:
+                    face.draw(fr, direction, head_dy, char.get('eyes', 'brown'), char.get('sex', 'f') == 'f', blink)
+                else:
+                    fr = scale2x(fr)
+                    face2x.draw(fr, direction, head_dy * 2, char, blink)
+                    fr = fr[::2, ::2].copy()  # back to 64 for the layers above; see below
+        if scale == 2:
+            return self._frame2x(char, anim, direction, col, blink)
+        return fr
+
+    def _frame2x(self, char, anim, direction, col, blink):
+        """Layers below the head composited, upscaled, face drawn, then the layers above upscaled on top."""
+        row = self.rows[direction]
+        layers = self.layers(char)
+        below = np.zeros((CELL, CELL, 4), np.uint8)
+        above = np.zeros((CELL, CELL, 4), np.uint8)
+        head_dy, seen_head = 0, False
+        for z, part, layer, pal in layers:
+            a = layer['anims'].get(anim) or layer['anims']['walk']
+            idx = self.sheet(a['file'])
+            if col >= a['cols'] or row >= a['rows']:
+                continue
+            cell = idx[row * CELL:(row + 1) * CELL, col * CELL:(col + 1) * CELL]
+            over(above if seen_head else below, pal[cell])
+            if part.startswith('head_'):
+                ys = np.nonzero(cell)[0]
+                head_dy = (int(ys.min()) - HEAD_TOP) if len(ys) else 0
+                seen_head = True
+        fr = scale2x(below)
+        face2x.draw(fr, direction, head_dy * 2, char, blink)
+        over(fr, scale2x(above))
         return fr
 
 
