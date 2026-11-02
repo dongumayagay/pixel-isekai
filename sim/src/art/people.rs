@@ -401,6 +401,9 @@ struct Canvas<'a> {
     /// Optional column range a part may paint (keeps paired limbs on their
     /// own side of the centre line).
     clip: Option<(i32, i32)>,
+    /// Direct-mapped cache of colour -> (ramp, step) lookups for `mark`;
+    /// cleared whenever a ramp is registered.
+    marks: [Option<(Rgb, u8, u8)>; 64],
 }
 
 impl Canvas<'_> {
@@ -411,15 +414,30 @@ impl Canvas<'_> {
         self.groups[self.cur as usize] = self.side;
     }
 
+    fn new(img: &mut Img) -> Canvas<'_> {
+        let n = (img.w * img.h) as usize;
+        Canvas { img, ids: vec![0; n], cur: 0, ramps: Vec::new(), rid: vec![255; n], ridx: vec![0; n], groups: vec![0; 256], side: 0, clip: None, marks: [None; 64] }
+    }
+
     fn register(&mut self, r: &R5) {
         if !self.ramps.contains(r) && self.ramps.len() < 250 {
             self.ramps.push(*r);
+            self.marks = [None; 64];
         }
     }
 
+    /// Record which ramp (first registered match) and step a colour is.
     fn mark(&mut self, i: usize, c: Rgb) {
-        let found = self.ramps.iter().enumerate().find_map(|(k, r)| r.iter().position(|&q| q == c).map(|j| (k as u8, j as u8)));
-        let (r, j) = found.unwrap_or((255, 0));
+        let slot = (c[0] as usize * 7 + c[1] as usize * 13 + c[2] as usize * 31) & 63;
+        let (r, j) = match self.marks[slot] {
+            Some((k, r, j)) if k == c => (r, j),
+            _ => {
+                let found = self.ramps.iter().enumerate().find_map(|(k, r)| r.iter().position(|&q| q == c).map(|j| (k as u8, j as u8)));
+                let (r, j) = found.unwrap_or((255, 0));
+                self.marks[slot] = Some((c, r, j));
+                (r, j)
+            }
+        };
         self.rid[i] = r;
         self.ridx[i] = j;
     }
@@ -1110,8 +1128,7 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     b.sway = if dir == DIR_SIDE { b.lag } else { 0.0 };
     let l = limbs(&b, pose, dir);
     let c = colors(look);
-    let n = (FW * FH) as usize;
-    let mut cv = Canvas { img: &mut img, ids: vec![0; n], cur: 0, ramps: Vec::new(), rid: vec![255; n], ridx: vec![0; n], groups: vec![0; 256], side: 0, clip: None };
+    let mut cv = Canvas::new(&mut img);
     for r in [c.skin, c.hair, c.primary, c.secondary, c.accent, c.white, c.drab, c.metal, c.leather, c.linen, c.shoe, c.stocking, c.navy, gold5()] {
         cv.register(&r);
     }
@@ -1182,9 +1199,12 @@ pub fn frame(look: &Look, dir: u8, frame_idx: u16) -> Img {
     let groups = std::mem::take(&mut cv.groups);
     drop(cv);
     let shades = Shades { ramps: &ramps, rid: &rid, ridx: &ridx };
-    contours(&mut img, &ids, &groups, &shades);
-    outline(&mut img, &shades);
-    close_pinholes(&mut img);
+    // Post passes only need the sprite's box (plus one pixel of outline).
+    let bounds = padded_bounds(&img);
+    contours(&mut img, &ids, &groups, &shades, bounds);
+    outline(&mut img, &shades, bounds);
+    let bounds = padded_bounds(&img);
+    close_pinholes(&mut img, bounds);
     img
 }
 
@@ -1216,30 +1236,67 @@ impl Shades<'_> {
 
 /// Close tiny enclosed gaps (slivers between outlines) with the darkest
 /// neighbouring colour; they read as noise rather than negative space.
-fn close_pinholes(img: &mut Img) {
-    let (w, h) = (img.w, img.h);
-    let mut outside = vec![false; (w * h) as usize];
-    let mut stack: Vec<(i32, i32)> = Vec::new();
-    for x in 0..w {
-        stack.push((x, 0));
-        stack.push((x, h - 1));
+/// The sprite's opaque bounding box grown by one pixel (for outlines),
+/// clamped to the frame: (x0, y0, x1, y1) inclusive.
+fn padded_bounds(img: &Img) -> (i32, i32, i32, i32) {
+    let (mut x0, mut y0, mut x1, mut y1) = (img.w, img.h, -1, -1);
+    for y in 0..img.h {
+        for x in 0..img.w {
+            if img.alpha(x, y) != 0 {
+                x0 = x0.min(x);
+                x1 = x1.max(x);
+                y0 = y0.min(y);
+                y1 = y1.max(y);
+            }
+        }
     }
-    for y in 0..h {
-        stack.push((0, y));
-        stack.push((w - 1, y));
+    if x1 < 0 {
+        return (0, 0, -1, -1);
+    }
+    ((x0 - 1).max(0), (y0 - 1).max(0), (x1 + 1).min(img.w - 1), (y1 + 1).min(img.h - 1))
+}
+
+/// Fill small enclosed gaps (8px or less) with their darkest neighbour.
+/// Only the sprite's padded box is searched: everything beyond it is open
+/// background.
+fn close_pinholes(img: &mut Img, (x0, y0, x1, y1): (i32, i32, i32, i32)) {
+    if x1 < x0 {
+        return;
+    }
+    let (bw, bh) = (x1 - x0 + 1, y1 - y0 + 1);
+    let at = |x: i32, y: i32| ((y - y0) * bw + (x - x0)) as usize;
+    let inbox = |x: i32, y: i32| x >= x0 && x <= x1 && y >= y0 && y <= y1;
+    let clear = |img: &Img, x: i32, y: i32| img.alpha(x, y) == 0;
+    // Open background: flood from the box border (marking on push).
+    let mut outside = vec![false; (bw * bh) as usize];
+    let mut stack: Vec<(i32, i32)> = Vec::with_capacity((bw * bh) as usize / 2);
+    let seed = |x: i32, y: i32, outside: &mut Vec<bool>, stack: &mut Vec<(i32, i32)>| {
+        if clear(img, x, y) && !outside[at(x, y)] {
+            outside[at(x, y)] = true;
+            stack.push((x, y));
+        }
+    };
+    for x in x0..=x1 {
+        seed(x, y0, &mut outside, &mut stack);
+        seed(x, y1, &mut outside, &mut stack);
+    }
+    for y in y0..=y1 {
+        seed(x0, y, &mut outside, &mut stack);
+        seed(x1, y, &mut outside, &mut stack);
     }
     while let Some((x, y)) = stack.pop() {
-        if !img.inside(x, y) || img.alpha(x, y) != 0 || outside[(y * w + x) as usize] {
-            continue;
+        for (nx, ny) in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)] {
+            if inbox(nx, ny) && clear(img, nx, ny) && !outside[at(nx, ny)] {
+                outside[at(nx, ny)] = true;
+                stack.push((nx, ny));
+            }
         }
-        outside[(y * w + x) as usize] = true;
-        stack.extend([(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]);
     }
-    let mut seen = vec![false; (w * h) as usize];
-    for y in 0..h {
-        for x in 0..w {
-            let i = (y * w + x) as usize;
-            if outside[i] || seen[i] || img.alpha(x, y) != 0 {
+    let mut seen = vec![false; (bw * bh) as usize];
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let i = at(x, y);
+            if outside[i] || seen[i] || !clear(img, x, y) {
                 continue;
             }
             let mut region = Vec::new();
@@ -1248,9 +1305,8 @@ fn close_pinholes(img: &mut Img) {
             while let Some((cx, cy)) = st.pop() {
                 region.push((cx, cy));
                 for (nx, ny) in [(cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)] {
-                    let j = (ny * w + nx) as usize;
-                    if img.inside(nx, ny) && img.alpha(nx, ny) == 0 && !seen[j] {
-                        seen[j] = true;
+                    if inbox(nx, ny) && clear(img, nx, ny) && !seen[at(nx, ny)] {
+                        seen[at(nx, ny)] = true;
                         st.push((nx, ny));
                     }
                 }
@@ -1258,17 +1314,17 @@ fn close_pinholes(img: &mut Img) {
             if region.len() > 8 {
                 continue;
             }
-            // Fill inward in layers from a snapshot, so the result doesn't
-            // depend on visiting order (keeps mirrored gaps identical).
+            // Fill inward in layers (each layer's colours are all chosen
+            // before any is written), so the result doesn't depend on
+            // visiting order and mirrored gaps stay identical.
             let mut left = region;
             while !left.is_empty() {
-                let snap = img.clone();
                 let mut next = Vec::new();
                 let mut fills = Vec::new();
                 for &(px, py) in &left {
                     let dark = [(1, 0), (-1, 0), (0, 1), (0, -1)]
                         .iter()
-                        .filter_map(|&(dx, dy)| snap.get(px + dx, py + dy))
+                        .filter_map(|&(dx, dy)| img.get(px + dx, py + dy))
                         .min_by_key(|c| (c[0] as u32 + c[1] as u32 + c[2] as u32, *c));
                     match dark {
                         Some(c) => fills.push((px, py, c)),
@@ -1291,11 +1347,11 @@ fn close_pinholes(img: &mut Img) {
 /// part darkens, so overlaps read as drawn lines rather than merged blobs.
 /// Lines fall beside and below the front part only (light from above), so a
 /// form's top edge blends into what is behind it.
-fn contours(img: &mut Img, ids: &[u8], groups: &[u8], sh: &Shades) {
+fn contours(img: &mut Img, ids: &[u8], groups: &[u8], sh: &Shades, (x0, y0, x1, y1): (i32, i32, i32, i32)) {
     let src = img.clone();
     let w = img.w;
-    for y in 0..img.h {
-        for x in 0..w {
+    for y in y0..=y1 {
+        for x in x0..=x1 {
             let a = ids[(y * w + x) as usize];
             if a == 0 {
                 continue;
@@ -1327,10 +1383,10 @@ fn contours(img: &mut Img, ids: &[u8], groups: &[u8], sh: &Shades) {
 
 /// Coloured outline: each edge pixel takes a deep, hue-matched shade of the
 /// neighbour it borders.
-fn outline(img: &mut Img, sh: &Shades) {
+fn outline(img: &mut Img, sh: &Shades, (x0, y0, x1, y1): (i32, i32, i32, i32)) {
     let src = img.clone();
-    for y in 0..img.h {
-        for x in 0..img.w {
+    for y in y0..=y1 {
+        for x in x0..=x1 {
             if src.alpha(x, y) != 0 {
                 continue;
             }
