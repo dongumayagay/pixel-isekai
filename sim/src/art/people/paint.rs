@@ -115,10 +115,8 @@ impl Canvas<'_> {
 
     /// Body pixel owned by the current part.
     pub(super) fn fill(&mut self, x: i32, y: i32, c: Rgb) {
-        if let Some((x0, x1)) = self.clip {
-            if x < x0 || x > x1 {
-                return;
-            }
+        if self.clip.is_some_and(|(x0, x1)| x < x0 || x > x1) {
+            return;
         }
         if self.img.inside(x, y) {
             self.img.set(x, y, c);

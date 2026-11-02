@@ -83,10 +83,8 @@ pub fn lint(look: &Look) -> Vec<Issue> {
                 push("debris", dir, f, format!("{} islands {:?}", debris.len(), debris));
             }
             // A big separate island: a prop or piece floating off the body.
-            if let Some(&s2) = sizes.get(1) {
-                if s2 >= 24 {
-                    push("detached", dir, f, format!("separate part of {s2} px"));
-                }
+            if let Some(&s2) = sizes.get(1).filter(|&&s| s >= 24) {
+                push("detached", dir, f, format!("separate part of {s2} px"));
             }
             // Nubs: single pixels jutting out of the silhouette (one
             // opaque neighbour), beyond the few legitimate pointed tips.
@@ -207,10 +205,8 @@ pub fn lint(look: &Look) -> Vec<Issue> {
                     let mut n = 0;
                     for y in 0..h {
                         for x in x0..x1 {
-                            if let Some(c) = img.get(x, y) {
-                                if iris.iter().any(|&k| hex(k) == c) {
-                                    n += 1;
-                                }
+                            if img.get(x, y).is_some_and(|c| iris.iter().any(|&k| hex(k) == c)) {
+                                n += 1;
                             }
                         }
                     }
@@ -222,10 +218,10 @@ pub fn lint(look: &Look) -> Vec<Issue> {
                 }
             }
         }
-        if let (Some(mn), Some(mx)) = (tops.iter().min(), tops.iter().max()) {
-            if mx - mn > 2 {
-                push("jitter", dir, 0, format!("head top varies {mn}..{mx}"));
-            }
+        if let (Some(mn), Some(mx)) = (tops.iter().min(), tops.iter().max())
+            && mx - mn > 2
+        {
+            push("jitter", dir, 0, format!("head top varies {mn}..{mx}"));
         }
         // Popping: neighbouring idle frames should differ by a breath (the
         // upper body rising a pixel), not a redraw. Compare after allowing
@@ -243,7 +239,7 @@ pub fn lint(look: &Look) -> Vec<Issue> {
 }
 
 #[cfg(test)]
-mod qa {
+mod tests {
     use super::*;
 
     /// The core roster is held to the full bar: every frame, every view.
