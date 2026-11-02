@@ -50,6 +50,8 @@ class Kit64:
                ('eyes', self.palette('eyes', iris=c.get('eyes')))]
         if c.get('hair'):
             out.append((c['hair'], self.palette(c['hair'], c.get('hair_color'))))
+            if c['hair'] + '_back' in self.parts:      # behind-body part of the style (ponytail tail)
+                out.append((c['hair'] + '_back', self.palette(c['hair'] + '_back', c.get('hair_color'))))
         for part, color in c.get('wear', []):
             out.append((part, self.palette(part, color)))
         return sorted(out, key=lambda t: self.parts[t[0]]['z'])

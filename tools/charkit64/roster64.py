@@ -13,13 +13,15 @@ from PIL import Image
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 WIP = os.path.join(ROOT, '.context', 'wip')
 
+# Starter cast. body: '' (M bust) | 'bust_s' | 'bust_l' | 'male' (stopgap until the paid pack).
 CAST = {
-    'Reincarnated Hero': dict(skin='light', hair='hair_long', hair_color='black', eyes='blue', wear=[('underwear', 'navy')]),
-    'Guild Receptionist': dict(skin='light', hair='hair_long', hair_color='chestnut', eyes='green', wear=[('underwear', 'white')]),
+    'Reincarnated Hero': dict(body='male', skin='light', hair='hair_short', hair_color='black', eyes='blue', wear=[('underwear', 'navy')]),
+    'Guild Receptionist': dict(skin='light', hair='hair_bob', hair_color='chestnut', eyes='green', wear=[('underwear', 'white')]),
+    'Tavern Girl': dict(body='bust_l', skin='fair', hair='hair_ponytail', hair_color='ginger', eyes='brown', wear=[('underwear', 'cream')]),
+    'Guard': dict(skin='tan', hair='hair_short', hair_color='brown', eyes='gray', wear=[('underwear', 'black')]),
     'Elf Mage': dict(skin='elf_pale', hair='hair_long', hair_color='platinum', eyes='purple', wear=[('underwear', 'lavender')]),
-    'Cat-girl Adventurer': dict(skin='amber', hair='hair_long', hair_color='ginger', eyes='yellow', wear=[('underwear', 'brown')]),
-    'Female Knight': dict(skin='light', hair='hair_long', hair_color='blonde', eyes='blue', wear=[('underwear', 'black')]),
-    'Maid': dict(skin='fair', hair='hair_long', hair_color='black', eyes='brown', wear=[('underwear', 'pink')]),
+    'Cat-girl Adventurer': dict(body='bust_s', skin='amber', hair='hair_short', hair_color='ginger', eyes='yellow', wear=[('underwear', 'brown')]),
+    'Dwarven Smith': dict(body='male', skin='peach', hair='hair_bob', hair_color='auburn', eyes='amber', wear=[('underwear', 'leather')]),
 }
 BG = (40, 44, 52)
 
@@ -64,5 +66,5 @@ if __name__ == '__main__':
     os.makedirs(os.path.join(WIP, 'anim'), exist_ok=True)
     render(kit, chars, scale).save(os.path.join(WIP, 'base64_cast.png'))
     for anim, ms in (('idle', 140), ('walk', 90), ('run', 70)):
-        gif(kit, chars[:3], anim, os.path.join(WIP, 'anim', f'base64_{anim}.gif'), 3, ms)
+        gif(kit, chars[:4], anim, os.path.join(WIP, 'anim', f'base64_{anim}.gif'), 3, ms)
     print('wrote', WIP)
